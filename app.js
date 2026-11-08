@@ -34,6 +34,7 @@ let historySessions = loadHistorySessions();
 let isExaminerAuthenticated = false;
 let currentViewingHistoryId = null;
 let cloudPollTimer = null;
+let lastExamDataSaveAt = 0;
 
 // 當前考試進行中狀態
 let activeSession = {
@@ -55,6 +56,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initCloudUrlFromQueryOrDefault();
   updateCloudStatusUI();
   renderStudentLoginMeta();
+  setupExamMetaAutoSync();
   setupDragAndDrop();
   setupAntiCheatListeners();
 
@@ -175,11 +177,13 @@ async function syncStateFromCloud(silent = true) {
     const res = await fetch(`${gasUrl}?action=getExamState&_t=${Date.now()}`);
     const json = await res.json();
     if (json && json.status === 'success') {
-      if (json.examData && Array.isArray(json.examData.questions)) {
+      // 當考官已登入後台或剛修改過試卷設定時，背景輪詢 (silent=true) 不覆蓋本機 examData，避免手動修改的「當前試卷資訊」跳回舊範本內容
+      const shouldSyncExamData = !silent || (!isExaminerAuthenticated && (Date.now() - lastExamDataSaveAt > 15000));
+      if (shouldSyncExamData && json.examData && Array.isArray(json.examData.questions)) {
         examData = {
           title: json.examData.title ?? '',
-          durationMinutes: Number(json.examData.durationMinutes) || 60,
-          examDate: json.examData.examDate ?? '',
+          durationMinutes: json.examData.durationMinutes === '' ? '' : (Number(json.examData.durationMinutes) || 60),
+          examDate: normalizeDateForInput(json.examData.examDate ?? ''),
           isExamOpen: Boolean(json.examData.isExamOpen),
           questions: json.examData.questions
         };
@@ -323,6 +327,35 @@ function copyStudentShareUrl() {
 }
 
 // ==================== 本機與雲端雙向資料存取 ====================
+function normalizeDateForInput(dateVal) {
+  if (dateVal === null || dateVal === undefined || dateVal === '') return '';
+  const str = String(dateVal).trim();
+  if (!str) return '';
+  // 若已符合 YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  // 處理 YYYY/M/D、YYYY-M-D、YYYY.M.D
+  const match = str.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+  if (match) {
+    const y = match[1];
+    const m = String(match[2]).padStart(2, '0');
+    const d = String(match[3]).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  // 處理 Excel 日期序列值 (例如 46000)
+  if (/^\d{5}$/.test(str)) {
+    const serial = parseInt(str, 10);
+    const utcDays = serial - 25569;
+    const dateObj = new Date(utcDays * 86400 * 1000);
+    if (!isNaN(dateObj.getTime())) {
+      const y = dateObj.getUTCFullYear();
+      const m = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dateObj.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+  }
+  return '';
+}
+
 function loadExamData() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.EXAM_DATA);
@@ -331,8 +364,8 @@ function loadExamData() {
       if (parsed && Array.isArray(parsed.questions)) {
         return {
           title: parsed.title ?? '',
-          durationMinutes: Number(parsed.durationMinutes) || 60,
-          examDate: parsed.examDate ?? '',
+          durationMinutes: parsed.durationMinutes === '' ? '' : (Number(parsed.durationMinutes) || 60),
+          examDate: normalizeDateForInput(parsed.examDate ?? ''),
           isExamOpen: Boolean(parsed.isExamOpen),
           questions: parsed.questions
         };
@@ -346,6 +379,7 @@ function loadExamData() {
 }
 
 function saveExamDataToStorage(syncCloud = true) {
+  lastExamDataSaveAt = Date.now();
   localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
   renderStudentLoginMeta();
   if (isExaminerAuthenticated) {
@@ -1039,13 +1073,46 @@ function refreshExaminerAllViews() {
 }
 
 // ==================== 考官端頁籤 1：考題管理與 Excel 範本匯入 (支援完全空白題庫) ====================
+function setupExamMetaAutoSync() {
+  const titleInput = document.getElementById('metaExamTitle');
+  const dateInput = document.getElementById('metaExamDate');
+  const durationInput = document.getElementById('metaExamDuration');
+
+  const syncMetaFromInputs = (pushCloud = false) => {
+    if (titleInput) examData.title = titleInput.value;
+    if (dateInput) examData.examDate = normalizeDateForInput(dateInput.value);
+    if (durationInput) {
+      const rawVal = durationInput.value.trim();
+      examData.durationMinutes = rawVal === '' ? '' : Math.max(1, Number(rawVal) || 60);
+    }
+    saveExamDataToStorage(pushCloud);
+  };
+
+  [titleInput, dateInput, durationInput].forEach(el => {
+    if (!el) return;
+    el.addEventListener('input', () => syncMetaFromInputs(false));
+    el.addEventListener('change', () => syncMetaFromInputs(true));
+  });
+}
+
 function renderExaminerQuestionTab() {
   const qCount = examData.questions.length;
   const pts = getPointsPerQuestion(qCount);
 
-  document.getElementById('metaExamTitle').value = examData.title || '';
-  document.getElementById('metaExamDate').value = examData.examDate || '';
-  document.getElementById('metaExamDuration').value = examData.durationMinutes || 60;
+  const titleInput = document.getElementById('metaExamTitle');
+  const dateInput = document.getElementById('metaExamDate');
+  const durationInput = document.getElementById('metaExamDuration');
+
+  if (titleInput && document.activeElement !== titleInput) {
+    titleInput.value = examData.title ?? '';
+  }
+  if (dateInput && document.activeElement !== dateInput) {
+    dateInput.value = normalizeDateForInput(examData.examDate ?? '');
+  }
+  if (durationInput && document.activeElement !== durationInput) {
+    durationInput.value = examData.durationMinutes === '' ? '' : (examData.durationMinutes ?? 60);
+  }
+
   document.getElementById('metaValidQCount').textContent = qCount;
   document.getElementById('metaPointsPerQ').textContent = pts;
   document.getElementById('questionTableCount').textContent = qCount;
@@ -1081,8 +1148,9 @@ function renderExaminerQuestionTab() {
 function saveExamMetadata(event) {
   event.preventDefault();
   examData.title = document.getElementById('metaExamTitle').value.trim();
-  examData.examDate = document.getElementById('metaExamDate').value.trim();
-  examData.durationMinutes = Math.max(1, Number(document.getElementById('metaExamDuration').value) || 60);
+  examData.examDate = normalizeDateForInput(document.getElementById('metaExamDate').value.trim());
+  const rawDuration = document.getElementById('metaExamDuration').value.trim();
+  examData.durationMinutes = rawDuration === '' ? '' : Math.max(1, Number(rawDuration) || 60);
 
   saveExamDataToStorage(true);
   refreshExaminerAllViews();
@@ -1129,13 +1197,27 @@ function deleteQuestion(qId) {
 }
 
 function clearAllQuestions() {
-  if (examData.questions.length === 0) return;
-  if (!confirm('確定要清空目前題庫中的所有題目嗎？')) return;
+  const hasQuestions = examData.questions.length > 0;
+  const hasMeta = Boolean(examData.title || examData.examDate || examData.durationMinutes !== '');
+  if (!hasQuestions && !hasMeta) return;
+  if (!confirm('確定要清空目前題庫中的所有題目與上方「當前試卷資訊」嗎？')) return;
+
+  examData.title = '';
+  examData.examDate = '';
+  examData.durationMinutes = '';
   examData.questions = [];
   examData.isExamOpen = false;
+
+  const titleInput = document.getElementById('metaExamTitle');
+  const dateInput = document.getElementById('metaExamDate');
+  const durationInput = document.getElementById('metaExamDuration');
+  if (titleInput) titleInput.value = '';
+  if (dateInput) dateInput.value = '';
+  if (durationInput) durationInput.value = '';
+
   saveExamDataToStorage(true);
   refreshExaminerAllViews();
-  showImportAlert('已清空所有題目（目前題庫為 0 題，測驗已自動設為關閉狀態）。', 'success');
+  showImportAlert('已清空所有題目與上方當前試卷資訊（目前題庫為 0 題，測驗已自動設為關閉狀態）。', 'success');
 }
 
 function openAddQuestionModal() {
@@ -1294,7 +1376,7 @@ function parseTemplateRows(rows, fileName) {
   const newExamObj = {
     title: parsedTitle,
     durationMinutes: parsedDuration,
-    examDate: parsedDate,
+    examDate: normalizeDateForInput(parsedDate),
     isExamOpen: parsedQuestions.length > 0 ? Boolean(examData.isExamOpen) : false,
     questions: parsedQuestions
   };
