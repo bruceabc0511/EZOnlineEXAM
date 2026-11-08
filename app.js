@@ -1400,8 +1400,8 @@ function buildSubmissionRowElement(sub, sessionId) {
     : '';
 
   tr.innerHTML = `
-    <td><strong>${escapeHtml(sub.studentId)}</strong></td>
-    <td>${escapeHtml(sub.studentName)}</td>
+    <td style="white-space: nowrap;"><strong>${escapeHtml(sub.studentId)}</strong></td>
+    <td style="white-space: nowrap; min-width: 90px;">${escapeHtml(sub.studentName)}</td>
     <td>${emailDisplay}</td>
     <td><strong style="font-size:1.05rem; color:${scoreColor};">${sub.score} 分</strong></td>
     <td>${sub.correctCount} / ${sub.totalQuestions} 題</td>

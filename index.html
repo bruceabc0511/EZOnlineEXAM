@@ -36,7 +36,8 @@
               <span id="cloudStatusText">本機模式</span>
             </span>
           </div>
-          <span class="brand-subtitle" id="headerSubtitle">Online Written Examination System (Multi-User Cloud Edition)</span>
+          <span class="brand-subtitle" id="headerSubtitle">Online Written Examination System (Multi-User Cloud
+            Edition)</span>
         </div>
       </div>
 
@@ -124,8 +125,10 @@
             </div>
 
             <div class="form-group">
-              <label for="studentEmail">電子郵件 (Email) <span class="required">*</span> <small class="text-muted" style="font-weight:400;">— 考試結束後寄送個人成績單與標準答案明細</small></label>
-              <input type="email" id="studentEmail" required placeholder="請輸入常用 Email (例：example@gmail.com)" autocomplete="email">
+              <label for="studentEmail">電子郵件 (Email) <span class="required">*</span> <small class="text-muted"
+                  style="font-weight:400;">— 考試結束後寄送個人成績單與標準答案明細</small></label>
+              <input type="email" id="studentEmail" required placeholder="請輸入常用 Email (例：example@gmail.com)"
+                autocomplete="email">
             </div>
 
             <div class="consent-row">
@@ -297,7 +300,7 @@
           </div>
           <div class="action-btn-group">
             <button class="btn btn-secondary btn-sm" onclick="syncStateFromCloud(false)">🔄 同步雲端</button>
-            <button class="btn btn-outline btn-sm" onclick="logoutExaminer()">🔒 鎖定考官端</button>
+            <button class="btn btn-outline btn-sm" onclick="logoutExaminer()">🔒 退出考官端</button>
           </div>
         </div>
 
@@ -425,7 +428,7 @@
                 <thead>
                   <tr>
                     <th>學號</th>
-                    <th>姓名</th>
+                    <th style="min-width: 90px; white-space: nowrap;">姓名</th>
                     <th>電子郵件 (Email)</th>
                     <th>總分 (滿分100)</th>
                     <th>答對 / 總題數</th>
@@ -592,7 +595,7 @@
                 <thead>
                   <tr>
                     <th>學號</th>
-                    <th>姓名</th>
+                    <th style="min-width: 90px; white-space: nowrap;">姓名</th>
                     <th>電子郵件 (Email)</th>
                     <th>總分</th>
                     <th>答對 / 總題數</th>
@@ -617,12 +620,14 @@
             <div class="card">
               <h3>☁️ Google 雲端試算表資料庫 & 自動寄信連線設定</h3>
               <p class="text-muted text-sm" style="margin-bottom:16px;">
-                綁定 Google Apps Script 網頁應用程式網址後，即可啟用<strong>跨網路多人同時連線應試</strong>、<strong>即時集中統計成績</strong>與<strong>自動寄發 HTML 成績單 Email</strong>。
+                綁定 Google Apps Script 網頁應用程式網址後，即可啟用<strong>跨網路多人同時連線應試</strong>、<strong>即時集中統計成績</strong>與<strong>自動寄發
+                  HTML 成績單 Email</strong>。
               </p>
 
               <div class="form-group">
                 <label for="gasWebAppUrlInput">Google Apps Script 網頁應用程式網址 (`.../exec`)</label>
-                <input type="text" id="gasWebAppUrlInput" placeholder="https://script.google.com/macros/s/AKfycb.../exec">
+                <input type="text" id="gasWebAppUrlInput"
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec">
               </div>
 
               <div class="action-btn-group" style="margin-bottom:20px;">
@@ -662,13 +667,15 @@
             <div class="card">
               <div class="section-title-row">
                 <h3>🚀 1 分鐘免費建立您的專屬雲端資料庫與寄信後端</h3>
-                <a href="https://sheets.new" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="text-decoration:none;">
+                <a href="https://sheets.new" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm"
+                  style="text-decoration:none;">
                   ➕ 點此新建 Google 試算表
                 </a>
               </div>
 
               <ol class="setup-steps-list">
-                <li>點擊右上方「<strong>➕ 點此新建 Google 試算表</strong>」，在試算表上方選單點選「<strong>擴充功能</strong>」➔「<strong>Apps Script</strong>」。</li>
+                <li>點擊右上方「<strong>➕ 點此新建 Google 試算表</strong>」，在試算表上方選單點選「<strong>擴充功能</strong>」➔「<strong>Apps
+                    Script</strong>」。</li>
                 <li>
                   點擊下方按鈕一鍵複製後端程式碼，清空 Apps Script 編輯器原本的內容並貼上，按 <code>Ctrl + S</code> 儲存：
                   <div style="margin: 8px 0;">
@@ -686,8 +693,11 @@
                     <li>誰可以存取：選擇「<strong>所有人 (Anyone)</strong>」（讓所有考生免登入 Google 即可跨裝置連線交卷）</li>
                   </ul>
                 </li>
-                <li>點擊「<strong>部署</strong>」➔「<strong>授予存取權</strong>」➔ 選擇您的 Google 帳號 ➔ 點選「<strong>進階 (Advanced)</strong>」➔「<strong>前往專案 (不安全)</strong>」➔「<strong>允許</strong>」。</li>
-                <li>複製產生的「<strong>網頁應用程式網址 (`https://script.google.com/macros/s/.../exec`)</strong>」，貼回左側輸入框並點擊「<strong>✅ 儲存並啟用雲端連線</strong>」即完成！</li>
+                <li>點擊「<strong>部署</strong>」➔「<strong>授予存取權</strong>」➔ 選擇您的 Google 帳號 ➔ 點選「<strong>進階
+                    (Advanced)</strong>」➔「<strong>前往專案 (不安全)</strong>」➔「<strong>允許</strong>」。</li>
+                <li>複製產生的「<strong>網頁應用程式網址
+                    (`https://script.google.com/macros/s/.../exec`)</strong>」，貼回左側輸入框並點擊「<strong>✅
+                    儲存並啟用雲端連線</strong>」即完成！</li>
               </ol>
             </div>
           </div>
