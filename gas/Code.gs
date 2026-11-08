@@ -5,7 +5,7 @@
  * 功能包含：
  * 1. 多人同時連線應試：集中儲存「當前開放題庫」、「當前場次考生成績」與「歷次測驗歷史紀錄」
  * 2. Google 試算表視覺化同步：自動建立並更新【系統狀態設定】、【當前考生成績】、【歷次測驗紀錄】工作表
- * 3. 自動寄送成績單 Email：透過 Google MailApp 寄送精美 HTML 考生成績與標準答案對照表
+ * 3. 自動寄送成績單 Email：透過 Google MailApp 寄送精美 HTML 考生成績通知單（不含考題與作答明細，防止試題外流）
  *
  * 部署步驟：
  * 1. 新建一份 Google 試算表 -> 點選「擴充功能」>「Apps Script」
@@ -253,50 +253,31 @@ function doPost(e) {
 }
 
 /**
- * 建立考生成績通知 HTML 信件內容
+ * 建立考生成績通知 HTML 信件內容 (僅含個人成績摘要，不含考題與作答明細)
  */
 function buildScoreEmailHtml(sub, examInfo) {
-  const questions = (examInfo && Array.isArray(examInfo.questions)) ? examInfo.questions : [];
   const scoreColor = Number(sub.score) >= 60 ? '#0f766e' : '#dc2626';
   const passBadge = Number(sub.score) >= 60 ? '及格' : '未達及格標準 (60分)';
-
-  let detailRowsHtml = '';
-  questions.forEach((q, idx) => {
-    const detail = (sub.answerDetails && sub.answerDetails[q.id]) ? sub.answerDetails[q.id] : null;
-    const picked = detail ? detail.selected : '未作答';
-    const isCorrect = detail ? detail.isCorrect : false;
-    const statusText = isCorrect
-      ? '<span style="color:#0f766e;font-weight:bold;">✔ 答對</span>'
-      : '<span style="color:#dc2626;font-weight:bold;">✘ 答錯</span>';
-
-    detailRowsHtml += `
-      <tr>
-        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:center;">第 ${idx + 1} 題</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;">${escapeHtmlStr(q.question)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:center;font-weight:bold;">${escapeHtmlStr(picked)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:#0f766e;font-weight:bold;">${escapeHtmlStr(q.answer)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:center;">${statusText}</td>
-      </tr>
-    `;
-  });
+  const examDateStr = sub.examDate || (examInfo && examInfo.examDate) || '-';
 
   return `
-    <div style="font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:680px;margin:0 auto;border:1px solid #cbd5e1;border-radius:12px;overflow:hidden;background:#ffffff;">
+    <div style="font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:600px;margin:0 auto;border:1px solid #cbd5e1;border-radius:12px;overflow:hidden;background:#ffffff;">
       <div style="background:linear-gradient(135deg,#0f766e,#115e59);color:#ffffff;padding:20px 24px;">
         <div style="font-size:13px;opacity:0.9;">線上筆試測驗系統 — 成績通知單</div>
         <h2 style="margin:6px 0 0;font-size:20px;">${escapeHtmlStr(sub.examTitle || examInfo.title || '線上筆試測驗')}</h2>
       </div>
       <div style="padding:24px;">
         <p style="margin:0 0 16px;font-size:15px;color:#334155;">
-          <strong>${escapeHtmlStr(sub.studentName)}</strong>（學號／編號：<strong>${escapeHtmlStr(sub.studentId)}</strong>）您好，您的筆試測驗成績與作答明細如下：
+          <strong>${escapeHtmlStr(sub.studentName)}</strong>（學號／座號：<strong>${escapeHtmlStr(sub.studentId)}</strong>）您好，您的筆試測驗成績結果如下：
         </p>
 
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 22px;margin-bottom:16px;">
           <div style="font-size:14px;color:#64748b;">測驗總分（滿分 100 分）</div>
-          <div style="font-size:32px;font-weight:800;color:${scoreColor};margin:4px 0;">
+          <div style="font-size:34px;font-weight:800;color:${scoreColor};margin:6px 0;">
             ${sub.score} <span style="font-size:16px;font-weight:600;">分（${passBadge}）</span>
           </div>
-          <div style="font-size:13px;color:#475569;margin-top:8px;line-height:1.7;">
+          <div style="font-size:13.5px;color:#475569;margin-top:10px;line-height:1.8;">
+            • 考試日期：<strong>${escapeHtmlStr(examDateStr)}</strong><br>
             • 答對題數：<strong>${sub.correctCount} / ${sub.totalQuestions} 題</strong><br>
             • 作答耗時：<strong>${escapeHtmlStr(sub.timeSpentFormatted || '-')}</strong><br>
             • 交卷狀態：<strong>${escapeHtmlStr(sub.status || '正常交卷')}</strong><br>
@@ -304,26 +285,8 @@ function buildScoreEmailHtml(sub, examInfo) {
           </div>
         </div>
 
-        ${detailRowsHtml ? `
-        <h3 style="font-size:16px;color:#0f172a;margin:20px 0 10px;">📋 各題作答明細與標準答案</h3>
-        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#1e293b;">
-          <thead>
-            <tr style="background:#f1f5f9;">
-              <th style="padding:8px 10px;border-bottom:2px solid #cbd5e1;width:75px;">題號</th>
-              <th style="padding:8px 10px;border-bottom:2px solid #cbd5e1;text-align:left;">題目內容</th>
-              <th style="padding:8px 10px;border-bottom:2px solid #cbd5e1;width:75px;">您的答案</th>
-              <th style="padding:8px 10px;border-bottom:2px solid #cbd5e1;width:75px;">標準答案</th>
-              <th style="padding:8px 10px;border-bottom:2px solid #cbd5e1;width:75px;">結果</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${detailRowsHtml}
-          </tbody>
-        </table>
-        ` : ''}
-
-        <p style="margin-top:24px;font-size:12px;color:#94a3b8;text-align:center;">
-          本信件由「線上筆試測驗系統」自動發送。
+        <p style="margin-top:20px;font-size:12px;color:#94a3b8;text-align:center;">
+          本信件由「線上筆試測驗系統」自動發送，為維護題庫保密原則，成績單不附載試題與作答明細。
         </p>
       </div>
     </div>

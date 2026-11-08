@@ -1524,33 +1524,28 @@ function clearAllSubmissions() {
   refreshExaminerAllViews();
 }
 
-// ==================== 考後寄送成績單 Email 功能 ====================
+// ==================== 考後寄送成績單 Email 功能 (不含考題與作答明細) ====================
 function buildPlainTextScoreEmail(sub, sessionObj) {
   const passText = Number(sub.score) >= 60 ? '及格' : '未達及格標準(60分)';
+  const examDateStr = sub.examDate || sessionObj.examDate || '-';
   const lines = [
     `${sub.studentName} (${sub.studentId}) 您好：`,
     ``,
     `以下為您在【${sub.examTitle || sessionObj.title || '線上筆試測驗'}】的筆試測驗成績通知單：`,
     `----------------------------------------`,
     `• 考生姓名：${sub.studentName}`,
-    `• 學號/編號：${sub.studentId}`,
+    `• 學號/座號：${sub.studentId}`,
+    `• 考試日期：${examDateStr}`,
     `• 測驗總分：${sub.score} 分 (${passText})`,
     `• 答對題數：${sub.correctCount} / ${sub.totalQuestions} 題`,
     `• 作答耗時：${sub.timeSpentFormatted}`,
     `• 交卷狀態：${sub.status}`,
     `• 交卷時間：${sub.submittedAt}`,
     `----------------------------------------`,
-    `【各題作答與標準答案明細】`
+    `（為維護題庫保密原則，本成績單不附載考題與作答明細）`,
+    ``,
+    `線上筆試測驗系統 敬上`
   ];
-
-  (sessionObj.questions || []).forEach((q, idx) => {
-    const d = sub.answerDetails ? sub.answerDetails[q.id] : null;
-    const picked = d ? d.selected : '未作答';
-    const mark = (d && d.isCorrect) ? '✔答對' : '✘答錯';
-    lines.push(`第 ${idx + 1} 題 [${mark}] 您的答案：${picked} ｜ 標準答案：${q.answer} — ${q.question}`);
-  });
-
-  lines.push(``, `線上筆試測驗系統 敬上`);
   return lines.join('\n');
 }
 
@@ -1583,7 +1578,7 @@ async function sendAllScoresEmail(sessionId, silentIfNone = false) {
   }
 
   if (!silentIfNone) {
-    if (!confirm(`確定要寄送成績通知信給本場次共 ${validSubs.length} 位考生嗎？\n（信件內含考生總分、答對題數與各題標準答案對照明細）`)) {
+    if (!confirm(`確定要寄送成績通知信給本場次共 ${validSubs.length} 位考生嗎？\n（信件僅含個人測驗總分與作答統計摘要，不包含考題與作答明細）`)) {
       return;
     }
   }
@@ -1595,17 +1590,32 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
   const gasUrl = getActiveGasUrl();
   const nowStr = formatDateTime(new Date());
 
+  // 寄信資料僅傳遞成績摘要欄位，不傳遞考題與作答明細 (answerDetails)
+  const sanitizedRecipients = recipients.map(r => ({
+    id: r.id,
+    examTitle: r.examTitle,
+    examDate: r.examDate,
+    studentName: r.studentName,
+    studentId: r.studentId,
+    studentEmail: r.studentEmail,
+    score: r.score,
+    correctCount: r.correctCount,
+    totalQuestions: r.totalQuestions,
+    timeSpentFormatted: r.timeSpentFormatted,
+    status: r.status,
+    submittedAt: r.submittedAt
+  }));
+
   // 模式 1：若已綁定 Google Apps Script 雲端後端，直接透過 Google MailApp 雲端背景自動發送 HTML 成績信
   if (gasUrl) {
-    showToast(`📧 正在透過 Google 雲端自動寄送 ${recipients.length} 封考生成績通知信...`);
+    showToast(`📧 正在透過 Google 雲端自動寄送 ${sanitizedRecipients.length} 封考生成績通知信...`);
     const res = await postToCloud({
       action: 'sendScoreEmails',
       sessionId: sessionId,
-      recipients: recipients,
+      recipients: sanitizedRecipients,
       examData: {
         title: sessionObj.title,
-        examDate: sessionObj.examDate,
-        questions: sessionObj.questions
+        examDate: sessionObj.examDate
       }
     });
 
@@ -1672,7 +1682,7 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
     });
     summaryLines.push(
       `----------------------------------------`,
-      `💡 考官提示：若於「☁️ 雲端多人連線與寄信設定」綁定 Google Apps Script，系統即可自動為每位考生獨立寄發專屬 HTML 成績單與標準答案明細！`
+      `💡 考官提示：若於「☁️ 雲端連線與寄信設定」綁定 Google Apps Script，系統即可自動為每位考生獨立寄發專屬 HTML 個人成績單！`
     );
 
     if (sessionId === 'CURRENT') {
