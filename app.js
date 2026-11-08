@@ -2,8 +2,8 @@
  * 線上筆試測驗系統 - 核心邏輯 (app.js) — 雲端多人連線與歷史場次版 (方案 B)
  * 功能包含：
  * 1. 雲端多人同步 (Google Apps Script + GitHub Pages)：跨網路多人同時連線應試、QR Code 專屬應試連結、即時同步題庫與交卷紀錄
- * 2. 考生端：姓名/學號/Email 登入、同一場次同一個學號防重複應試、亂數排列題目、自動平均配分、倒數計時、防作弊監控 (第1次警告、第2次強制終止交卷)
- * 3. 考官端：PIN碼驗證 (0000119)、Excel 範本解析匯入、考後一鍵或單筆寄送考生成績單 Email、每次測驗獨立歸檔為歷史紀錄、錯題率與統計指標分析
+ * 2. 考生端 (#007979 主題)：僅在考官「開始測驗」開放試卷期間顯示內容（試卷關閉時完全不顯示任何內容）、姓名/學號/Email 登入、防重複應試、亂數題目、防作弊監控
+ * 3. 考官端 (#750000 主題)：PIN碼驗證 (0000119)、開始/結束測驗開關控制、Excel 範本匯入（支援空白題庫）、考後寄送考生成績單 Email、每次測驗獨立歸檔為歷史紀錄、錯題分析
  */
 
 // 若有固定部署的預設 Google Apps Script 網址可填於此處，否則可由考官端介面動態設定並透過 ?api= 參數自動分享給考生
@@ -18,94 +18,13 @@ const STORAGE_KEYS = {
 
 const EXAMINER_PIN = '0000119';
 
-// 預設題庫 (依使用者提供的範本格式建立)
+// 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
-  title: '範本考題',
+  title: '未命名測驗',
   durationMinutes: 60,
-  examDate: '2026-12-01',
-  questions: [
-    {
-      id: 1,
-      question: '有關止血帶使用時機下列何者錯誤?',
-      rawOptions: '(A)任何部位的傷口經由持續加壓止血及包紮，仍無法減緩出血\n(B)預期肢體傷口加壓止血無效\n(C)肢體遭受壓困≧4小時，脫困前無法建立周邊靜脈管路\n(D)創傷性截肢',
-      options: [
-        { key: 'A', text: '任何部位的傷口經由持續加壓止血及包紮，仍無法減緩出血' },
-        { key: 'B', text: '預期肢體傷口加壓止血無效' },
-        { key: 'C', text: '肢體遭受壓困≧4小時，脫困前無法建立周邊靜脈管路' },
-        { key: 'D', text: '創傷性截肢' }
-      ],
-      answer: 'A'
-    }
-  ]
-};
-
-// 5題示範急救題庫 (方便考官一鍵測試多題亂數與統計分析)
-const DEMO_5Q_EXAM_DATA = {
-  title: '緊急救護與止血處置筆試測驗 (示範題庫)',
-  durationMinutes: 60,
-  examDate: '2026-12-01',
-  questions: [
-    {
-      id: 1,
-      question: '有關止血帶使用時機下列何者錯誤?',
-      rawOptions: '(A)任何部位的傷口經由持續加壓止血及包紮，仍無法減緩出血\n(B)預期肢體傷口加壓止血無效\n(C)肢體遭受壓困≧4小時，脫困前無法建立周邊靜脈管路\n(D)創傷性截肢',
-      options: [
-        { key: 'A', text: '任何部位的傷口經由持續加壓止血及包紮，仍無法減緩出血' },
-        { key: 'B', text: '預期肢體傷口加壓止血無效' },
-        { key: 'C', text: '肢體遭受壓困≧4小時，脫困前無法建立周邊靜脈管路' },
-        { key: 'D', text: '創傷性截肢' }
-      ],
-      answer: 'A'
-    },
-    {
-      id: 2,
-      question: '成人高品質心肺復甦術 (CPR) 的胸部按壓深度與速率為何？',
-      rawOptions: '(A)深度約 3-4 公分，速率每分鐘 80-100 次\n(B)深度約 5-6 公分，速率每分鐘 100-120 次\n(C)深度至少 7 公分以上，速率每分鐘 120-140 次\n(D)深度約 4-5 公分，速率每分鐘 60-90 次',
-      options: [
-        { key: 'A', text: '深度約 3-4 公分，速率每分鐘 80-100 次' },
-        { key: 'B', text: '深度約 5-6 公分，速率每分鐘 100-120 次' },
-        { key: 'C', text: '深度至少 7 公分以上，速率每分鐘 120-140 次' },
-        { key: 'D', text: '深度約 4-5 公分，速率每分鐘 60-90 次' }
-      ],
-      answer: 'B'
-    },
-    {
-      id: 3,
-      question: '使用自動體外心臟電擊去顫器 (AED) 時，下列敘述何者正確？',
-      rawOptions: '(A)分析心律時可持續進行胸部按壓以維持血流\n(B)若傷患胸前潮濕，無須擦乾即可直接貼上電擊貼片\n(C)電擊完成後應立即開始胸部按壓 (CPR) 2 分鐘\n(D)電擊貼片應重疊貼於左胸心尖處',
-      options: [
-        { key: 'A', text: '分析心律時可持續進行胸部按壓以維持血流' },
-        { key: 'B', text: '若傷患胸前潮濕，無須擦乾即可直接貼上電擊貼片' },
-        { key: 'C', text: '電擊完成後應立即開始胸部按壓 (CPR) 2 分鐘' },
-        { key: 'D', text: '電擊貼片應重疊貼於左胸心尖處' }
-      ],
-      answer: 'C'
-    },
-    {
-      id: 4,
-      question: '面對清醒且發生嚴重異物梗塞（無法說話、咳嗽或呼吸）的成人患者，應優先採取何種處置？',
-      rawOptions: '(A)請患者大口喝水將異物吞下\n(B)立即讓患者平躺並開始胸部按壓\n(C)站在患者背後施行腹戳法（哈姆立克法）\n(D)將手指伸入患者咽喉深處盲抓異物',
-      options: [
-        { key: 'A', text: '請患者大口喝水將異物吞下' },
-        { key: 'B', text: '立即讓患者平躺並開始胸部按壓' },
-        { key: 'C', text: '站在患者背後施行腹戳法（哈姆立克法）' },
-        { key: 'D', text: '將手指伸入患者咽喉深處盲抓異物' }
-      ],
-      answer: 'C'
-    },
-    {
-      id: 5,
-      question: '執行創傷患者初級評估 (Primary Survey) 的 ABCDE 原則中，「A」代表下列何者？',
-      rawOptions: '(A)評估神經學狀態 (Alertness)\n(B)維持呼吸道暢通並保護頸椎 (Airway & C-spine protection)\n(C)評估動脈血氧飽和度 (Arterial oxygen)\n(D)給予止痛藥物 (Analgesia)',
-      options: [
-        { key: 'A', text: '評估神經學狀態 (Alertness)' },
-        { key: 'B', text: '維持呼吸道暢通並保護頸椎 (Airway & C-spine protection)' },
-        { key: 'C', text: '評估動脈血氧飽和度 (Arterial oxygen)' },
-        { key: 'D', text: '給予止痛藥物 (Analgesia)' }
-      ],
-      answer: 'B'
-    }
-  ]
+  examDate: '',
+  isExamOpen: false,
+  questions: []
 };
 
 // 系統狀態
@@ -139,7 +58,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDragAndDrop();
   setupAntiCheatListeners();
 
-  // 若已綁定雲端網址，啟動時自動從雲端拉取最新題庫與成績紀錄
+  // 若已綁定雲端網址，啟動時自動從雲端拉取最新題庫、開放狀態與成績紀錄
   if (getActiveGasUrl()) {
     await syncStateFromCloud(true);
     startCloudPolling();
@@ -232,11 +151,11 @@ function handleCloudPillClick() {
 function startCloudPolling() {
   if (cloudPollTimer) clearInterval(cloudPollTimer);
   cloudPollTimer = setInterval(() => {
-    // 僅在非作答進行中且已設定雲端時背景靜默同步
+    // 僅在非作答進行中且已設定雲端時背景靜默同步 (每 10 秒同步試卷開放狀態與最新成績)
     if (!activeSession.isActive && getActiveGasUrl()) {
       syncStateFromCloud(true);
     }
-  }, 15000);
+  }, 10000);
 }
 
 async function syncStateFromCloud(silent = true) {
@@ -256,8 +175,14 @@ async function syncStateFromCloud(silent = true) {
     const res = await fetch(`${gasUrl}?action=getExamState&_t=${Date.now()}`);
     const json = await res.json();
     if (json && json.status === 'success') {
-      if (json.examData && Array.isArray(json.examData.questions) && json.examData.questions.length > 0) {
-        examData = json.examData;
+      if (json.examData && Array.isArray(json.examData.questions)) {
+        examData = {
+          title: json.examData.title ?? '',
+          durationMinutes: Number(json.examData.durationMinutes) || 60,
+          examDate: json.examData.examDate ?? '',
+          isExamOpen: Boolean(json.examData.isExamOpen),
+          questions: json.examData.questions
+        };
         localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
       }
       if (Array.isArray(json.submissions)) {
@@ -278,7 +203,8 @@ async function syncStateFromCloud(silent = true) {
       updateCloudStatusUI();
 
       if (!silent) {
-        showToast(`✅ 雲端同步成功！當前試卷共 ${examData.questions.length} 題，本場次已交卷 ${submissions.length} 人。`);
+        const statusStr = examData.isExamOpen ? '開放中' : '已關閉';
+        showToast(`✅ 雲端同步成功！試卷狀態：【${statusStr}】，共 ${examData.questions.length} 題，已交卷 ${submissions.length} 人。`);
       }
       return true;
     }
@@ -334,7 +260,6 @@ async function saveGasUrlConfig() {
   showToast('🔌 正在驗證並同步雲端資料庫...');
   const ok = await syncStateFromCloud(false);
   if (ok) {
-    // 若雲端還是空的，主動把本機目前的題庫推上去初始化
     await postToCloud({
       action: 'saveExamData',
       examData: examData
@@ -403,8 +328,14 @@ function loadExamData() {
     const raw = localStorage.getItem(STORAGE_KEYS.EXAM_DATA);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
-        return parsed;
+      if (parsed && Array.isArray(parsed.questions)) {
+        return {
+          title: parsed.title ?? '',
+          durationMinutes: Number(parsed.durationMinutes) || 60,
+          examDate: parsed.examDate ?? '',
+          isExamOpen: Boolean(parsed.isExamOpen),
+          questions: parsed.questions
+        };
       }
     }
   } catch (e) {
@@ -417,6 +348,9 @@ function loadExamData() {
 function saveExamDataToStorage(syncCloud = true) {
   localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
   renderStudentLoginMeta();
+  if (isExaminerAuthenticated) {
+    renderExamControlBanner();
+  }
   if (syncCloud && getActiveGasUrl()) {
     postToCloud({
       action: 'saveExamData',
@@ -477,7 +411,7 @@ function getPointsPerQuestion(qCount) {
   return Number((100 / qCount).toFixed(2));
 }
 
-// ==================== 角色切換 (考生端 / 考官端) ====================
+// ==================== 角色切換 (考生端 #007979 / 考官端 #750000) ====================
 function switchRole(role) {
   if (activeSession.isActive) {
     alert('測驗正在進行中，禁止切換介面！');
@@ -490,12 +424,14 @@ function switchRole(role) {
   const examinerSec = document.getElementById('examinerSection');
 
   if (role === 'student') {
+    document.body.classList.remove('examiner-mode');
     btnStudent.classList.add('active');
     btnExaminer.classList.remove('active');
     studentSec.classList.remove('hidden');
     examinerSec.classList.add('hidden');
     renderStudentLoginMeta();
   } else {
+    document.body.classList.add('examiner-mode');
     btnExaminer.classList.add('active');
     btnStudent.classList.remove('active');
     studentSec.classList.add('hidden');
@@ -513,8 +449,75 @@ function switchRole(role) {
   }
 }
 
-// ==================== 考生端流程 ====================
+// ==================== 考官端：開始與結束測驗控制 ====================
+function renderExamControlBanner() {
+  const banner = document.getElementById('examControlBanner');
+  const badge = document.getElementById('examOpenStatusBadge');
+  const desc = document.getElementById('examOpenStatusDesc');
+  const btnStart = document.getElementById('btnStartExamSession');
+  const btnStop = document.getElementById('btnStopExamSession');
+
+  if (!banner || !badge || !desc || !btnStart || !btnStop) return;
+
+  if (examData.isExamOpen) {
+    banner.classList.add('is-open');
+    badge.className = 'exam-status-indicator open';
+    badge.textContent = '🟢 測驗開放中';
+    desc.textContent = `目前試卷【${examData.title || '未命名測驗'}】（共 ${examData.questions.length} 題）已開放，考生連線至考生端即可作答。`;
+    btnStart.classList.add('hidden');
+    btnStop.classList.remove('hidden');
+  } else {
+    banner.classList.remove('is-open');
+    badge.className = 'exam-status-indicator closed';
+    badge.textContent = '🔴 測驗已關閉';
+    desc.textContent = '目前試卷為關閉狀態，考生連線至考生端將不會看到任何內容。';
+    btnStart.classList.remove('hidden');
+    btnStop.classList.add('hidden');
+  }
+}
+
+function setExamOpenStatus(isOpen) {
+  if (isOpen) {
+    if (!examData.questions || examData.questions.length === 0) {
+      alert('目前題庫中沒有任何題目（0 題），請先匯入考題範本或手動新增題目後再開始測驗！');
+      return;
+    }
+    examData.isExamOpen = true;
+    saveExamDataToStorage(true);
+    refreshExaminerAllViews();
+    showToast('🟢 已開始測驗！試卷現已對考生端開放顯示。');
+  } else {
+    examData.isExamOpen = false;
+    saveExamDataToStorage(true);
+    refreshExaminerAllViews();
+    showToast('🔴 已結束測驗並關閉試卷！考生端目前已隱藏所有內容。');
+  }
+}
+
+// ==================== 考生端流程 (試卷關閉時完全不顯示任何內容) ====================
 function renderStudentLoginMeta() {
+  const loginView = document.getElementById('studentLoginView');
+  const quizView = document.getElementById('studentQuizView');
+  const resultView = document.getElementById('studentResultView');
+
+  // 若測驗卷為關閉狀態，且考生並非正在作答或剛交卷檢視憑證，考生端完全不顯示任何內容
+  if (!examData.isExamOpen) {
+    if (loginView) loginView.classList.add('hidden');
+    return;
+  }
+
+  // 當測驗卷為開放狀態，且不在作答中或結果頁時，才顯示考生登入與測驗資訊畫面
+  if (
+    loginView &&
+    !activeSession.isActive &&
+    quizView &&
+    quizView.classList.contains('hidden') &&
+    resultView &&
+    resultView.classList.contains('hidden')
+  ) {
+    loginView.classList.remove('hidden');
+  }
+
   const qCount = examData.questions.length;
   const pts = getPointsPerQuestion(qCount);
 
@@ -546,7 +549,7 @@ async function handleStartExam(event) {
     return;
   }
 
-  // 若已連線雲端，開考前先向雲端拉取最新題庫與已交卷名單
+  // 若已連線雲端，開考前先向雲端拉取最新題庫、開放狀態與已交卷名單
   if (getActiveGasUrl()) {
     if (startBtn) {
       startBtn.disabled = true;
@@ -557,6 +560,12 @@ async function handleStartExam(event) {
       startBtn.disabled = false;
       startBtn.innerHTML = `進入全螢幕並開始作答 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
     }
+  }
+
+  // 若考官已關閉測驗，立即隱藏考生端畫面並阻擋作答
+  if (!examData.isExamOpen) {
+    renderStudentLoginMeta();
+    return;
   }
 
   if (examData.questions.length === 0) {
@@ -969,7 +978,6 @@ function resetToStudentHome() {
   document.getElementById('studentStartForm').reset();
   document.getElementById('studentLoginError').classList.add('hidden');
   document.getElementById('studentResultView').classList.add('hidden');
-  document.getElementById('studentLoginView').classList.remove('hidden');
   renderStudentLoginMeta();
 }
 
@@ -1019,6 +1027,7 @@ function switchExaminerTab(tabId) {
 }
 
 function refreshExaminerAllViews() {
+  renderExamControlBanner();
   renderExaminerQuestionTab();
   renderExaminerScoresTab();
   renderExaminerAnalyticsTab();
@@ -1026,7 +1035,7 @@ function refreshExaminerAllViews() {
   updateCloudStatusUI();
 }
 
-// ==================== 考官端頁籤 1：考題管理與 Excel 範本匯入 ====================
+// ==================== 考官端頁籤 1：考題管理與 Excel 範本匯入 (支援完全空白題庫) ====================
 function renderExaminerQuestionTab() {
   const qCount = examData.questions.length;
   const pts = getPointsPerQuestion(qCount);
@@ -1042,7 +1051,7 @@ function renderExaminerQuestionTab() {
   tbody.innerHTML = '';
 
   if (qCount === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted);">目前尚無考題，請從上方匯入 Excel 範本或手動新增題目</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 24px;">目前題庫為空白（0 題），可從上方匯入 Excel 範本或點擊「➕ 手動新增單選題」</td></tr>`;
     return;
   }
 
@@ -1068,8 +1077,8 @@ function renderExaminerQuestionTab() {
 
 function saveExamMetadata(event) {
   event.preventDefault();
-  examData.title = document.getElementById('metaExamTitle').value.trim() || '未命名測驗';
-  examData.examDate = document.getElementById('metaExamDate').value.trim() || '2026-12-01';
+  examData.title = document.getElementById('metaExamTitle').value.trim();
+  examData.examDate = document.getElementById('metaExamDate').value.trim();
   examData.durationMinutes = Math.max(1, Number(document.getElementById('metaExamDuration').value) || 60);
 
   saveExamDataToStorage(true);
@@ -1077,24 +1086,21 @@ function saveExamMetadata(event) {
   showImportAlert('已成功儲存試卷設定並同步至雲端！', 'success');
 }
 
-function loadDemoExamBank() {
-  if (!confirm('確定要載入內建的「5題緊急救護示範題庫」嗎？這將會覆蓋目前的題庫設定。')) {
-    return;
-  }
-  promptArchiveBeforeReplacingBank(JSON.parse(JSON.stringify(DEMO_5Q_EXAM_DATA)), '已成功載入 5 題緊急救護示範考題！每題自動配分為 20 分。');
-}
-
 /**
  * 當考官更換新題庫且當前場次已有考生成績時，貼心詢問是否先將當前場次歸檔至「歷次測驗紀錄」
  */
 function promptArchiveBeforeReplacingBank(newExamObj, successMsg) {
+  // 保留當前是否開放的狀態（若新題庫為 0 題則自動關閉）
+  newExamObj.isExamOpen = newExamObj.questions.length > 0 ? Boolean(examData.isExamOpen) : false;
+
   if (submissions.length > 0) {
     const shouldArchive = confirm(
-      `偵測到目前場次【${examData.title}】已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將這 ${submissions.length} 筆成績自動封存為一筆獨立的「歷次測驗紀錄」，並清空當前場次名單以供新試卷應試？`
+      `偵測到目前場次【${examData.title || '未命名測驗'}】已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將這 ${submissions.length} 筆成績自動封存為一筆獨立的「歷次測驗紀錄」，並清空當前場次名單以供新試卷應試？`
     );
     if (shouldArchive) {
-      createAndSaveHistorySession(`${examData.title} (${examData.examDate})`, true, newExamObj);
-      showImportAlert(`${successMsg}（原場次 ${submissions.length} 人成績已自動封存至「歷次測驗紀錄」）`, 'success');
+      const prevCount = submissions.length;
+      createAndSaveHistorySession(`${examData.title || '未命名測驗'} (${examData.examDate || '-'})`, true, newExamObj);
+      showImportAlert(`${successMsg}（原場次 ${prevCount} 人成績已自動封存至「歷次測驗紀錄」）`, 'success');
       return;
     }
   }
@@ -1106,17 +1112,27 @@ function promptArchiveBeforeReplacingBank(newExamObj, successMsg) {
 }
 
 function deleteQuestion(qId) {
-  if (examData.questions.length <= 1) {
-    alert('題庫至少需保留 1 題！');
-    return;
-  }
   examData.questions = examData.questions.filter(q => q.id !== qId);
   // 重新編號
   examData.questions.forEach((q, i) => {
     q.id = i + 1;
   });
+  // 若題庫已刪空為 0 題，自動將測驗狀態設為關閉
+  if (examData.questions.length === 0) {
+    examData.isExamOpen = false;
+  }
   saveExamDataToStorage(true);
   refreshExaminerAllViews();
+}
+
+function clearAllQuestions() {
+  if (examData.questions.length === 0) return;
+  if (!confirm('確定要清空目前題庫中的所有題目嗎？')) return;
+  examData.questions = [];
+  examData.isExamOpen = false;
+  saveExamDataToStorage(true);
+  refreshExaminerAllViews();
+  showImportAlert('已清空所有題目（目前題庫為 0 題，測驗已自動設為關閉狀態）。', 'success');
 }
 
 function openAddQuestionModal() {
@@ -1206,28 +1222,28 @@ function processExcelFile(file) {
 }
 
 function parseTemplateRows(rows, fileName) {
-  if (!rows || rows.length < 2) {
+  if (!rows || rows.length === 0) {
     showImportAlert('檔案內容空白或格式不符！', 'danger');
     return;
   }
 
-  let parsedTitle = examData.title;
-  let parsedDuration = examData.durationMinutes;
-  let parsedDate = examData.examDate;
+  let parsedTitle = examData.title || '';
+  let parsedDuration = examData.durationMinutes || 60;
+  let parsedDate = examData.examDate || '';
   const parsedQuestions = [];
 
   for (let r = 0; r < Math.min(4, rows.length); r++) {
     const row = rows[r].map(cell => String(cell ?? '').trim());
     for (let c = 0; c < row.length; c++) {
-      if (row[c] === '試卷名稱' && row[c + 1]) {
-        parsedTitle = row[c + 1];
+      if (row[c] === '試卷名稱') {
+        parsedTitle = row[c + 1] || '';
       }
       if (row[c] === '作答時間' && row[c + 1]) {
         const num = parseInt(row[c + 1], 10);
         if (!isNaN(num) && num > 0) parsedDuration = num;
       }
-      if (row[c] === '考試日期' && row[c + 1]) {
-        parsedDate = row[c + 1];
+      if (row[c] === '考試日期') {
+        parsedDate = row[c + 1] || '';
       }
     }
   }
@@ -1272,23 +1288,20 @@ function parseTemplateRows(rows, fileName) {
     }
   }
 
-  if (parsedQuestions.length === 0) {
-    showImportAlert('未在檔案中偵測到有效的題目與選項，請確認「題目」與「選項」欄位皆已填寫！', 'danger');
-    return;
-  }
-
   const newExamObj = {
     title: parsedTitle,
     durationMinutes: parsedDuration,
     examDate: parsedDate,
+    isExamOpen: parsedQuestions.length > 0 ? Boolean(examData.isExamOpen) : false,
     questions: parsedQuestions
   };
 
   const pts = getPointsPerQuestion(parsedQuestions.length);
-  promptArchiveBeforeReplacingBank(
-    newExamObj,
-    `成功自「${fileName}」匯入試卷【${parsedTitle}】！共讀取 ${parsedQuestions.length} 題有效單選題，每題自動配分 ${pts} 分。`
-  );
+  const msg = parsedQuestions.length > 0
+    ? `成功自「${fileName}」匯入試卷【${parsedTitle || '未命名測驗'}】！共讀取 ${parsedQuestions.length} 題有效單選題，每題自動配分 ${pts} 分。`
+    : `已自「${fileName}」匯入試卷設定【${parsedTitle || '空白題庫'}】（目前有效題目為 0 題）。`;
+
+  promptArchiveBeforeReplacingBank(newExamObj, msg);
 }
 
 function parseOptionsString(rawStr) {
@@ -1365,7 +1378,7 @@ function renderExaminerScoresTab() {
   tbody.innerHTML = '';
 
   if (submissions.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center; color: var(--text-muted); padding: 28px;">目前場次尚無考生交卷紀錄。可點擊右上方「🧪 產生模擬成績」快速測試寄信、歷史歸檔與錯題分析功能。</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center; color: var(--text-muted); padding: 28px;">目前場次尚無考生交卷紀錄。</td></tr>`;
     return;
   }
 
@@ -1403,13 +1416,13 @@ function buildSubmissionRowElement(sub, sessionId) {
     <td style="white-space: nowrap;"><strong>${escapeHtml(sub.studentId)}</strong></td>
     <td style="white-space: nowrap; min-width: 90px;">${escapeHtml(sub.studentName)}</td>
     <td>${emailDisplay}</td>
-    <td><strong style="font-size:1.05rem; color:${scoreColor};">${sub.score} 分</strong></td>
-    <td>${sub.correctCount} / ${sub.totalQuestions} 題</td>
-    <td>${escapeHtml(sub.timeSpentFormatted)}</td>
-    <td>${warnBadge}</td>
-    <td>${statusBadge}</td>
-    <td>${emailStatusBadge}</td>
-    <td style="font-size:0.84rem;">${escapeHtml(sub.submittedAt)}</td>
+    <td style="white-space: nowrap;"><strong style="font-size:1.05rem; color:${scoreColor};">${sub.score} 分</strong></td>
+    <td style="white-space: nowrap;">${sub.correctCount} / ${sub.totalQuestions} 題</td>
+    <td style="white-space: nowrap;">${escapeHtml(sub.timeSpentFormatted)}</td>
+    <td style="white-space: nowrap;">${warnBadge}</td>
+    <td style="white-space: nowrap;">${statusBadge}</td>
+    <td style="font-size:0.84rem; white-space: nowrap;">${escapeHtml(sub.submittedAt)}</td>
+    <td style="white-space: nowrap;">${emailStatusBadge}</td>
     <td>
       <div style="display:flex; gap:6px; flex-wrap:wrap;">
         <button type="button" class="btn btn-secondary btn-sm" onclick="viewStudentDetail('${sessionId}', '${sub.id}')">明細</button>
@@ -1517,7 +1530,7 @@ function buildPlainTextScoreEmail(sub, sessionObj) {
   const lines = [
     `${sub.studentName} (${sub.studentId}) 您好：`,
     ``,
-    `以下為您在【${sub.examTitle || sessionObj.title}】的筆試測驗成績通知單：`,
+    `以下為您在【${sub.examTitle || sessionObj.title || '線上筆試測驗'}】的筆試測驗成績通知單：`,
     `----------------------------------------`,
     `• 考生姓名：${sub.studentName}`,
     `• 學號/編號：${sub.studentId}`,
@@ -1630,7 +1643,7 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
   // 模式 2：本機未綁定雲端時，使用 mailto: 喚起系統郵件客戶端寄發完整成績單
   if (recipients.length === 1) {
     const sub = recipients[0];
-    const subject = `【測驗成績通知】${sub.examTitle || sessionObj.title} - ${sub.studentName} (${sub.studentId})`;
+    const subject = `【測驗成績通知】${sub.examTitle || sessionObj.title || '線上筆試測驗'} - ${sub.studentName} (${sub.studentId})`;
     const body = buildPlainTextScoreEmail(sub, sessionObj);
     sub.emailSentAt = nowStr;
 
@@ -1647,11 +1660,10 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
     window.location.href = `mailto:${encodeURIComponent(sub.studentEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     showToast(`✉️ 已開啟「${sub.studentName}」的成績通知信件視窗！`);
   } else {
-    // 多人批次：開啟第一封或提示綁定 Google Apps Script 即可全自動背景寄送
     const bccList = recipients.map(r => r.studentEmail).join(',');
-    const subject = `【測驗成績公佈】${sessionObj.title} (${sessionObj.examDate}) 個人成績總表`;
+    const subject = `【測驗成績公佈】${sessionObj.title || '線上筆試測驗'} (${sessionObj.examDate || '-'}) 個人成績總表`;
     const summaryLines = [
-      `各位考生您好，【${sessionObj.title}】測驗已結束，成績摘要如下：`,
+      `各位考生您好，【${sessionObj.title || '線上筆試測驗'}】測驗已結束，成績摘要如下：`,
       `----------------------------------------`
     ];
     recipients.forEach(r => {
@@ -1681,12 +1693,12 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
 // ==================== 將每一次測驗結果獨立成一筆歷史紀錄 (頁籤 4) ====================
 function openArchiveSessionModal() {
   if (submissions.length === 0) {
-    alert('目前場次尚無任何考生交卷紀錄，無須歸檔！（您可先點擊「🧪 產生模擬成績」或待考生交卷後再歸檔）');
+    alert('目前場次尚無任何考生交卷紀錄，請待考生交卷後再進行結算歸檔！');
     return;
   }
 
   document.getElementById('archiveStudentCount').textContent = submissions.length;
-  const defaultTitle = `${examData.title} (${examData.examDate || formatDateTime(new Date()).slice(0, 10)})`;
+  const defaultTitle = `${examData.title || '線上筆試測驗'} (${examData.examDate || formatDateTime(new Date()).slice(0, 10)})`;
   document.getElementById('archiveSessionTitle').value = defaultTitle;
   document.getElementById('archiveAutoSendEmail').checked = true;
   document.getElementById('archiveClearCurrent').checked = true;
@@ -1699,11 +1711,15 @@ function closeArchiveSessionModal() {
 
 async function confirmArchiveCurrentSession(event) {
   event.preventDefault();
-  const customTitle = document.getElementById('archiveSessionTitle').value.trim() || examData.title;
+  const customTitle = document.getElementById('archiveSessionTitle').value.trim() || examData.title || '未命名測驗';
   const autoSendEmail = document.getElementById('archiveAutoSendEmail').checked;
   const clearCurrent = document.getElementById('archiveClearCurrent').checked;
 
   closeArchiveSessionModal();
+
+  // 歸檔時一併關閉當前測驗開放狀態
+  examData.isExamOpen = false;
+  saveExamDataToStorage(true);
 
   // 若勾選歸檔同時自動寄送成績信給尚未收到信的考生
   if (autoSendEmail) {
@@ -1721,16 +1737,16 @@ async function confirmArchiveCurrentSession(event) {
   const newHist = createAndSaveHistorySession(customTitle, clearCurrent, null);
   switchExaminerTab('tabHistory');
   viewHistorySessionDetail(newHist.id);
-  showToast(`🗂️ 已將「${customTitle}」獨立封存至歷次測驗紀錄！`);
+  showToast(`🗂️ 已結束測驗並將「${customTitle}」獨立封存至歷次測驗紀錄！`);
 }
 
 function createAndSaveHistorySession(sessionTitle, clearCurrent = true, newExamData = null) {
   const stats = calculateStatsForList(submissions);
   const archivedRecord = {
     id: 'HIST_' + Date.now(),
-    sessionTitle: sessionTitle || examData.title,
-    examTitle: examData.title,
-    examDate: examData.examDate,
+    sessionTitle: sessionTitle || examData.title || '未命名測驗',
+    examTitle: examData.title || '未命名測驗',
+    examDate: examData.examDate || '-',
     durationMinutes: examData.durationMinutes,
     archivedAt: formatDateTime(new Date()),
     questionsSnapshot: JSON.parse(JSON.stringify(examData.questions)),
@@ -1756,7 +1772,7 @@ function createAndSaveHistorySession(sessionTitle, clearCurrent = true, newExamD
       action: 'archiveSession',
       historyRecord: archivedRecord,
       clearCurrent: clearCurrent,
-      newExamData: newExamData
+      newExamData: newExamData || examData
     });
   }
 
@@ -1897,8 +1913,8 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
     '作答耗時',
     '防作弊警告次數',
     '交卷狀態',
-    '成績信狀態',
-    '交卷時間'
+    '交卷時間',
+    '成績信狀態'
   ];
   targetQuestions.forEach((q, idx) => {
     headers.push(`第${idx + 1}題(正解:${q.answer})`);
@@ -1916,8 +1932,8 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
       sub.timeSpentFormatted,
       sub.warningCount,
       sub.status,
-      sub.emailSentAt ? `已寄送 (${sub.emailSentAt})` : '尚未寄送',
-      sub.submittedAt
+      sub.submittedAt,
+      sub.emailSentAt ? `已寄送 (${sub.emailSentAt})` : '尚未寄送'
     ];
     targetQuestions.forEach(q => {
       const d = sub.answerDetails ? sub.answerDetails[q.id] : null;
@@ -2035,7 +2051,7 @@ function renderErrorRankingIntoContainer(container, questionsList, targetSubmiss
   if (!container) return;
   container.innerHTML = '';
 
-  if (targetSubmissions.length === 0) {
+  if (targetSubmissions.length === 0 || !questionsList || questionsList.length === 0) {
     container.innerHTML = `<p class="text-muted" style="padding:16px 0;">尚無考生作答數據可供分析。</p>`;
     return;
   }
@@ -2122,85 +2138,6 @@ function renderExaminerAnalyticsTab() {
     document.getElementById('scoreDistributionChart'),
     submissions
   );
-}
-
-/**
- * 產生模擬考生成績 (方便考官測試寄送成績信、歷史歸檔、錯題分析與 Excel 匯出)
- */
-function generateMockSubmissions() {
-  if (examData.questions.length === 1) {
-    if (confirm('目前題庫僅有 1 題，是否先自動載入「5題緊急救護示範題庫」再產生 8 位模擬考生成績，以完整展示錯題率排行、寄信與歷史場次歸檔功能？')) {
-      examData = JSON.parse(JSON.stringify(DEMO_5Q_EXAM_DATA));
-      saveExamDataToStorage(true);
-    }
-  }
-
-  const sampleStudents = [
-    { id: '112001', name: '陳冠宇', email: 'student01@example.com', accuracy: 0.9, warn: 0, forced: false },
-    { id: '112002', name: '林詩涵', email: 'student02@example.com', accuracy: 0.8, warn: 0, forced: false },
-    { id: '112003', name: '張家豪', email: 'student03@example.com', accuracy: 0.65, warn: 1, forced: false },
-    { id: '112004', name: '李佳穎', email: 'student04@example.com', accuracy: 1.0, warn: 0, forced: false },
-    { id: '112005', name: '王柏翰', email: 'student05@example.com', accuracy: 0.4, warn: 2, forced: true },
-    { id: '112006', name: '黃心怡', email: 'student06@example.com', accuracy: 0.75, warn: 0, forced: false },
-    { id: '112007', name: '吳承恩', email: 'student07@example.com', accuracy: 0.55, warn: 1, forced: false },
-    { id: '112008', name: '劉子軒', email: 'student08@example.com', accuracy: 0.85, warn: 0, forced: false }
-  ];
-
-  const totalQ = examData.questions.length;
-  const optionsPool = ['A', 'B', 'C', 'D'];
-
-  sampleStudents.forEach((st, idx) => {
-    if (submissions.some(s => s.studentId === st.id)) return;
-
-    let correctCount = 0;
-    const answerDetails = {};
-
-    examData.questions.forEach((q, qIdx) => {
-      const difficultyBias = (qIdx % 3 === 0) ? -0.25 : 0.05;
-      const isRight = Math.random() < (st.accuracy + difficultyBias);
-      let picked = q.answer;
-
-      if (!isRight) {
-        const wrongOpts = optionsPool.filter(k => k !== q.answer);
-        picked = wrongOpts[Math.floor(Math.random() * wrongOpts.length)];
-      } else {
-        correctCount++;
-      }
-
-      answerDetails[q.id] = {
-        selected: picked,
-        correctAnswer: q.answer,
-        isCorrect: isRight
-      };
-    });
-
-    const score = Number(((correctCount / totalQ) * 100).toFixed(1));
-    const secSpent = 420 + Math.floor(Math.random() * 900);
-
-    submissions.push({
-      id: 'MOCK_' + Date.now() + '_' + idx,
-      examTitle: examData.title,
-      examDate: examData.examDate,
-      studentName: st.name,
-      studentId: st.id,
-      studentEmail: st.email,
-      score,
-      correctCount,
-      totalQuestions: totalQ,
-      answeredCount: totalQ,
-      warningCount: st.warn,
-      status: st.forced ? '防作弊強制終止 (離開畫面達2次)' : '正常交卷',
-      timeSpentSeconds: secSpent,
-      timeSpentFormatted: formatDuration(secSpent),
-      submittedAt: formatDateTime(new Date(Date.now() - (8 - idx) * 360000)),
-      emailSentAt: '',
-      answerDetails
-    });
-  });
-
-  saveSubmissionsToStorage(true);
-  refreshExaminerAllViews();
-  showToast('🧪 已產生 8 位模擬考生成績（含 Email），可測試一鍵寄信與歷史場次歸檔！');
 }
 
 // ==================== 一鍵複製 Google Apps Script 後端程式碼 (Code.gs) ====================

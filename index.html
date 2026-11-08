@@ -81,8 +81,8 @@
   <main class="main-container">
     <!-- ==================== 考生端 (Student Portal) ==================== -->
     <section id="studentSection" class="portal-section">
-      <!-- 1. 考生登入與測驗資訊畫面 -->
-      <div id="studentLoginView" class="card login-card">
+      <!-- 1. 考生登入與測驗資訊畫面 (僅在考官開始測驗開放試卷時顯示；關閉時完全隱藏) -->
+      <div id="studentLoginView" class="card login-card hidden">
         <div class="card-header-accent">
           <div class="header-accent-top">
             <span class="exam-tag">當前開放測驗</span>
@@ -279,6 +279,22 @@
 
       <!-- 2. 考官管理後台主畫面 -->
       <div id="examinerDashboardView" class="dashboard-wrap hidden">
+        <!-- 測驗開始 / 結束控制列 -->
+        <div class="exam-control-banner card" id="examControlBanner">
+          <div class="exam-control-info">
+            <span class="exam-status-indicator closed" id="examOpenStatusBadge">🔴 測驗已關閉</span>
+            <span class="exam-control-desc" id="examOpenStatusDesc">目前試卷為關閉狀態，考生連線至考生端將不會看到任何內容。</span>
+          </div>
+          <div class="action-btn-group">
+            <button type="button" class="btn btn-success-solid btn-sm" id="btnStartExamSession" onclick="setExamOpenStatus(true)">
+              ▶️ 開始測驗 (開放試卷)
+            </button>
+            <button type="button" class="btn btn-danger btn-sm hidden" id="btnStopExamSession" onclick="setExamOpenStatus(false)">
+              ⏹️ 結束測驗 (關閉試卷)
+            </button>
+          </div>
+        </div>
+
         <!-- 後台頂部頁籤列 -->
         <div class="dashboard-header card">
           <div class="dashboard-tabs">
@@ -339,23 +355,20 @@
             <div class="card">
               <div class="section-title-row">
                 <h3>⚙️ 當前試卷資訊與手動調整</h3>
-                <button type="button" class="btn btn-outline btn-sm" onclick="loadDemoExamBank()">
-                  載入內建示範考題 (5題急救題庫)
-                </button>
               </div>
               <form id="examMetaForm" onsubmit="saveExamMetadata(event)">
                 <div class="form-group">
                   <label>試卷名稱</label>
-                  <input type="text" id="metaExamTitle" required>
+                  <input type="text" id="metaExamTitle" placeholder="請輸入試卷名稱 (可留空)">
                 </div>
                 <div class="form-row">
                   <div class="form-group">
                     <label>考試日期</label>
-                    <input type="text" id="metaExamDate" placeholder="YYYY-MM-DD" required>
+                    <input type="text" id="metaExamDate" placeholder="YYYY-MM-DD (可留空)">
                   </div>
                   <div class="form-group">
                     <label>作答時間 (分鐘)</label>
-                    <input type="number" id="metaExamDuration" min="1" max="300" required>
+                    <input type="number" id="metaExamDuration" min="1" max="300" value="60">
                   </div>
                 </div>
                 <div class="meta-summary-strip">
@@ -372,9 +385,14 @@
           <div class="card" style="margin-top: 20px;">
             <div class="section-title-row">
               <h3>📋 當前題庫明細 (<span id="questionTableCount">0</span> 題)</h3>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="openAddQuestionModal()">
-                ➕ 手動新增單選題
-              </button>
+              <div class="action-btn-group">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="openAddQuestionModal()">
+                  ➕ 手動新增單選題
+                </button>
+                <button type="button" class="btn btn-danger-outline btn-sm" onclick="clearAllQuestions()">
+                  🗑️ 清空全部題目
+                </button>
+              </div>
             </div>
             <div class="table-responsive">
               <table class="data-table" id="questionsTable">
@@ -414,9 +432,6 @@
                 <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('CURRENT')">
                   📥 匯出成績單 (.xlsx)
                 </button>
-                <button type="button" class="btn btn-outline btn-sm" onclick="generateMockSubmissions()">
-                  🧪 產生模擬成績
-                </button>
                 <button type="button" class="btn btn-danger-outline btn-sm" onclick="clearAllSubmissions()">
                   🗑️ 清空當前場次
                 </button>
@@ -430,13 +445,13 @@
                     <th>學號</th>
                     <th style="min-width: 90px; white-space: nowrap;">姓名</th>
                     <th>電子郵件 (Email)</th>
-                    <th>總分 (滿分100)</th>
-                    <th>答對 / 總題數</th>
+                    <th>總分</th>
+                    <th>答對/總題數</th>
                     <th>作答耗時</th>
                     <th>防作弊警告</th>
                     <th>交卷狀態</th>
-                    <th>成績信狀態</th>
                     <th>交卷時間</th>
+                    <th>成績信</th>
                     <th>操作</th>
                   </tr>
                 </thead>
@@ -602,8 +617,8 @@
                     <th>作答耗時</th>
                     <th>防作弊警告</th>
                     <th>交卷狀態</th>
-                    <th>成績信狀態</th>
                     <th>交卷時間</th>
+                    <th>成績信</th>
                     <th>操作</th>
                   </tr>
                 </thead>

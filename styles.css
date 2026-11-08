@@ -40,6 +40,20 @@
   --shadow-lg: 0 10px 25px rgba(0, 61, 61, 0.14);
 }
 
+/* 考官端主色調：#750000 (與考生端深青色明確區別) */
+body.examiner-mode {
+  --primary: #750000;
+  --primary-dark: #540000;
+  --primary-darker: #3b0000;
+  --primary-light: #a31515;
+  --primary-tint: #fdf2f2;
+  --primary-tint-border: #f2cccc;
+  --bg-page: #f9f5f5;
+  --shadow-sm: 0 1px 3px rgba(59, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(59, 0, 0, 0.08);
+  --shadow-lg: 0 10px 25px rgba(59, 0, 0, 0.14);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -878,7 +892,82 @@ textarea:focus {
   font-weight: 700;
 }
 
-/* 考官後台頂部頁籤 */
+/* 考官後台測驗開始/結束控制橫幅與頂部頁籤 */
+.exam-control-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  margin-bottom: 16px;
+  border-left: 5px solid var(--primary);
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.exam-control-banner.is-open {
+  border-left-color: #15803d;
+  background: #f0fdf4;
+}
+
+.exam-control-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.exam-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 99px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.exam-status-indicator.closed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.exam-status-indicator.open {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.exam-control-desc {
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.btn-success-solid {
+  background-color: #15803d;
+  color: #ffffff;
+}
+
+.btn-success-solid:hover {
+  background-color: #166534;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(21, 128, 61, 0.25);
+}
+
+body.examiner-mode .btn-secondary:hover,
+body.examiner-mode .upload-dropzone:hover,
+body.examiner-mode .upload-dropzone.dragover {
+  background-color: #f7dede;
+}
+
+body.examiner-mode input:focus,
+body.examiner-mode select:focus,
+body.examiner-mode textarea:focus {
+  box-shadow: 0 0 0 3px rgba(117, 0, 0, 0.16);
+}
+
+body.examiner-mode .btn-primary:hover {
+  box-shadow: 0 4px 12px rgba(117, 0, 0, 0.25);
+}
+
 .dashboard-header {
   display: flex;
   align-items: center;
