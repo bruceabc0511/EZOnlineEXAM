@@ -494,27 +494,30 @@ function setExamOpenStatus(isOpen) {
   }
 }
 
-// ==================== 考生端流程 (試卷關閉時完全不顯示任何內容) ====================
+// ==================== 考生端流程 (試卷關閉時顯示「目前非測驗時間」) ====================
 function renderStudentLoginMeta() {
+  const closedView = document.getElementById('studentClosedView');
   const loginView = document.getElementById('studentLoginView');
   const quizView = document.getElementById('studentQuizView');
   const resultView = document.getElementById('studentResultView');
 
-  // 若測驗卷為關閉狀態，且考生並非正在作答或剛交卷檢視憑證，考生端完全不顯示任何內容
+  const isInQuizOrResult =
+    activeSession.isActive ||
+    (quizView && !quizView.classList.contains('hidden')) ||
+    (resultView && !resultView.classList.contains('hidden'));
+
+  // 若測驗卷為關閉狀態，且考生並非正在作答或剛交卷檢視憑證，顯示「目前非測驗時間」畫面
   if (!examData.isExamOpen) {
     if (loginView) loginView.classList.add('hidden');
+    if (closedView) {
+      closedView.classList.toggle('hidden', isInQuizOrResult);
+    }
     return;
   }
 
-  // 當測驗卷為開放狀態，且不在作答中或結果頁時，才顯示考生登入與測驗資訊畫面
-  if (
-    loginView &&
-    !activeSession.isActive &&
-    quizView &&
-    quizView.classList.contains('hidden') &&
-    resultView &&
-    resultView.classList.contains('hidden')
-  ) {
+  // 當測驗卷為開放狀態，隱藏「目前非測驗時間」畫面，並在未作答/結果頁時顯示考生登入畫面
+  if (closedView) closedView.classList.add('hidden');
+  if (loginView && !isInQuizOrResult) {
     loginView.classList.remove('hidden');
   }
 
@@ -1415,13 +1418,13 @@ function buildSubmissionRowElement(sub, sessionId) {
   tr.innerHTML = `
     <td style="white-space: nowrap;"><strong>${escapeHtml(sub.studentId)}</strong></td>
     <td style="white-space: nowrap; min-width: 90px;">${escapeHtml(sub.studentName)}</td>
-    <td>${emailDisplay}</td>
+    <td class="cell-wrap-email">${emailDisplay}</td>
     <td style="white-space: nowrap;"><strong style="font-size:1.05rem; color:${scoreColor};">${sub.score} 分</strong></td>
     <td style="white-space: nowrap;">${sub.correctCount} / ${sub.totalQuestions} 題</td>
     <td style="white-space: nowrap;">${escapeHtml(sub.timeSpentFormatted)}</td>
     <td style="white-space: nowrap;">${warnBadge}</td>
     <td style="white-space: nowrap;">${statusBadge}</td>
-    <td style="font-size:0.84rem; white-space: nowrap;">${escapeHtml(sub.submittedAt)}</td>
+    <td class="cell-wrap-time">${escapeHtml(sub.submittedAt)}</td>
     <td style="white-space: nowrap;">${emailStatusBadge}</td>
     <td>
       <div style="display:flex; gap:6px; flex-wrap:wrap;">

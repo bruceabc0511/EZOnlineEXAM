@@ -283,7 +283,32 @@ body {
   padding: 24px;
 }
 
-/* ==================== 考生端登入卡片 ==================== */
+/* ==================== 考生端登入卡片與非測驗時間提示 ==================== */
+.closed-exam-card {
+  max-width: 520px;
+  margin: 72px auto;
+  padding: 48px 32px;
+  text-align: center;
+}
+
+.closed-exam-icon {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--primary-tint);
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+}
+
+.closed-exam-card h2 {
+  font-size: 1.5rem;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+
 .login-card {
   max-width: 780px;
   margin: 12px auto;
@@ -1096,6 +1121,20 @@ body.examiner-mode .btn-primary:hover {
 
 .data-table tbody tr:hover {
   background: #f9fbfb;
+}
+
+.cell-wrap-email {
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  max-width: 210px;
+}
+
+.cell-wrap-time {
+  white-space: normal;
+  word-break: break-word;
+  font-size: 0.84rem;
+  max-width: 105px;
 }
 
 .badge {

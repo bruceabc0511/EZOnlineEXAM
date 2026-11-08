@@ -36,7 +36,7 @@
               <span id="cloudStatusText">本機模式</span>
             </span>
           </div>
-          <span class="brand-subtitle" id="headerSubtitle">Online Written Examination System (Multi-User Cloud
+          <span class="brand-subtitle" id="headerSubtitle">Online Examination System (Multi-User Cloud
             Edition)</span>
         </div>
       </div>
@@ -81,6 +81,19 @@
   <main class="main-container">
     <!-- ==================== 考生端 (Student Portal) ==================== -->
     <section id="studentSection" class="portal-section">
+      <!-- 0. 試卷關閉時顯示之「目前非測驗時間」畫面 -->
+      <div id="studentClosedView" class="card closed-exam-card">
+        <div class="closed-exam-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </div>
+        <h2>目前非測驗時間</h2>
+        <p class="text-muted">試卷尚未開放或測驗已結束，請等候考官開啟測驗。</p>
+      </div>
+
       <!-- 1. 考生登入與測驗資訊畫面 (僅在考官開始測驗開放試卷時顯示；關閉時完全隱藏) -->
       <div id="studentLoginView" class="card login-card hidden">
         <div class="card-header-accent">
