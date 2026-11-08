@@ -120,9 +120,9 @@ function updateCloudStatusUI() {
     const shareUrl = buildStudentShareUrl();
     if (shareInput) shareInput.value = shareUrl;
     if (qrImg && qrHint) {
-      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(shareUrl)}`;
+      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(shareUrl)}`;
       qrImg.classList.remove('hidden');
-      qrHint.textContent = '考生可使用手機相機掃描上方 QR Code 直接進入本場雲端測驗';
+      qrHint.innerHTML = '考生可使用手機相機掃描上方 QR Code 直接進入本次測驗<br><span style="color:var(--primary); font-weight:600; cursor:pointer;" onclick="openStandaloneQrPage()">🔍 點選 QR Code 可開啟獨立頁面單獨顯示</span>';
     }
   } else {
     if (dot) dot.classList.add('offline');
@@ -324,6 +324,13 @@ function copyStudentShareUrl() {
     document.execCommand('copy');
     showToast('📋 已複製考生專屬應試連結！');
   });
+}
+
+function openStandaloneQrPage() {
+  const shareUrl = buildStudentShareUrl();
+  const baseDir = window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '/');
+  const qrPageUrl = `${baseDir}qr.html?data=${encodeURIComponent(shareUrl)}`;
+  window.open(qrPageUrl, '_blank', 'noopener,noreferrer');
 }
 
 // ==================== 本機與雲端雙向資料存取 ====================
@@ -622,9 +629,9 @@ async function handleStartExam(event) {
   // 嘗試請求全螢幕以提高防作弊保護
   try {
     if (document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen().catch(() => {});
+      document.documentElement.requestFullscreen().catch(() => { });
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // 亂數排列試題 (Fisher-Yates Shuffle)
   const shuffled = [...examData.questions];
@@ -908,9 +915,9 @@ async function finalizeExamSubmission(statusReason) {
   // 退回一般視窗模式
   try {
     if (document.fullscreenElement && document.exitFullscreen) {
-      document.exitFullscreen().catch(() => {});
+      document.exitFullscreen().catch(() => { });
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // 計算成績 (滿分 100 分，依題數自動配分)
   const totalQ = examData.questions.length;
@@ -2245,7 +2252,7 @@ async function copyGasBackendCode() {
       showToast('✅ 已複製 Google Apps Script (Code.gs) 完整程式碼！請貼至 Google 試算表的 Apps Script 編輯器。');
       return;
     }
-  } catch (e) {}
+  } catch (e) { }
   alert('請開啟專案目錄下的 gas/Code.gs 檔案複製內容。');
 }
 

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>測驗連線 QR Code</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+     html, body {
+      width: 100%;
+      height: 100%;
+      background-color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .qr-standalone-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    #standaloneQrImg {
+      width: min(80vmin, 520px);
+      height: min(80vmin, 520px);
+      object-fit: contain;
+      display: block;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="qr-standalone-container">
+    <img id="standaloneQrImg" alt="測驗連線 QR Code">
+  </div>
+
+  <script>
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      let targetUrl = params.get('data');
+
+      if (!targetUrl) {
+        const baseUrl = window.location.origin + window.location.pathname.replace(/\/qr\.html$/i, '/index.html');
+        const gasUrl = (localStorage.getItem('online_exam_gas_url_v1') || '').trim();
+        if (gasUrl) {
+          const match = gasUrl.match(/\/macros\/s\/([^/]+)\/exec/);
+          const depId = match ? match[1] : gasUrl;
+          targetUrl = baseUrl + '?api=' + encodeURIComponent(depId);
+        } else {
+          targetUrl = baseUrl;
+        }
+      }
+
+      const qrImg = document.getElementById('standaloneQrImg');
+      qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&data=' + encodeURIComponent(targetUrl);
+    })();
+  </script>
+</body>
+
+</html>

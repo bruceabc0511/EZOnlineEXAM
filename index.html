@@ -683,11 +683,12 @@
                 <div class="share-url-row">
                   <input type="text" id="studentShareUrlInput" readonly placeholder="儲存雲端網址後自動產生專屬應試連結...">
                   <button type="button" class="btn btn-primary btn-sm" onclick="copyStudentShareUrl()">
-                    📋 複製應試連結
+                    📋 複製作答連結
                   </button>
                 </div>
                 <div class="qr-code-wrap" id="qrCodeWrap">
-                  <img id="studentQrImage" alt="考生應試 QR Code" src="" class="hidden">
+                  <img id="studentQrImage" alt="考生應試 QR Code" src="" class="hidden" onclick="openStandaloneQrPage()"
+                    title="點擊開啟獨立頁面單獨顯示 QR Code">
                   <div id="qrCodeHint" class="text-muted text-sm">設定雲端網址後將自動顯示考生掃描應試 QR Code</div>
                 </div>
               </div>

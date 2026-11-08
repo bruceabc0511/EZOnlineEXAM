@@ -923,59 +923,79 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 22px;
-  margin-bottom: 16px;
-  border-left: 5px solid var(--primary);
+  padding: 18px 24px;
+  margin-bottom: 18px;
+  background: linear-gradient(135deg, #ffe4e6 0%, #fecdd3 100%);
+  border: 2px solid #f43f5e;
+  border-left: 8px solid #be123c;
+  box-shadow: 0 6px 20px rgba(190, 18, 60, 0.16);
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 14px;
+  transition: var(--transition);
 }
 
 .exam-control-banner.is-open {
-  border-left-color: #15803d;
-  background: #f0fdf4;
+  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+  border: 2px solid #22c55e;
+  border-left: 8px solid #15803d;
+  box-shadow: 0 6px 20px rgba(21, 128, 61, 0.18);
 }
 
 .exam-control-info {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   flex-wrap: wrap;
 }
 
 .exam-status-indicator {
   display: inline-flex;
   align-items: center;
-  padding: 4px 12px;
+  padding: 6px 14px;
   border-radius: 99px;
-  font-size: 0.88rem;
+  font-size: 0.92rem;
   font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .exam-status-indicator.closed {
-  background: #fee2e2;
-  color: #991b1b;
+  background: #be123c;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(190, 18, 60, 0.3);
 }
 
 .exam-status-indicator.open {
-  background: #dcfce7;
-  color: #166534;
+  background: #15803d;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(21, 128, 61, 0.3);
 }
 
 .exam-control-desc {
-  font-size: 0.92rem;
-  color: var(--text-secondary);
-  font-weight: 500;
+  font-size: 0.95rem;
+  color: #881337;
+  font-weight: 700;
+}
+
+.exam-control-banner.is-open .exam-control-desc {
+  color: #14532d;
+}
+
+.exam-control-banner .action-btn-group .btn {
+  padding: 10px 20px;
+  font-size: 0.95rem;
+  font-weight: 700;
 }
 
 .btn-success-solid {
   background-color: #15803d;
   color: #ffffff;
+  box-shadow: 0 4px 12px rgba(21, 128, 61, 0.3);
 }
 
 .btn-success-solid:hover {
   background-color: #166534;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(21, 128, 61, 0.25);
+  box-shadow: 0 6px 16px rgba(21, 128, 61, 0.4);
 }
 
 body.examiner-mode .btn-secondary:hover,
@@ -1405,6 +1425,16 @@ body.examiner-mode .btn-primary:hover {
   width: 160px;
   height: 160px;
   object-fit: contain;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  background: #ffffff;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.qr-code-wrap img:hover {
+  transform: scale(1.04);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
 }
 
 .setup-steps-list {
