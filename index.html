@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>線上筆試測驗系統</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <!-- SheetJS for Excel Import & Export -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+
+<body>
+  <!-- 頂部導覽列 -->
+  <header class="app-header" id="appHeader">
+    <div class="header-container">
+      <div class="brand" id="brandLogo">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title-row">
+            <h1 class="brand-title">線上筆試測驗系統</h1>
+            <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
+              <span class="cloud-dot offline" id="cloudStatusDot"></span>
+              <span id="cloudStatusText">本機模式</span>
+            </span>
+          </div>
+          <span class="brand-subtitle" id="headerSubtitle">Online Written Examination System (Multi-User Cloud Edition)</span>
+        </div>
+      </div>
+
+      <nav class="role-switcher" id="roleSwitcher">
+        <button class="role-btn active" id="btnRoleStudent" onclick="switchRole('student')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          考生端
+        </button>
+        <button class="role-btn" id="btnRoleExaminer" onclick="switchRole('examiner')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          考官端
+        </button>
+      </nav>
+
+      <!-- 考試進行中狀態列 (僅在作答時顯示) -->
+      <div class="exam-live-bar hidden" id="examLiveBar">
+        <div class="live-student-info">
+          <span class="badge-live">測驗進行中</span>
+          <span id="liveStudentDisplay">王小明 (112001)</span>
+        </div>
+        <div class="live-warning-status" id="liveWarningBadge" title="離開畫面達2次將強制交卷">
+          🛡️ 防作弊監控中 (警告: <span id="liveWarnCount">0</span>/2)
+        </div>
+        <div class="live-timer" id="liveTimerBox">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <span id="timerDisplay">60:00</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <!-- ==================== 考生端 (Student Portal) ==================== -->
+    <section id="studentSection" class="portal-section">
+      <!-- 1. 考生登入與測驗資訊畫面 -->
+      <div id="studentLoginView" class="card login-card">
+        <div class="card-header-accent">
+          <div class="header-accent-top">
+            <span class="exam-tag">當前開放測驗</span>
+            <button type="button" class="btn-sync-light" onclick="syncStateFromCloud(false)" title="從雲端重新載入最新試卷">
+              🔄 同步最新試卷
+            </button>
+          </div>
+          <h2 id="studentExamTitle">載入中...</h2>
+          <div class="exam-meta-pills">
+            <span class="meta-pill">📅 考試日期：<strong id="studentExamDate">-</strong></span>
+            <span class="meta-pill">⏱️ 作答時間：<strong id="studentExamDuration">-</strong> 分鐘</span>
+            <span class="meta-pill">📝 試題總數：<strong id="studentExamQCount">-</strong> 題 (單選題)</span>
+            <span class="meta-pill">💯 滿分標準：<strong>100</strong> 分 (每題 <span id="studentPointsPerQ">-</span> 分)</span>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <div class="notice-box">
+            <h3>⚠️ 應試規則與防作弊聲明</h3>
+            <ul>
+              <li>本測驗採<strong>單選題、題目亂數排列</strong>，滿分為 100 分。</li>
+              <li>每位考生（同一學號）於本場次<strong>限作答一次</strong>，交卷後不得重複應試。</li>
+              <li>請填寫正確的<strong>電子郵件 (Email)</strong>，考試結束後系統將寄送個人成績單與作答明細至您的信箱。</li>
+              <li><strong>防作弊機制已啟用</strong>：一旦點擊「開始作答」，<strong>嚴禁切換分頁、縮小視窗、開啟其他程式或離開作答畫面</strong>。</li>
+              <li>第 <strong>1</strong> 次離開畫面將跳出嚴重警告並記錄；第 <strong>2</strong> 次離開畫面系統將<strong>立即強制終止測驗並自動交卷</strong>！</li>
+              <li>作答時間結束時，系統將自動鎖定並提交您目前已填寫的答案。</li>
+            </ul>
+          </div>
+
+          <form id="studentStartForm" class="student-form" onsubmit="handleStartExam(event)">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="studentName">考生姓名 <span class="required">*</span></label>
+                <input type="text" id="studentName" required placeholder="請輸入姓名 (例：王大明)" autocomplete="off">
+              </div>
+              <div class="form-group">
+                <label for="studentId">學號 / 編號 <span class="required">*</span></label>
+                <input type="text" id="studentId" required placeholder="請輸入學號或座號 (例：112001)" autocomplete="off">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="studentEmail">電子郵件 (Email) <span class="required">*</span> <small class="text-muted" style="font-weight:400;">— 考試結束後寄送個人成績單與標準答案明細</small></label>
+              <input type="email" id="studentEmail" required placeholder="請輸入常用 Email (例：example@gmail.com)" autocomplete="email">
+            </div>
+
+            <div class="consent-row">
+              <label class="checkbox-label">
+                <input type="checkbox" id="studentConsent" required>
+                <span>我已詳閱並同意上述應試規則，了解離開作答畫面達 2 次將被強制終止測驗。</span>
+              </label>
+            </div>
+
+            <div id="studentLoginError" class="alert alert-danger hidden"></div>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary btn-lg btn-block" id="btnStartExam">
+                進入全螢幕並開始作答
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                  <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- 2. 考生作答畫面 -->
+      <div id="studentQuizView" class="quiz-layout hidden">
+        <!-- 左側/上方：題目作答區 -->
+        <div class="quiz-main">
+          <div class="quiz-progress-card card">
+            <div class="progress-info">
+              <span>作答進度：<strong id="answeredCount">0</strong> / <strong id="totalQCount">0</strong> 題</span>
+              <span class="points-hint">每題配分：<strong id="quizPointsPerQ">0</strong> 分</span>
+            </div>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="quizProgressBar" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <div id="questionsContainer" class="questions-list">
+            <!-- 動態渲染亂數題目 -->
+          </div>
+
+          <div class="quiz-submit-footer card">
+            <p class="submit-reminder">交卷前請確認所有題目皆已作答。一旦交卷即無法修改。</p>
+            <button type="button" class="btn btn-primary btn-lg" onclick="requestSubmitExam()">
+              確認無誤，提交試卷
+            </button>
+          </div>
+        </div>
+
+        <!-- 右側：題號快速導覽面板 -->
+        <aside class="quiz-sidebar">
+          <div class="card sidebar-sticky">
+            <h3 class="sidebar-title">題號導覽</h3>
+            <div class="palette-legend">
+              <span><i class="dot answered"></i> 已作答</span>
+              <span><i class="dot unanswered"></i> 未作答</span>
+            </div>
+            <div id="questionPalette" class="question-palette">
+              <!-- 題號按鈕 -->
+            </div>
+            <hr class="divider">
+            <button type="button" class="btn btn-primary btn-block" onclick="requestSubmitExam()">
+              立即交卷
+            </button>
+          </div>
+        </aside>
+      </div>
+
+      <!-- 3. 考生完成交卷畫面 (不顯示分數與答案以防洩題) -->
+      <div id="studentResultView" class="card result-card hidden">
+        <div class="result-icon-wrap" id="resultIconWrap">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+        </div>
+        <h2 id="resultTitle">已完成測驗交卷</h2>
+        <p class="result-subtitle" id="resultSubtitle">您的作答紀錄已成功加密儲存。為維護考試公平性，現場不公佈分數與標準答案，考官將於考試結束後寄送成績單至您的信箱。</p>
+
+        <div class="receipt-box">
+          <div class="receipt-row">
+            <span class="receipt-label">試卷名稱</span>
+            <span class="receipt-val" id="receiptExamTitle">-</span>
+          </div>
+          <div class="receipt-row">
+            <span class="receipt-label">考生姓名</span>
+            <span class="receipt-val" id="receiptName">-</span>
+          </div>
+          <div class="receipt-row">
+            <span class="receipt-label">學號 / 編號</span>
+            <span class="receipt-val" id="receiptStudentId">-</span>
+          </div>
+          <div class="receipt-row">
+            <span class="receipt-label">成績通知信箱</span>
+            <span class="receipt-val" id="receiptEmail">-</span>
+          </div>
+          <div class="receipt-row">
+            <span class="receipt-label">完成作答題數</span>
+            <span class="receipt-val" id="receiptAnswered">-</span>
+          </div>
+          <div class="receipt-row">
+            <span class="receipt-label">作答耗時</span>
+            <span class="receipt-val" id="receiptTimeSpent">-</span>
+          </div>
+          <div class="receipt-row">
+            <span class="receipt-label">交卷狀態</span>
+            <span class="receipt-val" id="receiptStatus">-</span>
+          </div>
+          <div class="receipt-row">
+            <span class="receipt-label">資料同步狀態</span>
+            <span class="receipt-val" id="receiptCloudStatus">-</span>
+          </div>
+          <div class="receipt-row">
+            <span class="receipt-label">交卷時間</span>
+            <span class="receipt-val" id="receiptTimestamp">-</span>
+          </div>
+        </div>
+
+        <button type="button" class="btn btn-outline" onclick="resetToStudentHome()">
+          返回考生首頁
+        </button>
+      </div>
+    </section>
+
+    <!-- ==================== 考官端 (Examiner Portal) ==================== -->
+    <section id="examinerSection" class="portal-section hidden">
+      <!-- 1. 考官 PIN 碼驗證畫面 -->
+      <div id="examinerPinView" class="card pin-card">
+        <div class="pin-icon">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <h2>考官端管理驗證</h2>
+        <p class="text-muted">請輸入 PIN 碼以進入試題、雲端多人同步與成績統計系統</p>
+
+        <form id="pinForm" onsubmit="handlePinLogin(event)">
+          <div class="pin-input-wrap">
+            <input type="password" id="examinerPinInput" placeholder="請輸入 PIN 碼" required autocomplete="off"
+              inputmode="numeric">
+          </div>
+          <div id="pinErrorMsg" class="alert alert-danger hidden">PIN 碼錯誤，請重新確認！</div>
+          <button type="submit" class="btn btn-primary btn-lg btn-block">驗證並進入後台</button>
+        </form>
+      </div>
+
+      <!-- 2. 考官管理後台主畫面 -->
+      <div id="examinerDashboardView" class="dashboard-wrap hidden">
+        <!-- 後台頂部頁籤列 -->
+        <div class="dashboard-header card">
+          <div class="dashboard-tabs">
+            <button class="tab-btn active" data-tab="tabQuestions" onclick="switchExaminerTab('tabQuestions')">
+              📂 考題管理與匯入
+            </button>
+            <button class="tab-btn" data-tab="tabScores" onclick="switchExaminerTab('tabScores')">
+              📊 當前場次成績與寄信 (<span id="tabScoreCount">0</span>)
+            </button>
+            <button class="tab-btn" data-tab="tabAnalytics" onclick="switchExaminerTab('tabAnalytics')">
+              📈 當前結果分析
+            </button>
+            <button class="tab-btn" data-tab="tabHistory" onclick="switchExaminerTab('tabHistory')">
+              🗂️ 歷次測驗紀錄 (<span id="tabHistoryCount">0</span>)
+            </button>
+            <button class="tab-btn" data-tab="tabCloud" onclick="switchExaminerTab('tabCloud')">
+              ☁️ 雲端多人連線與寄信設定
+            </button>
+          </div>
+          <div class="action-btn-group">
+            <button class="btn btn-secondary btn-sm" onclick="syncStateFromCloud(false)">🔄 同步雲端</button>
+            <button class="btn btn-outline btn-sm" onclick="logoutExaminer()">🔒 鎖定考官端</button>
+          </div>
+        </div>
+
+        <!-- 頁籤 1：考題管理與 Excel 匯入 -->
+        <div id="tabQuestions" class="tab-content">
+          <div class="grid-2col">
+            <!-- 匯入區塊 -->
+            <div class="card">
+              <div class="section-title-row">
+                <h3>📥 匯入考題 Excel / CSV 範本</h3>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="downloadSampleExcel()">
+                  ⬇️ 下載標準 Excel 範本 (.xlsx)
+                </button>
+              </div>
+              <p class="text-muted text-sm">
+                支援標準範本格式（第1列：試卷名稱、作答時間；第2列：考試日期；第4列起每兩列為一題單選題：題號/題目/答案 與 選項）。系統會自動濾除空白題目並依有效題數自動平均配分（滿分 100 分）。
+              </p>
+
+              <div class="upload-dropzone" id="excelDropzone"
+                onclick="document.getElementById('excelFileInput').click()">
+                <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv" class="hidden"
+                  onchange="handleExcelUpload(event)">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <p class="dropzone-main-text">點擊選擇檔案，或將 Excel (.xlsx / .csv) 拖曳至此</p>
+                <span class="dropzone-sub-text">匯入後將即時解析題目並同步更新至雲端試卷</span>
+              </div>
+
+              <div id="importAlertBox" class="alert hidden" style="margin-top: 12px;"></div>
+            </div>
+
+            <!-- 試卷基本設定區塊 -->
+            <div class="card">
+              <div class="section-title-row">
+                <h3>⚙️ 當前試卷資訊與手動調整</h3>
+                <button type="button" class="btn btn-outline btn-sm" onclick="loadDemoExamBank()">
+                  載入內建示範考題 (5題急救題庫)
+                </button>
+              </div>
+              <form id="examMetaForm" onsubmit="saveExamMetadata(event)">
+                <div class="form-group">
+                  <label>試卷名稱</label>
+                  <input type="text" id="metaExamTitle" required>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>考試日期</label>
+                    <input type="text" id="metaExamDate" placeholder="YYYY-MM-DD" required>
+                  </div>
+                  <div class="form-group">
+                    <label>作答時間 (分鐘)</label>
+                    <input type="number" id="metaExamDuration" min="1" max="300" required>
+                  </div>
+                </div>
+                <div class="meta-summary-strip">
+                  <div>有效題數：<strong id="metaValidQCount">0</strong> 題</div>
+                  <div>總分設定：<strong>100</strong> 分</div>
+                  <div>每題自動配分：<strong id="metaPointsPerQ">0</strong> 分</div>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 12px;">💾 儲存並同步試卷設定</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- 題庫預覽與新增單題 -->
+          <div class="card" style="margin-top: 20px;">
+            <div class="section-title-row">
+              <h3>📋 當前題庫明細 (<span id="questionTableCount">0</span> 題)</h3>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="openAddQuestionModal()">
+                ➕ 手動新增單選題
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table" id="questionsTable">
+                <thead>
+                  <tr>
+                    <th style="width: 70px;">題號</th>
+                    <th>題目內容</th>
+                    <th>選項內容</th>
+                    <th style="width: 90px;">標準答案</th>
+                    <th style="width: 90px;">自動配分</th>
+                    <th style="width: 90px;">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="questionsTableBody">
+                  <!-- 動態渲染題目列 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 頁籤 2：當前場次成績統計、寄送 Email 與結算歸檔 -->
+        <div id="tabScores" class="tab-content hidden">
+          <div class="card">
+            <div class="section-title-row">
+              <div>
+                <h3>🏆 當前場次考生成績總表</h3>
+                <p class="text-muted text-sm">可於考試結束後一鍵寄送考生成績單 Email，並將本次測驗結果獨立歸檔至「歷次測驗紀錄」</p>
+              </div>
+              <div class="action-btn-group">
+                <button type="button" class="btn btn-accent btn-sm" onclick="openArchiveSessionModal()">
+                  📌 結束本場測驗並歸檔至歷史紀錄
+                </button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="sendAllScoresEmail('CURRENT')">
+                  📧 一鍵寄送全體考生成績信
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('CURRENT')">
+                  📥 匯出成績單 (.xlsx)
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="generateMockSubmissions()">
+                  🧪 產生模擬成績
+                </button>
+                <button type="button" class="btn btn-danger-outline btn-sm" onclick="clearAllSubmissions()">
+                  🗑️ 清空當前場次
+                </button>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table" id="scoresTable">
+                <thead>
+                  <tr>
+                    <th>學號</th>
+                    <th>姓名</th>
+                    <th>電子郵件 (Email)</th>
+                    <th>總分 (滿分100)</th>
+                    <th>答對 / 總題數</th>
+                    <th>作答耗時</th>
+                    <th>防作弊警告</th>
+                    <th>交卷狀態</th>
+                    <th>成績信狀態</th>
+                    <th>交卷時間</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="scoresTableBody">
+                  <!-- 動態渲染考生成績 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 頁籤 3：當前測驗結果分析功能 -->
+        <div id="tabAnalytics" class="tab-content hidden">
+          <!-- 統計指標卡片 -->
+          <div class="stats-grid">
+            <div class="stat-card card">
+              <span class="stat-label">當前應試總人數</span>
+              <div class="stat-value" id="statTotalStudents">0 <small>人</small></div>
+              <span class="stat-sub" id="statForcedCount">強制終止：0 人</span>
+            </div>
+            <div class="stat-card card">
+              <span class="stat-label">平均分數 (Mean)</span>
+              <div class="stat-value highlight-teal" id="statAverageScore">0.0 <small>分</small></div>
+              <span class="stat-sub" id="statStdDev">標準差：0.0</span>
+            </div>
+            <div class="stat-card card">
+              <span class="stat-label">分數中位數 (Median)</span>
+              <div class="stat-value highlight-amber" id="statMedianScore">0.0 <small>分</small></div>
+              <span class="stat-sub" id="statPassRate">及格率 (≥60分)：0%</span>
+            </div>
+            <div class="stat-card card">
+              <span class="stat-label">最高 / 最低分</span>
+              <div class="stat-value" id="statMaxMinScore">- / -</div>
+              <span class="stat-sub">滿分 100 分</span>
+            </div>
+          </div>
+
+          <div class="grid-2col" style="margin-top: 20px;">
+            <!-- 各題答錯率排行 (由高至低) -->
+            <div class="card">
+              <h3>🚨 題目答錯率排行榜 (由高至低)</h3>
+              <p class="text-muted text-sm">自動統計全體考生在各題的答錯比例與最常誤選的誘答選項，協助考官檢討考題鑑別度</p>
+              <div id="errorRateRankingList" class="ranking-list">
+                <!-- 動態渲染各題答錯率 -->
+              </div>
+            </div>
+
+            <!-- 分數組距分佈圖 -->
+            <div class="card">
+              <h3>📊 考生成績分佈區間</h3>
+              <p class="text-muted text-sm">全體考生成績落點統計</p>
+              <div id="scoreDistributionChart" class="distribution-chart">
+                <!-- 動態渲染分數分佈橫條圖 -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 頁籤 4：歷次測驗紀錄 (每一次測驗結果獨立成一筆歷史紀錄) -->
+        <div id="tabHistory" class="tab-content hidden">
+          <div class="card">
+            <div class="section-title-row">
+              <div>
+                <h3>🗂️ 歷次測驗歷史紀錄總覽</h3>
+                <p class="text-muted text-sm">每一次結算歸檔的測驗皆獨立保存完整題庫快照、全體考生成績、統計指標與錯題分析，互不覆蓋影響</p>
+              </div>
+              <div class="action-btn-group">
+                <button type="button" class="btn btn-accent btn-sm" onclick="openArchiveSessionModal()">
+                  📌 將當前場次歸檔為新歷史紀錄
+                </button>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table" id="historyTable">
+                <thead>
+                  <tr>
+                    <th>場次編號 / 歸檔時間</th>
+                    <th>試卷名稱</th>
+                    <th>考試日期</th>
+                    <th>題數</th>
+                    <th>應試人數</th>
+                    <th>平均分數</th>
+                    <th>中位數</th>
+                    <th>標準差</th>
+                    <th>及格率</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                  <!-- 動態渲染歷次測驗紀錄 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 檢視特定歷史場次之完整明細面板 -->
+          <div id="historySessionDetailCard" class="card hidden" style="margin-top: 20px;">
+            <div class="section-title-row">
+              <div>
+                <span class="badge badge-teal" id="histDetailBadge">歷史場次檢視</span>
+                <h3 id="histDetailTitle" style="margin-top:4px;">-</h3>
+                <p class="text-muted text-sm" id="histDetailMeta">-</p>
+              </div>
+              <div class="action-btn-group">
+                <button type="button" class="btn btn-primary btn-sm" id="btnHistSendAllEmail">
+                  📧 寄送本場次全體考生成績信
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" id="btnHistExportExcel">
+                  📥 匯出本場次 Excel 報表 (.xlsx)
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="closeHistorySessionDetail()">
+                  ✕ 關閉明細
+                </button>
+              </div>
+            </div>
+
+            <!-- 該歷史場次的統計摘要 -->
+            <div class="stats-grid" style="margin: 16px 0;">
+              <div class="stat-card card" style="padding:16px;">
+                <span class="stat-label">應試總人數</span>
+                <div class="stat-value" id="histStatTotal" style="font-size:1.6rem;">0 人</div>
+                <span class="stat-sub" id="histStatForced">強制終止：0 人</span>
+              </div>
+              <div class="stat-card card" style="padding:16px;">
+                <span class="stat-label">平均分數 (Mean)</span>
+                <div class="stat-value highlight-teal" id="histStatMean" style="font-size:1.6rem;">0.0 分</div>
+                <span class="stat-sub" id="histStatStdDev">標準差：0.0</span>
+              </div>
+              <div class="stat-card card" style="padding:16px;">
+                <span class="stat-label">分數中位數 (Median)</span>
+                <div class="stat-value highlight-amber" id="histStatMedian" style="font-size:1.6rem;">0.0 分</div>
+                <span class="stat-sub" id="histStatPassRate">及格率：0%</span>
+              </div>
+              <div class="stat-card card" style="padding:16px;">
+                <span class="stat-label">最高 / 最低分</span>
+                <div class="stat-value" id="histStatMaxMin" style="font-size:1.6rem;">- / -</div>
+                <span class="stat-sub">滿分 100 分</span>
+              </div>
+            </div>
+
+            <div class="grid-2col" style="margin-bottom: 20px;">
+              <div class="card" style="background:#fafcfc;">
+                <h4>🚨 本場次題目答錯率排行</h4>
+                <div id="histErrorRankingList" class="ranking-list" style="max-height:320px;"></div>
+              </div>
+              <div class="card" style="background:#fafcfc;">
+                <h4>📊 本場次成績分佈區間</h4>
+                <div id="histDistributionChart" class="distribution-chart"></div>
+              </div>
+            </div>
+
+            <h4>📋 本場次考生成績與寄信名單</h4>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>學號</th>
+                    <th>姓名</th>
+                    <th>電子郵件 (Email)</th>
+                    <th>總分</th>
+                    <th>答對 / 總題數</th>
+                    <th>作答耗時</th>
+                    <th>防作弊警告</th>
+                    <th>交卷狀態</th>
+                    <th>成績信狀態</th>
+                    <th>交卷時間</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="histScoresTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 頁籤 5：雲端多人連線與自動寄信設定 (方案 B) -->
+        <div id="tabCloud" class="tab-content hidden">
+          <div class="grid-2col">
+            <!-- 左側：設定雲端網址與考生專屬應試連結 / QR Code -->
+            <div class="card">
+              <h3>☁️ Google 雲端試算表資料庫 & 自動寄信連線設定</h3>
+              <p class="text-muted text-sm" style="margin-bottom:16px;">
+                綁定 Google Apps Script 網頁應用程式網址後，即可啟用<strong>跨網路多人同時連線應試</strong>、<strong>即時集中統計成績</strong>與<strong>自動寄發 HTML 成績單 Email</strong>。
+              </p>
+
+              <div class="form-group">
+                <label for="gasWebAppUrlInput">Google Apps Script 網頁應用程式網址 (`.../exec`)</label>
+                <input type="text" id="gasWebAppUrlInput" placeholder="https://script.google.com/macros/s/AKfycb.../exec">
+              </div>
+
+              <div class="action-btn-group" style="margin-bottom:20px;">
+                <button type="button" class="btn btn-primary" onclick="saveGasUrlConfig()">
+                  ✅ 儲存並啟用雲端連線
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="testGasConnection()">
+                  🔌 測試雲端連線
+                </button>
+                <button type="button" class="btn btn-outline" onclick="pushAllLocalDataToCloud()">
+                  ⬆️ 將本機題庫與紀錄推送至雲端
+                </button>
+              </div>
+
+              <hr class="divider">
+
+              <h3>📲 考生多人連線專屬應試連結 & QR Code</h3>
+              <p class="text-muted text-sm" style="margin-bottom:12px;">
+                請將下方連結或 QR Code 提供給全體考生。連結已自動內嵌您的雲端資料庫參數，考生在各自的手機或電腦打開即可同步載入考題並交卷回傳！
+              </p>
+
+              <div class="share-box">
+                <div class="share-url-row">
+                  <input type="text" id="studentShareUrlInput" readonly placeholder="儲存雲端網址後自動產生專屬應試連結...">
+                  <button type="button" class="btn btn-primary btn-sm" onclick="copyStudentShareUrl()">
+                    📋 複製應試連結
+                  </button>
+                </div>
+                <div class="qr-code-wrap" id="qrCodeWrap">
+                  <img id="studentQrImage" alt="考生應試 QR Code" src="" class="hidden">
+                  <div id="qrCodeHint" class="text-muted text-sm">設定雲端網址後將自動顯示考生掃描應試 QR Code</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 右側：1分鐘快速部署教學與一鍵複製 Code.gs -->
+            <div class="card">
+              <div class="section-title-row">
+                <h3>🚀 1 分鐘免費建立您的專屬雲端資料庫與寄信後端</h3>
+                <a href="https://sheets.new" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="text-decoration:none;">
+                  ➕ 點此新建 Google 試算表
+                </a>
+              </div>
+
+              <ol class="setup-steps-list">
+                <li>點擊右上方「<strong>➕ 點此新建 Google 試算表</strong>」，在試算表上方選單點選「<strong>擴充功能</strong>」➔「<strong>Apps Script</strong>」。</li>
+                <li>
+                  點擊下方按鈕一鍵複製後端程式碼，清空 Apps Script 編輯器原本的內容並貼上，按 <code>Ctrl + S</code> 儲存：
+                  <div style="margin: 8px 0;">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="copyGasBackendCode()">
+                      📋 一鍵複製 Google Apps Script 後端程式碼 (Code.gs)
+                    </button>
+                  </div>
+                </li>
+                <li>點選 Apps Script 右上角藍色按鈕「<strong>部署</strong>」➔「<strong>新增部署作業</strong>」。</li>
+                <li>點選左側齒輪「選取類型」➔ 勾選「<strong>網頁應用程式 (Web App)</strong>」。</li>
+                <li>
+                  <strong>關鍵權限設定</strong>：
+                  <ul>
+                    <li>執行身分：選擇「<strong>我 (Me)</strong>」（系統將透過您的 Gmail 自動寄送考生成績單）</li>
+                    <li>誰可以存取：選擇「<strong>所有人 (Anyone)</strong>」（讓所有考生免登入 Google 即可跨裝置連線交卷）</li>
+                  </ul>
+                </li>
+                <li>點擊「<strong>部署</strong>」➔「<strong>授予存取權</strong>」➔ 選擇您的 Google 帳號 ➔ 點選「<strong>進階 (Advanced)</strong>」➔「<strong>前往專案 (不安全)</strong>」➔「<strong>允許</strong>」。</li>
+                <li>複製產生的「<strong>網頁應用程式網址 (`https://script.google.com/macros/s/.../exec`)</strong>」，貼回左側輸入框並點擊「<strong>✅ 儲存並啟用雲端連線</strong>」即完成！</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ==================== 彈出視窗 (Modals) ==================== -->
+
+  <!-- 1. 防作弊第 1 次離開畫面警告 Modal -->
+  <div id="antiCheatModal" class="modal-backdrop hidden">
+    <div class="modal-box modal-warning">
+      <div class="modal-icon-danger">⚠️</div>
+      <h3>防作弊系統嚴重警告 (第 1 / 2 次)</h3>
+      <p>系統偵測到您剛剛<strong>離開了作答畫面（切換視窗、分頁或失去焦點）</strong>！</p>
+      <div class="warning-rule-highlight">
+        請注意：這是您的<strong>第 1 次警告</strong>。<br>
+        若再次離開作答畫面（第 2 次），系統將<strong>立即強制終止您的測驗並自動交卷</strong>！
+      </div>
+      <button type="button" class="btn btn-danger btn-lg btn-block" onclick="acknowledgeCheatWarning()">
+        我已了解，立即返回測驗作答
+      </button>
+    </div>
+  </div>
+
+  <!-- 2. 交卷確認 Modal -->
+  <div id="submitConfirmModal" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <h3>確認提交試卷？</h3>
+      <p id="submitConfirmText">您目前已完成 0 / 0 題作答。</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" onclick="closeSubmitModal()">返回檢查</button>
+        <button type="button" class="btn btn-primary" onclick="finalizeExamSubmission('正常交卷')">確認交卷</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 考官檢視單一考生作答明細 Modal -->
+  <div id="studentDetailModal" class="modal-backdrop hidden">
+    <div class="modal-box modal-lg">
+      <div class="modal-header-row">
+        <h3 id="detailModalTitle">考生作答明細</h3>
+        <button type="button" class="btn-close" onclick="closeStudentDetailModal()">✕</button>
+      </div>
+      <div id="detailModalBody" class="detail-modal-body">
+        <!-- 動態載入考生每題作答對錯 -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. 手動新增題目 Modal -->
+  <div id="addQuestionModal" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-header-row">
+        <h3>新增單選題</h3>
+        <button type="button" class="btn-close" onclick="closeAddQuestionModal()">✕</button>
+      </div>
+      <form id="addQuestionForm" onsubmit="handleSaveNewQuestion(event)">
+        <div class="form-group">
+          <label>題目內容 <span class="required">*</span></label>
+          <textarea id="newQText" rows="3" required placeholder="請輸入題目敘述..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>選項內容 (每行一個選項，例如 (A)xxx) <span class="required">*</span></label>
+          <textarea id="newQOptions" rows="4" required placeholder="(A)選項一&#10;(B)選項二&#10;(C)選項三&#10;(D)選項四"></textarea>
+        </div>
+        <div class="form-group">
+          <label>標準答案 <span class="required">*</span></label>
+          <select id="newQAnswer" required>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" onclick="closeAddQuestionModal()">取消</button>
+          <button type="submit" class="btn btn-primary">新增題目</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 5. 結束本場測驗並歸檔至歷史紀錄 Modal -->
+  <div id="archiveSessionModal" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-header-row">
+        <h3>📌 結算並歸檔本場測驗紀錄</h3>
+        <button type="button" class="btn-close" onclick="closeArchiveSessionModal()">✕</button>
+      </div>
+      <form id="archiveSessionForm" onsubmit="confirmArchiveCurrentSession(event)">
+        <p class="text-muted text-sm" style="margin-bottom: 14px;">
+          系統將把當前場次的<strong>完整題庫快照、考生成績 (<span id="archiveStudentCount">0</span> 人) 與統計分析</strong>獨立封存為一筆歷史紀錄。
+        </p>
+        <div class="form-group">
+          <label for="archiveSessionTitle">歷史場次紀錄名稱 <span class="required">*</span></label>
+          <input type="text" id="archiveSessionTitle" required placeholder="例如：2026-12-01 緊急救護筆試 (第一梯次)">
+        </div>
+        <div class="consent-row" style="margin: 12px 0;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="archiveAutoSendEmail" checked>
+            <span>歸檔同時自動寄送成績單 Email 給本場次所有尚未寄信的考生</span>
+          </label>
+        </div>
+        <div class="consent-row" style="margin: 12px 0;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="archiveClearCurrent" checked>
+            <span>歸檔後清空「當前場次」考生成績名單（供下一梯次考生重新應試）</span>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" onclick="closeArchiveSessionModal()">取消</button>
+          <button type="submit" class="btn btn-primary">確認歸檔儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast 訊息通知容器 -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>

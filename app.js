@@ -1,0 +1,2256 @@
+/**
+ * 線上筆試測驗系統 - 核心邏輯 (app.js) — 雲端多人連線與歷史場次版 (方案 B)
+ * 功能包含：
+ * 1. 雲端多人同步 (Google Apps Script + GitHub Pages)：跨網路多人同時連線應試、QR Code 專屬應試連結、即時同步題庫與交卷紀錄
+ * 2. 考生端：姓名/學號/Email 登入、同一場次同一個學號防重複應試、亂數排列題目、自動平均配分、倒數計時、防作弊監控 (第1次警告、第2次強制終止交卷)
+ * 3. 考官端：PIN碼驗證 (0000119)、Excel 範本解析匯入、考後一鍵或單筆寄送考生成績單 Email、每次測驗獨立歸檔為歷史紀錄、錯題率與統計指標分析
+ */
+
+// 若有固定部署的預設 Google Apps Script 網址可填於此處，否則可由考官端介面動態設定並透過 ?api= 參數自動分享給考生
+const DEFAULT_GAS_URL = '';
+
+const STORAGE_KEYS = {
+  EXAM_DATA: 'online_exam_bank_v1',
+  SUBMISSIONS: 'online_exam_submissions_v1',
+  HISTORY_SESSIONS: 'online_exam_history_v1',
+  GAS_URL: 'online_exam_gas_url_v1'
+};
+
+const EXAMINER_PIN = '0000119';
+
+// 預設題庫 (依使用者提供的範本格式建立)
+const DEFAULT_EXAM_DATA = {
+  title: '範本考題',
+  durationMinutes: 60,
+  examDate: '2026-12-01',
+  questions: [
+    {
+      id: 1,
+      question: '有關止血帶使用時機下列何者錯誤?',
+      rawOptions: '(A)任何部位的傷口經由持續加壓止血及包紮，仍無法減緩出血\n(B)預期肢體傷口加壓止血無效\n(C)肢體遭受壓困≧4小時，脫困前無法建立周邊靜脈管路\n(D)創傷性截肢',
+      options: [
+        { key: 'A', text: '任何部位的傷口經由持續加壓止血及包紮，仍無法減緩出血' },
+        { key: 'B', text: '預期肢體傷口加壓止血無效' },
+        { key: 'C', text: '肢體遭受壓困≧4小時，脫困前無法建立周邊靜脈管路' },
+        { key: 'D', text: '創傷性截肢' }
+      ],
+      answer: 'A'
+    }
+  ]
+};
+
+// 5題示範急救題庫 (方便考官一鍵測試多題亂數與統計分析)
+const DEMO_5Q_EXAM_DATA = {
+  title: '緊急救護與止血處置筆試測驗 (示範題庫)',
+  durationMinutes: 60,
+  examDate: '2026-12-01',
+  questions: [
+    {
+      id: 1,
+      question: '有關止血帶使用時機下列何者錯誤?',
+      rawOptions: '(A)任何部位的傷口經由持續加壓止血及包紮，仍無法減緩出血\n(B)預期肢體傷口加壓止血無效\n(C)肢體遭受壓困≧4小時，脫困前無法建立周邊靜脈管路\n(D)創傷性截肢',
+      options: [
+        { key: 'A', text: '任何部位的傷口經由持續加壓止血及包紮，仍無法減緩出血' },
+        { key: 'B', text: '預期肢體傷口加壓止血無效' },
+        { key: 'C', text: '肢體遭受壓困≧4小時，脫困前無法建立周邊靜脈管路' },
+        { key: 'D', text: '創傷性截肢' }
+      ],
+      answer: 'A'
+    },
+    {
+      id: 2,
+      question: '成人高品質心肺復甦術 (CPR) 的胸部按壓深度與速率為何？',
+      rawOptions: '(A)深度約 3-4 公分，速率每分鐘 80-100 次\n(B)深度約 5-6 公分，速率每分鐘 100-120 次\n(C)深度至少 7 公分以上，速率每分鐘 120-140 次\n(D)深度約 4-5 公分，速率每分鐘 60-90 次',
+      options: [
+        { key: 'A', text: '深度約 3-4 公分，速率每分鐘 80-100 次' },
+        { key: 'B', text: '深度約 5-6 公分，速率每分鐘 100-120 次' },
+        { key: 'C', text: '深度至少 7 公分以上，速率每分鐘 120-140 次' },
+        { key: 'D', text: '深度約 4-5 公分，速率每分鐘 60-90 次' }
+      ],
+      answer: 'B'
+    },
+    {
+      id: 3,
+      question: '使用自動體外心臟電擊去顫器 (AED) 時，下列敘述何者正確？',
+      rawOptions: '(A)分析心律時可持續進行胸部按壓以維持血流\n(B)若傷患胸前潮濕，無須擦乾即可直接貼上電擊貼片\n(C)電擊完成後應立即開始胸部按壓 (CPR) 2 分鐘\n(D)電擊貼片應重疊貼於左胸心尖處',
+      options: [
+        { key: 'A', text: '分析心律時可持續進行胸部按壓以維持血流' },
+        { key: 'B', text: '若傷患胸前潮濕，無須擦乾即可直接貼上電擊貼片' },
+        { key: 'C', text: '電擊完成後應立即開始胸部按壓 (CPR) 2 分鐘' },
+        { key: 'D', text: '電擊貼片應重疊貼於左胸心尖處' }
+      ],
+      answer: 'C'
+    },
+    {
+      id: 4,
+      question: '面對清醒且發生嚴重異物梗塞（無法說話、咳嗽或呼吸）的成人患者，應優先採取何種處置？',
+      rawOptions: '(A)請患者大口喝水將異物吞下\n(B)立即讓患者平躺並開始胸部按壓\n(C)站在患者背後施行腹戳法（哈姆立克法）\n(D)將手指伸入患者咽喉深處盲抓異物',
+      options: [
+        { key: 'A', text: '請患者大口喝水將異物吞下' },
+        { key: 'B', text: '立即讓患者平躺並開始胸部按壓' },
+        { key: 'C', text: '站在患者背後施行腹戳法（哈姆立克法）' },
+        { key: 'D', text: '將手指伸入患者咽喉深處盲抓異物' }
+      ],
+      answer: 'C'
+    },
+    {
+      id: 5,
+      question: '執行創傷患者初級評估 (Primary Survey) 的 ABCDE 原則中，「A」代表下列何者？',
+      rawOptions: '(A)評估神經學狀態 (Alertness)\n(B)維持呼吸道暢通並保護頸椎 (Airway & C-spine protection)\n(C)評估動脈血氧飽和度 (Arterial oxygen)\n(D)給予止痛藥物 (Analgesia)',
+      options: [
+        { key: 'A', text: '評估神經學狀態 (Alertness)' },
+        { key: 'B', text: '維持呼吸道暢通並保護頸椎 (Airway & C-spine protection)' },
+        { key: 'C', text: '評估動脈血氧飽和度 (Arterial oxygen)' },
+        { key: 'D', text: '給予止痛藥物 (Analgesia)' }
+      ],
+      answer: 'B'
+    }
+  ]
+};
+
+// 系統狀態
+let examData = loadExamData();
+let submissions = loadSubmissions();
+let historySessions = loadHistorySessions();
+let isExaminerAuthenticated = false;
+let currentViewingHistoryId = null;
+let cloudPollTimer = null;
+
+// 當前考試進行中狀態
+let activeSession = {
+  isActive: false,
+  studentName: '',
+  studentId: '',
+  studentEmail: '',
+  startTime: null,
+  remainingSeconds: 0,
+  timerInterval: null,
+  shuffledQuestions: [],
+  answers: {}, // { originalQuestionId: 'A' }
+  warningCount: 0,
+  lastCheatTriggerAt: 0
+};
+
+// ==================== 初始化 ====================
+document.addEventListener('DOMContentLoaded', async () => {
+  initCloudUrlFromQueryOrDefault();
+  updateCloudStatusUI();
+  renderStudentLoginMeta();
+  setupDragAndDrop();
+  setupAntiCheatListeners();
+
+  // 若已綁定雲端網址，啟動時自動從雲端拉取最新題庫與成績紀錄
+  if (getActiveGasUrl()) {
+    await syncStateFromCloud(true);
+    startCloudPolling();
+  }
+});
+
+// ==================== 雲端多人連線與同步邏輯 (方案 B) ====================
+function getActiveGasUrl() {
+  return (localStorage.getItem(STORAGE_KEYS.GAS_URL) || DEFAULT_GAS_URL || '').trim();
+}
+
+function initCloudUrlFromQueryOrDefault() {
+  const params = new URLSearchParams(window.location.search);
+  const apiParam = params.get('api');
+  if (apiParam) {
+    const cleanParam = apiParam.trim();
+    const fullUrl = cleanParam.startsWith('http')
+      ? cleanParam
+      : `https://script.google.com/macros/s/${cleanParam}/exec`;
+    localStorage.setItem(STORAGE_KEYS.GAS_URL, fullUrl);
+  } else if (DEFAULT_GAS_URL && !localStorage.getItem(STORAGE_KEYS.GAS_URL)) {
+    localStorage.setItem(STORAGE_KEYS.GAS_URL, DEFAULT_GAS_URL);
+  }
+}
+
+function extractGasDeploymentId(url) {
+  const match = String(url || '').match(/\/macros\/s\/([^/]+)\/exec/);
+  return match ? match[1] : '';
+}
+
+function buildStudentShareUrl() {
+  const baseUrl = window.location.origin + window.location.pathname;
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) return baseUrl;
+  const depId = extractGasDeploymentId(gasUrl);
+  const params = new URLSearchParams();
+  params.set('api', depId || gasUrl);
+  return `${baseUrl}?${params.toString()}`;
+}
+
+function updateCloudStatusUI() {
+  const gasUrl = getActiveGasUrl();
+  const dot = document.getElementById('cloudStatusDot');
+  const text = document.getElementById('cloudStatusText');
+  const urlInput = document.getElementById('gasWebAppUrlInput');
+  const shareInput = document.getElementById('studentShareUrlInput');
+  const qrImg = document.getElementById('studentQrImage');
+  const qrHint = document.getElementById('qrCodeHint');
+
+  if (urlInput && document.activeElement !== urlInput) {
+    urlInput.value = gasUrl;
+  }
+
+  if (gasUrl) {
+    if (dot) dot.classList.remove('offline');
+    if (text) text.textContent = '雲端多人同步已連線';
+    const shareUrl = buildStudentShareUrl();
+    if (shareInput) shareInput.value = shareUrl;
+    if (qrImg && qrHint) {
+      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(shareUrl)}`;
+      qrImg.classList.remove('hidden');
+      qrHint.textContent = '考生可使用手機相機掃描上方 QR Code 直接進入本場雲端測驗';
+    }
+  } else {
+    if (dot) dot.classList.add('offline');
+    if (text) text.textContent = '本機模式 (可於考官端啟用雲端)';
+    if (shareInput) shareInput.value = window.location.origin + window.location.pathname;
+    if (qrImg && qrHint) {
+      qrImg.classList.add('hidden');
+      qrHint.textContent = '請先於上方填入 Google Apps Script 網址並儲存，即可產生跨裝置多人連線 QR Code';
+    }
+  }
+}
+
+function handleCloudPillClick() {
+  if (activeSession.isActive) return;
+  if (isExaminerAuthenticated) {
+    switchRole('examiner');
+    switchExaminerTab('tabCloud');
+  } else {
+    const gasUrl = getActiveGasUrl();
+    if (gasUrl) {
+      syncStateFromCloud(false);
+    } else {
+      showToast('💡 請切換至「考官端」➔「雲端多人連線與寄信設定」綁定 Google 雲端試算表');
+    }
+  }
+}
+
+function startCloudPolling() {
+  if (cloudPollTimer) clearInterval(cloudPollTimer);
+  cloudPollTimer = setInterval(() => {
+    // 僅在非作答進行中且已設定雲端時背景靜默同步
+    if (!activeSession.isActive && getActiveGasUrl()) {
+      syncStateFromCloud(true);
+    }
+  }, 15000);
+}
+
+async function syncStateFromCloud(silent = true) {
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) {
+    if (!silent) {
+      showToast('⚠️ 尚未設定 Google Apps Script 雲端網址，目前為本機儲存模式');
+    }
+    return false;
+  }
+
+  if (!silent) {
+    showToast('🔄 正在從雲端資料庫同步最新試卷與考生成績...');
+  }
+
+  try {
+    const res = await fetch(`${gasUrl}?action=getExamState&_t=${Date.now()}`);
+    const json = await res.json();
+    if (json && json.status === 'success') {
+      if (json.examData && Array.isArray(json.examData.questions) && json.examData.questions.length > 0) {
+        examData = json.examData;
+        localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
+      }
+      if (Array.isArray(json.submissions)) {
+        submissions = json.submissions;
+        localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+      }
+      if (Array.isArray(json.historySessions)) {
+        historySessions = json.historySessions;
+        localStorage.setItem(STORAGE_KEYS.HISTORY_SESSIONS, JSON.stringify(historySessions));
+      }
+
+      if (!activeSession.isActive) {
+        renderStudentLoginMeta();
+      }
+      if (isExaminerAuthenticated) {
+        refreshExaminerAllViews();
+      }
+      updateCloudStatusUI();
+
+      if (!silent) {
+        showToast(`✅ 雲端同步成功！當前試卷共 ${examData.questions.length} 題，本場次已交卷 ${submissions.length} 人。`);
+      }
+      return true;
+    }
+  } catch (err) {
+    console.warn('Cloud sync error:', err);
+    if (!silent) {
+      showToast('❌ 雲端同步失敗，請確認網路或 Apps Script 部署權限設為「所有人」');
+    }
+  }
+  return false;
+}
+
+async function postToCloud(payload) {
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) return null;
+
+  try {
+    // 使用 text/plain 避免觸發 CORS OPTIONS preflight，確保 Google Apps Script Web App 100% 正常接收
+    const res = await fetch(gasUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(payload)
+    });
+    return await res.json();
+  } catch (err) {
+    console.error('Post to cloud error:', err);
+    return null;
+  }
+}
+
+async function saveGasUrlConfig() {
+  const input = document.getElementById('gasWebAppUrlInput');
+  const val = input ? input.value.trim() : '';
+
+  if (!val) {
+    localStorage.removeItem(STORAGE_KEYS.GAS_URL);
+    updateCloudStatusUI();
+    showToast('⚪ 已切換回本機儲存模式');
+    return;
+  }
+
+  if (!val.startsWith('https://script.google.com/macros/s/')) {
+    alert('請輸入正確的 Google Apps Script 網頁應用程式網址（格式為 https://script.google.com/macros/s/.../exec）！');
+    return;
+  }
+
+  localStorage.setItem(STORAGE_KEYS.GAS_URL, val);
+  updateCloudStatusUI();
+  startCloudPolling();
+
+  showToast('🔌 正在驗證並同步雲端資料庫...');
+  const ok = await syncStateFromCloud(false);
+  if (ok) {
+    // 若雲端還是空的，主動把本機目前的題庫推上去初始化
+    await postToCloud({
+      action: 'saveExamData',
+      examData: examData
+    });
+  }
+}
+
+async function testGasConnection() {
+  const input = document.getElementById('gasWebAppUrlInput');
+  const url = (input && input.value.trim()) ? input.value.trim() : getActiveGasUrl();
+  if (!url) {
+    alert('請先在輸入框貼上 Google Apps Script 網頁應用程式網址 (.../exec)！');
+    return;
+  }
+
+  showToast('🔌 正在測試連線至 Google Apps Script...');
+  try {
+    const res = await fetch(`${url}?action=ping&_t=${Date.now()}`);
+    const json = await res.json();
+    if (json && json.status === 'success') {
+      localStorage.setItem(STORAGE_KEYS.GAS_URL, url);
+      updateCloudStatusUI();
+      showToast('✅ 連線成功！' + (json.message || '雲端資料庫與寄信服務運作正常'));
+    } else {
+      showToast('⚠️ 收到回應但狀態異常，請確認部署權限設為「所有人」');
+    }
+  } catch (err) {
+    showToast('❌ 連線測試失敗：請確認網址為 /exec 結尾且誰可以存取設為「所有人 (Anyone)」');
+  }
+}
+
+async function pushAllLocalDataToCloud() {
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) {
+    alert('請先設定並儲存 Google Apps Script 網址！');
+    return;
+  }
+  showToast('⬆️ 正在將本機題庫、當前成績與歷史紀錄完整推送至雲端...');
+  await postToCloud({ action: 'saveExamData', examData });
+  await postToCloud({ action: 'syncSubmissions', examData, submissions });
+  const res = await postToCloud({ action: 'syncHistory', historySessions });
+  if (res && res.status === 'success') {
+    showToast('✅ 已將本機所有題庫、成績與歷史紀錄同步至 Google 試算表！');
+  } else {
+    showToast('⚠️ 推送完成，若部分資料未更新請檢查網路連線');
+  }
+}
+
+function copyStudentShareUrl() {
+  const shareInput = document.getElementById('studentShareUrlInput');
+  if (!shareInput) return;
+  const url = buildStudentShareUrl();
+  shareInput.value = url;
+  navigator.clipboard.writeText(url).then(() => {
+    showToast('📋 已複製考生專屬應試連結！可直接貼至 LINE 群組供多人連線應試。');
+  }).catch(() => {
+    shareInput.select();
+    document.execCommand('copy');
+    showToast('📋 已複製考生專屬應試連結！');
+  });
+}
+
+// ==================== 本機與雲端雙向資料存取 ====================
+function loadExamData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.EXAM_DATA);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.questions) && parsed.questions.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('載入題庫失敗:', e);
+  }
+  localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(DEFAULT_EXAM_DATA));
+  return JSON.parse(JSON.stringify(DEFAULT_EXAM_DATA));
+}
+
+function saveExamDataToStorage(syncCloud = true) {
+  localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
+  renderStudentLoginMeta();
+  if (syncCloud && getActiveGasUrl()) {
+    postToCloud({
+      action: 'saveExamData',
+      examData: examData
+    });
+  }
+}
+
+function loadSubmissions() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SUBMISSIONS);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('載入成績紀錄失敗:', e);
+  }
+  return [];
+}
+
+function saveSubmissionsToStorage(syncCloud = true) {
+  localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+  if (syncCloud && getActiveGasUrl()) {
+    postToCloud({
+      action: 'syncSubmissions',
+      examData: examData,
+      submissions: submissions
+    });
+  }
+}
+
+function loadHistorySessions() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.HISTORY_SESSIONS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.error('載入歷次測驗紀錄失敗:', e);
+  }
+  return [];
+}
+
+function saveHistorySessionsToStorage(syncCloud = true) {
+  localStorage.setItem(STORAGE_KEYS.HISTORY_SESSIONS, JSON.stringify(historySessions));
+  if (syncCloud && getActiveGasUrl()) {
+    postToCloud({
+      action: 'syncHistory',
+      historySessions: historySessions
+    });
+  }
+}
+
+// 計算每題平均配分 (滿分100)
+function getPointsPerQuestion(qCount) {
+  if (!qCount || qCount <= 0) return 0;
+  return Number((100 / qCount).toFixed(2));
+}
+
+// ==================== 角色切換 (考生端 / 考官端) ====================
+function switchRole(role) {
+  if (activeSession.isActive) {
+    alert('測驗正在進行中，禁止切換介面！');
+    return;
+  }
+
+  const btnStudent = document.getElementById('btnRoleStudent');
+  const btnExaminer = document.getElementById('btnRoleExaminer');
+  const studentSec = document.getElementById('studentSection');
+  const examinerSec = document.getElementById('examinerSection');
+
+  if (role === 'student') {
+    btnStudent.classList.add('active');
+    btnExaminer.classList.remove('active');
+    studentSec.classList.remove('hidden');
+    examinerSec.classList.add('hidden');
+    renderStudentLoginMeta();
+  } else {
+    btnExaminer.classList.add('active');
+    btnStudent.classList.remove('active');
+    studentSec.classList.add('hidden');
+    examinerSec.classList.remove('hidden');
+
+    if (isExaminerAuthenticated) {
+      showExaminerDashboard();
+    } else {
+      document.getElementById('examinerPinView').classList.remove('hidden');
+      document.getElementById('examinerDashboardView').classList.add('hidden');
+      document.getElementById('examinerPinInput').value = '';
+      document.getElementById('pinErrorMsg').classList.add('hidden');
+      setTimeout(() => document.getElementById('examinerPinInput').focus(), 100);
+    }
+  }
+}
+
+// ==================== 考生端流程 ====================
+function renderStudentLoginMeta() {
+  const qCount = examData.questions.length;
+  const pts = getPointsPerQuestion(qCount);
+
+  document.getElementById('studentExamTitle').textContent = examData.title || '未命名測驗';
+  document.getElementById('studentExamDate').textContent = examData.examDate || '-';
+  document.getElementById('studentExamDuration').textContent = examData.durationMinutes || 60;
+  document.getElementById('studentExamQCount').textContent = qCount;
+  document.getElementById('studentPointsPerQ').textContent = pts;
+}
+
+async function handleStartExam(event) {
+  event.preventDefault();
+
+  const nameInput = document.getElementById('studentName').value.trim();
+  const idInput = document.getElementById('studentId').value.trim();
+  const emailInput = document.getElementById('studentEmail').value.trim();
+  const startBtn = document.getElementById('btnStartExam');
+  const errorBox = document.getElementById('studentLoginError');
+
+  errorBox.classList.add('hidden');
+
+  if (!nameInput || !idInput || !emailInput) {
+    showLoginError('請完整填寫考生姓名、學號與電子郵件 (Email)！');
+    return;
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput)) {
+    showLoginError('請輸入格式正確的電子郵件 (Email) 信箱！');
+    return;
+  }
+
+  // 若已連線雲端，開考前先向雲端拉取最新題庫與已交卷名單
+  if (getActiveGasUrl()) {
+    if (startBtn) {
+      startBtn.disabled = true;
+      startBtn.textContent = '正在同步雲端最新試卷...';
+    }
+    await syncStateFromCloud(true);
+    if (startBtn) {
+      startBtn.disabled = false;
+      startBtn.innerHTML = `進入全螢幕並開始作答 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
+    }
+  }
+
+  if (examData.questions.length === 0) {
+    showLoginError('目前題庫中尚無有效題目，請先通知考官匯入考題！');
+    return;
+  }
+
+  // 檢查當前場次同一學號是否已作答過 (不區分大小寫)
+  const duplicated = submissions.find(
+    s => String(s.studentId).toLowerCase() === idInput.toLowerCase()
+  );
+  if (duplicated) {
+    showLoginError(`學號「${idInput}」已於本場次 (${duplicated.submittedAt}) 完成交卷，每位考生限作答一次！`);
+    return;
+  }
+
+  // 嘗試請求全螢幕以提高防作弊保護
+  try {
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  } catch (e) {}
+
+  // 亂數排列試題 (Fisher-Yates Shuffle)
+  const shuffled = [...examData.questions];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  // 初始化考試 Session
+  activeSession = {
+    isActive: true,
+    studentName: nameInput,
+    studentId: idInput,
+    studentEmail: emailInput,
+    startTime: Date.now(),
+    remainingSeconds: (Number(examData.durationMinutes) || 60) * 60,
+    timerInterval: null,
+    shuffledQuestions: shuffled,
+    answers: {},
+    warningCount: 0,
+    lastCheatTriggerAt: Date.now() // 給予剛進入全螢幕時的緩衝
+  };
+
+  // 切換頂部導覽列為考試監控模式
+  document.getElementById('roleSwitcher').classList.add('hidden');
+  document.getElementById('examLiveBar').classList.remove('hidden');
+  document.getElementById('liveStudentDisplay').textContent = `${nameInput} (${idInput})`;
+  document.getElementById('liveWarnCount').textContent = '0';
+  document.getElementById('liveWarningBadge').classList.remove('warned');
+  document.getElementById('liveTimerBox').classList.remove('timer-urgent');
+
+  // 切換畫面至作答區
+  document.getElementById('studentLoginView').classList.add('hidden');
+  document.getElementById('studentResultView').classList.add('hidden');
+  document.getElementById('studentQuizView').classList.remove('hidden');
+
+  renderQuizQuestions();
+  startCountdownTimer();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function showLoginError(msg) {
+  const errorBox = document.getElementById('studentLoginError');
+  errorBox.textContent = msg;
+  errorBox.classList.remove('hidden');
+}
+
+function renderQuizQuestions() {
+  const container = document.getElementById('questionsContainer');
+  const palette = document.getElementById('questionPalette');
+  const total = activeSession.shuffledQuestions.length;
+  const pts = getPointsPerQuestion(total);
+
+  document.getElementById('totalQCount').textContent = total;
+  document.getElementById('quizPointsPerQ').textContent = pts;
+
+  container.innerHTML = '';
+  palette.innerHTML = '';
+
+  activeSession.shuffledQuestions.forEach((q, idx) => {
+    const displayNum = idx + 1;
+
+    // 建立題目卡片
+    const card = document.createElement('div');
+    card.className = 'question-card';
+    card.id = `q-card-${q.id}`;
+
+    const optionsHtml = q.options
+      .map(opt => {
+        return `
+          <label class="option-item" id="opt-label-${q.id}-${opt.key}" onclick="selectAnswer(${q.id}, '${opt.key}')">
+            <input type="radio" class="option-radio" name="q_${q.id}" value="${opt.key}">
+            <span class="option-key">${opt.key}</span>
+            <span class="option-label-text">${escapeHtml(opt.text)}</span>
+          </label>
+        `;
+      })
+      .join('');
+
+    card.innerHTML = `
+      <div class="q-header">
+        <span class="q-badge">第 ${displayNum} 題</span>
+        <div class="q-text">${escapeHtml(q.question)}</div>
+      </div>
+      <div class="options-grid">
+        ${optionsHtml}
+      </div>
+    `;
+    container.appendChild(card);
+
+    // 建立右側題號導覽按鈕
+    const pBtn = document.createElement('button');
+    pBtn.type = 'button';
+    pBtn.className = 'palette-btn';
+    pBtn.id = `palette-btn-${q.id}`;
+    pBtn.textContent = displayNum;
+    pBtn.onclick = () => {
+      document.getElementById(`q-card-${q.id}`).scrollIntoView({ behavior: 'smooth' });
+    };
+    palette.appendChild(pBtn);
+  });
+
+  updateQuizProgress();
+}
+
+function selectAnswer(questionId, optionKey) {
+  if (!activeSession.isActive) return;
+
+  activeSession.answers[questionId] = optionKey;
+
+  // 更新該題選項樣式
+  const qObj = activeSession.shuffledQuestions.find(q => q.id === questionId);
+  if (qObj) {
+    qObj.options.forEach(opt => {
+      const labelEl = document.getElementById(`opt-label-${questionId}-${opt.key}`);
+      if (labelEl) {
+        const radio = labelEl.querySelector('input[type="radio"]');
+        if (opt.key === optionKey) {
+          labelEl.classList.add('selected');
+          if (radio) radio.checked = true;
+        } else {
+          labelEl.classList.remove('selected');
+          if (radio) radio.checked = false;
+        }
+      }
+    });
+  }
+
+  // 更新卡片與導覽列狀態
+  const cardEl = document.getElementById(`q-card-${questionId}`);
+  if (cardEl) cardEl.classList.add('answered');
+
+  const pBtn = document.getElementById(`palette-btn-${questionId}`);
+  if (pBtn) pBtn.classList.add('answered');
+
+  updateQuizProgress();
+}
+
+function updateQuizProgress() {
+  const total = activeSession.shuffledQuestions.length;
+  const answered = Object.keys(activeSession.answers).length;
+  const pct = total > 0 ? Math.round((answered / total) * 100) : 0;
+
+  document.getElementById('answeredCount').textContent = answered;
+  document.getElementById('quizProgressBar').style.width = `${pct}%`;
+}
+
+// ==================== 倒數計時器 ====================
+function startCountdownTimer() {
+  if (activeSession.timerInterval) {
+    clearInterval(activeSession.timerInterval);
+  }
+
+  updateTimerDisplay();
+
+  activeSession.timerInterval = setInterval(() => {
+    if (!activeSession.isActive) {
+      clearInterval(activeSession.timerInterval);
+      return;
+    }
+
+    activeSession.remainingSeconds--;
+    updateTimerDisplay();
+
+    // 剩餘不到 5 分鐘時變紅字提醒
+    if (activeSession.remainingSeconds <= 300) {
+      document.getElementById('liveTimerBox').classList.add('timer-urgent');
+    }
+
+    if (activeSession.remainingSeconds <= 0) {
+      clearInterval(activeSession.timerInterval);
+      finalizeExamSubmission('時間到自動交卷');
+    }
+  }, 1000);
+}
+
+function updateTimerDisplay() {
+  const sec = Math.max(0, activeSession.remainingSeconds);
+  const mins = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  const formatted = `${String(mins).padStart(2, '0')}:${String(remSec).padStart(2, '0')}`;
+  document.getElementById('timerDisplay').textContent = formatted;
+}
+
+// ==================== 防作弊監控機制 ====================
+function setupAntiCheatListeners() {
+  // 1. 偵測分頁切換或最小化 (visibilitychange)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && activeSession.isActive) {
+      handleAntiCheatViolation('切換瀏覽器分頁或最小化視窗');
+    }
+  });
+
+  // 2. 偵測視窗失去焦點 (window blur，例如點選其他應用程式或快捷鍵切出)
+  window.addEventListener('blur', () => {
+    if (activeSession.isActive) {
+      handleAntiCheatViolation('離開作答視窗焦點');
+    }
+  });
+
+  // 3. 禁止作答期間按右鍵選單與複製題目
+  document.addEventListener('contextmenu', e => {
+    if (activeSession.isActive) {
+      e.preventDefault();
+    }
+  });
+
+  document.addEventListener('copy', e => {
+    if (activeSession.isActive) {
+      e.preventDefault();
+    }
+  });
+}
+
+function handleAntiCheatViolation(reason) {
+  if (!activeSession.isActive) return;
+
+  // 避免同一次切換同時觸發 visibilitychange 與 blur 造成重複計次 (設定 1.2 秒防抖)
+  const now = Date.now();
+  if (now - activeSession.lastCheatTriggerAt < 1200) {
+    return;
+  }
+  activeSession.lastCheatTriggerAt = now;
+
+  activeSession.warningCount += 1;
+
+  // 更新頂部警告徽章
+  document.getElementById('liveWarnCount').textContent = activeSession.warningCount;
+  document.getElementById('liveWarningBadge').classList.add('warned');
+
+  if (activeSession.warningCount === 1) {
+    // 第 1 次離開：跳出嚴重警告 Modal
+    document.getElementById('antiCheatModal').classList.remove('hidden');
+  } else if (activeSession.warningCount >= 2) {
+    // 第 2 次離開：立即關閉所有 Modal 並強制終止測驗
+    document.getElementById('antiCheatModal').classList.add('hidden');
+    document.getElementById('submitConfirmModal').classList.add('hidden');
+    finalizeExamSubmission('防作弊強制終止 (離開畫面達2次)');
+  }
+}
+
+function acknowledgeCheatWarning() {
+  activeSession.lastCheatTriggerAt = Date.now();
+  document.getElementById('antiCheatModal').classList.add('hidden');
+}
+
+// ==================== 交卷與計分處理 ====================
+function requestSubmitExam() {
+  if (!activeSession.isActive) return;
+
+  const total = activeSession.shuffledQuestions.length;
+  const answered = Object.keys(activeSession.answers).length;
+  const unanswered = total - answered;
+
+  const confirmText = document.getElementById('submitConfirmText');
+  if (unanswered > 0) {
+    confirmText.innerHTML = `您目前已完成 <strong>${answered} / ${total}</strong> 題，尚有 <strong style="color: var(--danger);">${unanswered} 題未作答</strong>！<br>確定要現在交卷嗎？`;
+  } else {
+    confirmText.innerHTML = `您已全數完成 <strong>${total} / ${total}</strong> 題作答。<br>交卷後無法再修改答案，確定提交嗎？`;
+  }
+
+  document.getElementById('submitConfirmModal').classList.remove('hidden');
+}
+
+function closeSubmitModal() {
+  document.getElementById('submitConfirmModal').classList.add('hidden');
+}
+
+async function finalizeExamSubmission(statusReason) {
+  if (!activeSession.isActive) return;
+  activeSession.isActive = false;
+
+  if (activeSession.timerInterval) {
+    clearInterval(activeSession.timerInterval);
+    activeSession.timerInterval = null;
+  }
+
+  document.getElementById('submitConfirmModal').classList.add('hidden');
+  document.getElementById('antiCheatModal').classList.add('hidden');
+
+  // 退回一般視窗模式
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+  } catch (e) {}
+
+  // 計算成績 (滿分 100 分，依題數自動配分)
+  const totalQ = examData.questions.length;
+  let correctCount = 0;
+  const answerDetails = {};
+
+  examData.questions.forEach(q => {
+    const selected = activeSession.answers[q.id] || '';
+    const isCorrect = selected.toUpperCase() === q.answer.toUpperCase();
+    if (isCorrect) correctCount++;
+    answerDetails[q.id] = {
+      selected: selected || '未作答',
+      correctAnswer: q.answer,
+      isCorrect
+    };
+  });
+
+  const rawScore = totalQ > 0 ? (correctCount / totalQ) * 100 : 0;
+  const finalScore = Number(rawScore.toFixed(1));
+
+  const timeSpentSeconds = Math.max(
+    1,
+    Math.round((Date.now() - activeSession.startTime) / 1000)
+  );
+  const formattedTimeSpent = formatDuration(timeSpentSeconds);
+  const submittedAt = formatDateTime(new Date());
+
+  const record = {
+    id: 'SUB_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+    examTitle: examData.title,
+    examDate: examData.examDate,
+    studentName: activeSession.studentName,
+    studentId: activeSession.studentId,
+    studentEmail: activeSession.studentEmail,
+    score: finalScore,
+    correctCount,
+    totalQuestions: totalQ,
+    answeredCount: Object.keys(activeSession.answers).length,
+    warningCount: activeSession.warningCount,
+    status: statusReason,
+    timeSpentSeconds,
+    timeSpentFormatted: formattedTimeSpent,
+    submittedAt,
+    emailSentAt: '',
+    answerDetails
+  };
+
+  submissions.unshift(record);
+  localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+
+  // 恢復頂部導覽列
+  document.getElementById('examLiveBar').classList.add('hidden');
+  document.getElementById('roleSwitcher').classList.remove('hidden');
+
+  // 顯示交卷完成憑證畫面 (不顯示分數與標準答案)
+  document.getElementById('studentQuizView').classList.add('hidden');
+  document.getElementById('studentResultView').classList.remove('hidden');
+
+  const iconWrap = document.getElementById('resultIconWrap');
+  const titleEl = document.getElementById('resultTitle');
+  const subEl = document.getElementById('resultSubtitle');
+
+  if (statusReason.includes('強制終止')) {
+    iconWrap.classList.add('forced');
+    titleEl.textContent = '⚠️ 測驗已遭系統強制終止並自動交卷';
+    subEl.textContent = '因系統偵測到您離開作答畫面達 2 次，已依防作弊規定立即終止測驗並鎖定目前已填寫之答案。考試結束後將寄送成績單至您的信箱。';
+  } else {
+    iconWrap.classList.remove('forced');
+    titleEl.textContent = '已完成測驗交卷';
+    subEl.textContent = '您的作答紀錄已成功儲存。為維護考試公平性，現場不公佈分數與標準答案，考官將於考試結束後寄送成績單至您的電子信箱。';
+  }
+
+  document.getElementById('receiptExamTitle').textContent = record.examTitle;
+  document.getElementById('receiptName').textContent = record.studentName;
+  document.getElementById('receiptStudentId').textContent = record.studentId;
+  document.getElementById('receiptEmail').textContent = record.studentEmail || '-';
+  document.getElementById('receiptAnswered').textContent = `${record.answeredCount} / ${record.totalQuestions} 題`;
+  document.getElementById('receiptTimeSpent').textContent = record.timeSpentFormatted;
+  document.getElementById('receiptStatus').textContent = record.status;
+  document.getElementById('receiptTimestamp').textContent = record.submittedAt;
+
+  const cloudStatusEl = document.getElementById('receiptCloudStatus');
+  if (getActiveGasUrl()) {
+    cloudStatusEl.textContent = '🔄 正在同步上傳至雲端資料庫...';
+    const cloudRes = await postToCloud({
+      action: 'submitExam',
+      record: record
+    });
+    if (cloudRes && (cloudRes.status === 'success' || cloudRes.status === 'duplicate')) {
+      cloudStatusEl.innerHTML = '<span style="color:var(--primary);">✅ 已成功上傳至雲端多人資料庫</span>';
+    } else {
+      cloudStatusEl.innerHTML = '<span style="color:var(--accent-dark);">⚠️ 已儲存於本機 (雲端連線逾時)</span>';
+    }
+  } else {
+    cloudStatusEl.textContent = '已儲存於本機瀏覽器';
+  }
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function resetToStudentHome() {
+  document.getElementById('studentStartForm').reset();
+  document.getElementById('studentLoginError').classList.add('hidden');
+  document.getElementById('studentResultView').classList.add('hidden');
+  document.getElementById('studentLoginView').classList.remove('hidden');
+  renderStudentLoginMeta();
+}
+
+// ==================== 考官端驗證與管理後台 ====================
+function handlePinLogin(event) {
+  event.preventDefault();
+  const pinInput = document.getElementById('examinerPinInput').value.trim();
+  const errBox = document.getElementById('pinErrorMsg');
+
+  if (pinInput === EXAMINER_PIN) {
+    isExaminerAuthenticated = true;
+    errBox.classList.add('hidden');
+    showExaminerDashboard();
+    if (getActiveGasUrl()) {
+      syncStateFromCloud(true);
+    }
+  } else {
+    errBox.classList.remove('hidden');
+    document.getElementById('examinerPinInput').select();
+  }
+}
+
+function logoutExaminer() {
+  isExaminerAuthenticated = false;
+  document.getElementById('examinerDashboardView').classList.add('hidden');
+  document.getElementById('examinerPinView').classList.remove('hidden');
+  document.getElementById('examinerPinInput').value = '';
+}
+
+function showExaminerDashboard() {
+  document.getElementById('examinerPinView').classList.add('hidden');
+  document.getElementById('examinerDashboardView').classList.remove('hidden');
+  refreshExaminerAllViews();
+}
+
+function switchExaminerTab(tabId) {
+  document.querySelectorAll('.dashboard-tabs .tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabId);
+  });
+
+  ['tabQuestions', 'tabScores', 'tabAnalytics', 'tabHistory', 'tabCloud'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', id !== tabId);
+  });
+
+  refreshExaminerAllViews();
+}
+
+function refreshExaminerAllViews() {
+  renderExaminerQuestionTab();
+  renderExaminerScoresTab();
+  renderExaminerAnalyticsTab();
+  renderExaminerHistoryTab();
+  updateCloudStatusUI();
+}
+
+// ==================== 考官端頁籤 1：考題管理與 Excel 範本匯入 ====================
+function renderExaminerQuestionTab() {
+  const qCount = examData.questions.length;
+  const pts = getPointsPerQuestion(qCount);
+
+  document.getElementById('metaExamTitle').value = examData.title || '';
+  document.getElementById('metaExamDate').value = examData.examDate || '';
+  document.getElementById('metaExamDuration').value = examData.durationMinutes || 60;
+  document.getElementById('metaValidQCount').textContent = qCount;
+  document.getElementById('metaPointsPerQ').textContent = pts;
+  document.getElementById('questionTableCount').textContent = qCount;
+
+  const tbody = document.getElementById('questionsTableBody');
+  tbody.innerHTML = '';
+
+  if (qCount === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted);">目前尚無考題，請從上方匯入 Excel 範本或手動新增題目</td></tr>`;
+    return;
+  }
+
+  examData.questions.forEach((q, idx) => {
+    const tr = document.createElement('tr');
+    const formattedOpts = q.options
+      .map(o => `<span class="badge badge-teal" style="margin-right:4px;">${o.key}</span>${escapeHtml(o.text)}`)
+      .join('<br>');
+
+    tr.innerHTML = `
+      <td><strong>#${idx + 1}</strong></td>
+      <td>${escapeHtml(q.question)}</td>
+      <td style="font-size: 0.86rem; line-height: 1.7;">${formattedOpts}</td>
+      <td><span class="badge badge-amber" style="font-size:0.9rem;">${escapeHtml(q.answer)}</span></td>
+      <td>${pts} 分</td>
+      <td>
+        <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteQuestion(${q.id})">刪除</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function saveExamMetadata(event) {
+  event.preventDefault();
+  examData.title = document.getElementById('metaExamTitle').value.trim() || '未命名測驗';
+  examData.examDate = document.getElementById('metaExamDate').value.trim() || '2026-12-01';
+  examData.durationMinutes = Math.max(1, Number(document.getElementById('metaExamDuration').value) || 60);
+
+  saveExamDataToStorage(true);
+  refreshExaminerAllViews();
+  showImportAlert('已成功儲存試卷設定並同步至雲端！', 'success');
+}
+
+function loadDemoExamBank() {
+  if (!confirm('確定要載入內建的「5題緊急救護示範題庫」嗎？這將會覆蓋目前的題庫設定。')) {
+    return;
+  }
+  promptArchiveBeforeReplacingBank(JSON.parse(JSON.stringify(DEMO_5Q_EXAM_DATA)), '已成功載入 5 題緊急救護示範考題！每題自動配分為 20 分。');
+}
+
+/**
+ * 當考官更換新題庫且當前場次已有考生成績時，貼心詢問是否先將當前場次歸檔至「歷次測驗紀錄」
+ */
+function promptArchiveBeforeReplacingBank(newExamObj, successMsg) {
+  if (submissions.length > 0) {
+    const shouldArchive = confirm(
+      `偵測到目前場次【${examData.title}】已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將這 ${submissions.length} 筆成績自動封存為一筆獨立的「歷次測驗紀錄」，並清空當前場次名單以供新試卷應試？`
+    );
+    if (shouldArchive) {
+      createAndSaveHistorySession(`${examData.title} (${examData.examDate})`, true, newExamObj);
+      showImportAlert(`${successMsg}（原場次 ${submissions.length} 人成績已自動封存至「歷次測驗紀錄」）`, 'success');
+      return;
+    }
+  }
+
+  examData = newExamObj;
+  saveExamDataToStorage(true);
+  refreshExaminerAllViews();
+  showImportAlert(successMsg, 'success');
+}
+
+function deleteQuestion(qId) {
+  if (examData.questions.length <= 1) {
+    alert('題庫至少需保留 1 題！');
+    return;
+  }
+  examData.questions = examData.questions.filter(q => q.id !== qId);
+  // 重新編號
+  examData.questions.forEach((q, i) => {
+    q.id = i + 1;
+  });
+  saveExamDataToStorage(true);
+  refreshExaminerAllViews();
+}
+
+function openAddQuestionModal() {
+  document.getElementById('addQuestionForm').reset();
+  document.getElementById('addQuestionModal').classList.remove('hidden');
+}
+
+function closeAddQuestionModal() {
+  document.getElementById('addQuestionModal').classList.add('hidden');
+}
+
+function handleSaveNewQuestion(event) {
+  event.preventDefault();
+  const qText = document.getElementById('newQText').value.trim();
+  const rawOpts = document.getElementById('newQOptions').value.trim();
+  const ans = document.getElementById('newQAnswer').value.trim().toUpperCase();
+
+  const parsedOptions = parseOptionsString(rawOpts);
+  if (parsedOptions.length < 2) {
+    alert('請輸入至少 2 個選項（每行一個選項）！');
+    return;
+  }
+
+  const newId = examData.questions.length + 1;
+  examData.questions.push({
+    id: newId,
+    question: qText,
+    rawOptions: rawOpts,
+    options: parsedOptions,
+    answer: ans
+  });
+
+  saveExamDataToStorage(true);
+  closeAddQuestionModal();
+  refreshExaminerAllViews();
+  showImportAlert(`已新增第 ${newId} 題，系統已自動重新平均配分並同步雲端！`, 'success');
+}
+
+// ==================== Excel 範本匯入與解析 ====================
+function setupDragAndDrop() {
+  const dropzone = document.getElementById('excelDropzone');
+  if (!dropzone) return;
+
+  dropzone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropzone.classList.add('dragover');
+  });
+
+  dropzone.addEventListener('dragleave', () => {
+    dropzone.classList.remove('dragover');
+  });
+
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processExcelFile(e.dataTransfer.files[0]);
+    }
+  });
+}
+
+function handleExcelUpload(event) {
+  const file = event.target.files[0];
+  if (file) {
+    processExcelFile(file);
+  }
+  event.target.value = '';
+}
+
+function processExcelFile(file) {
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+      parseTemplateRows(rows, file.name);
+    } catch (err) {
+      console.error(err);
+      showImportAlert('讀取 Excel 檔案失敗，請確認檔案格式是否為有效的 .xlsx, .xls 或 .csv！', 'danger');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseTemplateRows(rows, fileName) {
+  if (!rows || rows.length < 2) {
+    showImportAlert('檔案內容空白或格式不符！', 'danger');
+    return;
+  }
+
+  let parsedTitle = examData.title;
+  let parsedDuration = examData.durationMinutes;
+  let parsedDate = examData.examDate;
+  const parsedQuestions = [];
+
+  for (let r = 0; r < Math.min(4, rows.length); r++) {
+    const row = rows[r].map(cell => String(cell ?? '').trim());
+    for (let c = 0; c < row.length; c++) {
+      if (row[c] === '試卷名稱' && row[c + 1]) {
+        parsedTitle = row[c + 1];
+      }
+      if (row[c] === '作答時間' && row[c + 1]) {
+        const num = parseInt(row[c + 1], 10);
+        if (!isNaN(num) && num > 0) parsedDuration = num;
+      }
+      if (row[c] === '考試日期' && row[c + 1]) {
+        parsedDate = row[c + 1];
+      }
+    }
+  }
+
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r].map(cell => String(cell ?? '').trim());
+    const qLabelIdx = row.findIndex(cell => cell === '題目');
+    if (qLabelIdx !== -1) {
+      const questionText = row[qLabelIdx + 1] || '';
+      const nextRow = r + 1 < rows.length ? rows[r + 1].map(cell => String(cell ?? '').trim()) : [];
+
+      let rawOptionsText = '';
+      const optLabelIdx = nextRow.findIndex(cell => cell === '選項');
+      if (optLabelIdx !== -1) {
+        rawOptionsText = nextRow[optLabelIdx + 1] || '';
+      }
+
+      let answerText = '';
+      const ansLabelIdx = row.findIndex(cell => cell === '答案');
+      if (ansLabelIdx !== -1) {
+        if (nextRow[ansLabelIdx]) {
+          answerText = nextRow[ansLabelIdx];
+        } else if (row[ansLabelIdx + 1]) {
+          answerText = row[ansLabelIdx + 1];
+        } else if (nextRow[ansLabelIdx + 1]) {
+          answerText = nextRow[ansLabelIdx + 1];
+        }
+      }
+
+      if (questionText && rawOptionsText) {
+        const optionsArr = parseOptionsString(rawOptionsText);
+        const cleanAns = answerText.replace(/[^A-Za-z]/g, '').toUpperCase() || 'A';
+
+        parsedQuestions.push({
+          id: parsedQuestions.length + 1,
+          question: questionText,
+          rawOptions: rawOptionsText,
+          options: optionsArr,
+          answer: cleanAns
+        });
+      }
+    }
+  }
+
+  if (parsedQuestions.length === 0) {
+    showImportAlert('未在檔案中偵測到有效的題目與選項，請確認「題目」與「選項」欄位皆已填寫！', 'danger');
+    return;
+  }
+
+  const newExamObj = {
+    title: parsedTitle,
+    durationMinutes: parsedDuration,
+    examDate: parsedDate,
+    questions: parsedQuestions
+  };
+
+  const pts = getPointsPerQuestion(parsedQuestions.length);
+  promptArchiveBeforeReplacingBank(
+    newExamObj,
+    `成功自「${fileName}」匯入試卷【${parsedTitle}】！共讀取 ${parsedQuestions.length} 題有效單選題，每題自動配分 ${pts} 分。`
+  );
+}
+
+function parseOptionsString(rawStr) {
+  const lines = String(rawStr)
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
+
+  const keys = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const result = [];
+
+  lines.forEach((line, idx) => {
+    const match = line.match(/^[\(\[（]?([A-Fa-f])[\)\]）．.、\s]+(.*)$/);
+    if (match) {
+      result.push({
+        key: match[1].toUpperCase(),
+        text: match[2].trim()
+      });
+    } else {
+      result.push({
+        key: keys[idx] || String(idx + 1),
+        text: line
+      });
+    }
+  });
+
+  return result;
+}
+
+function showImportAlert(msg, type) {
+  const box = document.getElementById('importAlertBox');
+  box.textContent = msg;
+  box.className = `alert alert-${type === 'danger' ? 'danger' : 'success'}`;
+  box.classList.remove('hidden');
+}
+
+function downloadSampleExcel() {
+  const aoa = [
+    ['', '試卷名稱', examData.title || '範本考題', '作答時間', examData.durationMinutes || 60, '分鐘'],
+    ['', '考試日期', examData.examDate || '2026-12-01', '', '', ''],
+    ['', '', '', '', '', '']
+  ];
+
+  for (let i = 1; i <= 100; i++) {
+    const existingQ = examData.questions[i - 1];
+    if (existingQ) {
+      aoa.push([i, '題目', existingQ.question, '答案', '', '']);
+      aoa.push(['', '選項', existingQ.rawOptions, existingQ.answer, '', '']);
+    } else {
+      aoa.push([i, '題目', '', '答案', '', '']);
+      aoa.push(['', '選項', '', '', '', '']);
+    }
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [
+    { wch: 8 },
+    { wch: 12 },
+    { wch: 65 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 10 }
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '考題範本');
+  XLSX.writeFile(wb, `${examData.title || '線上測驗'}_考題範本.xlsx`);
+}
+
+// ==================== 考官端頁籤 2：當前場次成績統計與寄送 Email ====================
+function renderExaminerScoresTab() {
+  document.getElementById('tabScoreCount').textContent = submissions.length;
+  const tbody = document.getElementById('scoresTableBody');
+  tbody.innerHTML = '';
+
+  if (submissions.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center; color: var(--text-muted); padding: 28px;">目前場次尚無考生交卷紀錄。可點擊右上方「🧪 產生模擬成績」快速測試寄信、歷史歸檔與錯題分析功能。</td></tr>`;
+    return;
+  }
+
+  submissions.forEach(sub => {
+    tbody.appendChild(buildSubmissionRowElement(sub, 'CURRENT'));
+  });
+}
+
+function buildSubmissionRowElement(sub, sessionId) {
+  const tr = document.createElement('tr');
+  const isForced = String(sub.status || '').includes('強制終止');
+  const statusBadge = isForced
+    ? `<span class="badge badge-danger">${escapeHtml(sub.status)}</span>`
+    : `<span class="badge badge-teal">${escapeHtml(sub.status)}</span>`;
+
+  const warnBadge =
+    sub.warningCount > 0
+      ? `<span class="badge badge-danger">${sub.warningCount} 次</span>`
+      : `<span class="text-muted">0 次</span>`;
+
+  const scoreColor = sub.score >= 60 ? 'var(--primary-darker)' : 'var(--danger)';
+  const emailDisplay = sub.studentEmail
+    ? `<span style="font-size:0.86rem;">${escapeHtml(sub.studentEmail)}</span>`
+    : `<span class="text-muted text-sm">未填寫</span>`;
+
+  const emailStatusBadge = sub.emailSentAt
+    ? `<span class="badge badge-teal" title="寄送時間：${escapeHtml(sub.emailSentAt)}">✅ 已寄送</span>`
+    : `<span class="badge badge-amber">尚未寄送</span>`;
+
+  const deleteBtnHtml = sessionId === 'CURRENT'
+    ? `<button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteSingleSubmission('${sub.id}')">刪除</button>`
+    : '';
+
+  tr.innerHTML = `
+    <td><strong>${escapeHtml(sub.studentId)}</strong></td>
+    <td>${escapeHtml(sub.studentName)}</td>
+    <td>${emailDisplay}</td>
+    <td><strong style="font-size:1.05rem; color:${scoreColor};">${sub.score} 分</strong></td>
+    <td>${sub.correctCount} / ${sub.totalQuestions} 題</td>
+    <td>${escapeHtml(sub.timeSpentFormatted)}</td>
+    <td>${warnBadge}</td>
+    <td>${statusBadge}</td>
+    <td>${emailStatusBadge}</td>
+    <td style="font-size:0.84rem;">${escapeHtml(sub.submittedAt)}</td>
+    <td>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="viewStudentDetail('${sessionId}', '${sub.id}')">明細</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="sendSingleScoreEmail('${sessionId}', '${sub.id}')">✉️ 寄信</button>
+        ${deleteBtnHtml}
+      </div>
+    </td>
+  `;
+  return tr;
+}
+
+function getSessionDataById(sessionId) {
+  if (sessionId === 'CURRENT') {
+    return {
+      title: examData.title,
+      examDate: examData.examDate,
+      questions: examData.questions,
+      submissions: submissions
+    };
+  }
+  const hist = historySessions.find(h => h.id === sessionId);
+  if (!hist) return null;
+  return {
+    title: hist.examTitle || hist.sessionTitle,
+    examDate: hist.examDate,
+    questions: hist.questionsSnapshot || [],
+    submissions: hist.submissions || []
+  };
+}
+
+function viewStudentDetail(sessionId, subId) {
+  const sessionObj = getSessionDataById(sessionId);
+  if (!sessionObj) return;
+
+  const sub = sessionObj.submissions.find(s => s.id === subId);
+  if (!sub) return;
+
+  document.getElementById('detailModalTitle').textContent = `${sub.studentName} (${sub.studentId}) - 作答明細 (${sub.score} 分)`;
+  const body = document.getElementById('detailModalBody');
+
+  let rowsHtml = '';
+  sessionObj.questions.forEach((q, idx) => {
+    const d = sub.answerDetails ? sub.answerDetails[q.id] : null;
+    const picked = d ? d.selected : '未作答';
+    const isCorrect = d ? d.isCorrect : false;
+    const badge = isCorrect
+      ? `<span class="badge badge-teal">✔ 答對</span>`
+      : `<span class="badge badge-danger">✘ 答錯</span>`;
+
+    rowsHtml += `
+      <tr>
+        <td>第 ${idx + 1} 題</td>
+        <td>${escapeHtml(q.question)}</td>
+        <td><strong>${escapeHtml(picked)}</strong></td>
+        <td><strong style="color:var(--primary);">${escapeHtml(q.answer)}</strong></td>
+        <td>${badge}</td>
+      </tr>
+    `;
+  });
+
+  body.innerHTML = `
+    <div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <span class="text-muted text-sm">電子信箱：<strong>${escapeHtml(sub.studentEmail || '未填寫')}</strong>｜交卷時間：${escapeHtml(sub.submittedAt)}</span>
+      <button type="button" class="btn btn-primary btn-sm" onclick="sendSingleScoreEmail('${sessionId}', '${sub.id}')">📧 寄送此考生成績單 Email</button>
+    </div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:80px;">題號</th>
+          <th>題目</th>
+          <th style="width:90px;">考生作答</th>
+          <th style="width:90px;">標準答案</th>
+          <th style="width:90px;">結果</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  `;
+
+  document.getElementById('studentDetailModal').classList.remove('hidden');
+}
+
+function closeStudentDetailModal() {
+  document.getElementById('studentDetailModal').classList.add('hidden');
+}
+
+function deleteSingleSubmission(subId) {
+  if (!confirm('確定要刪除此位考生的作答紀錄嗎？（刪除後該學號即可於本場次重新應試）')) return;
+  submissions = submissions.filter(s => s.id !== subId);
+  saveSubmissionsToStorage(true);
+  refreshExaminerAllViews();
+}
+
+function clearAllSubmissions() {
+  if (submissions.length === 0) return;
+  if (!confirm('確定要清空「當前場次」所有考生的成績紀錄嗎？（若需保存紀錄，建議先點選「結束本場測驗並歸檔至歷史紀錄」）')) return;
+  submissions = [];
+  saveSubmissionsToStorage(true);
+  refreshExaminerAllViews();
+}
+
+// ==================== 考後寄送成績單 Email 功能 ====================
+function buildPlainTextScoreEmail(sub, sessionObj) {
+  const passText = Number(sub.score) >= 60 ? '及格' : '未達及格標準(60分)';
+  const lines = [
+    `${sub.studentName} (${sub.studentId}) 您好：`,
+    ``,
+    `以下為您在【${sub.examTitle || sessionObj.title}】的筆試測驗成績通知單：`,
+    `----------------------------------------`,
+    `• 考生姓名：${sub.studentName}`,
+    `• 學號/編號：${sub.studentId}`,
+    `• 測驗總分：${sub.score} 分 (${passText})`,
+    `• 答對題數：${sub.correctCount} / ${sub.totalQuestions} 題`,
+    `• 作答耗時：${sub.timeSpentFormatted}`,
+    `• 交卷狀態：${sub.status}`,
+    `• 交卷時間：${sub.submittedAt}`,
+    `----------------------------------------`,
+    `【各題作答與標準答案明細】`
+  ];
+
+  (sessionObj.questions || []).forEach((q, idx) => {
+    const d = sub.answerDetails ? sub.answerDetails[q.id] : null;
+    const picked = d ? d.selected : '未作答';
+    const mark = (d && d.isCorrect) ? '✔答對' : '✘答錯';
+    lines.push(`第 ${idx + 1} 題 [${mark}] 您的答案：${picked} ｜ 標準答案：${q.answer} — ${q.question}`);
+  });
+
+  lines.push(``, `線上筆試測驗系統 敬上`);
+  return lines.join('\n');
+}
+
+async function sendSingleScoreEmail(sessionId, subId) {
+  const sessionObj = getSessionDataById(sessionId);
+  if (!sessionObj) return;
+  const sub = sessionObj.submissions.find(s => s.id === subId);
+  if (!sub) return;
+
+  if (!sub.studentEmail || !sub.studentEmail.includes('@')) {
+    const manualEmail = prompt(`考生「${sub.studentName}」尚未填寫有效的 Email，請輸入要寄送的電子郵件信箱：`, '');
+    if (!manualEmail || !manualEmail.includes('@')) return;
+    sub.studentEmail = manualEmail.trim();
+  }
+
+  await dispatchScoreEmails(sessionId, [sub], sessionObj);
+}
+
+async function sendAllScoresEmail(sessionId, silentIfNone = false) {
+  const sessionObj = getSessionDataById(sessionId);
+  if (!sessionObj || sessionObj.submissions.length === 0) {
+    if (!silentIfNone) alert('目前沒有考生成績可供寄送！');
+    return;
+  }
+
+  const validSubs = sessionObj.submissions.filter(s => s.studentEmail && s.studentEmail.includes('@'));
+  if (validSubs.length === 0) {
+    if (!silentIfNone) alert('本場次考生皆未填寫有效的電子郵件 (Email)！');
+    return;
+  }
+
+  if (!silentIfNone) {
+    if (!confirm(`確定要寄送成績通知信給本場次共 ${validSubs.length} 位考生嗎？\n（信件內含考生總分、答對題數與各題標準答案對照明細）`)) {
+      return;
+    }
+  }
+
+  await dispatchScoreEmails(sessionId, validSubs, sessionObj);
+}
+
+async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
+  const gasUrl = getActiveGasUrl();
+  const nowStr = formatDateTime(new Date());
+
+  // 模式 1：若已綁定 Google Apps Script 雲端後端，直接透過 Google MailApp 雲端背景自動發送 HTML 成績信
+  if (gasUrl) {
+    showToast(`📧 正在透過 Google 雲端自動寄送 ${recipients.length} 封考生成績通知信...`);
+    const res = await postToCloud({
+      action: 'sendScoreEmails',
+      sessionId: sessionId,
+      recipients: recipients,
+      examData: {
+        title: sessionObj.title,
+        examDate: sessionObj.examDate,
+        questions: sessionObj.questions
+      }
+    });
+
+    if (res && res.status === 'success') {
+      const sentIds = res.sentIds || recipients.map(r => r.id);
+      const sentTime = res.emailSentAt || nowStr;
+
+      sessionObj.submissions.forEach(s => {
+        if (sentIds.includes(s.id)) {
+          s.emailSentAt = sentTime;
+        }
+      });
+
+      if (sessionId === 'CURRENT') {
+        saveSubmissionsToStorage(false);
+      } else {
+        saveHistorySessionsToStorage(false);
+      }
+      refreshExaminerAllViews();
+      if (currentViewingHistoryId) {
+        viewHistorySessionDetail(currentViewingHistoryId);
+      }
+
+      if (res.errors && res.errors.length > 0) {
+        alert(`已寄出 ${res.sentCount} 封信，但有部分信箱發送失敗：\n${res.errors.join('\n')}`);
+      } else {
+        showToast(`✅ 成功寄出 ${res.sentCount} 封 HTML 考生成績單 Email！`);
+      }
+      return;
+    } else {
+      showToast('⚠️ 雲端寄信未回應，將切換為本機郵件發送模式');
+    }
+  }
+
+  // 模式 2：本機未綁定雲端時，使用 mailto: 喚起系統郵件客戶端寄發完整成績單
+  if (recipients.length === 1) {
+    const sub = recipients[0];
+    const subject = `【測驗成績通知】${sub.examTitle || sessionObj.title} - ${sub.studentName} (${sub.studentId})`;
+    const body = buildPlainTextScoreEmail(sub, sessionObj);
+    sub.emailSentAt = nowStr;
+
+    if (sessionId === 'CURRENT') {
+      saveSubmissionsToStorage(false);
+    } else {
+      saveHistorySessionsToStorage(false);
+    }
+    refreshExaminerAllViews();
+    if (currentViewingHistoryId) {
+      viewHistorySessionDetail(currentViewingHistoryId);
+    }
+
+    window.location.href = `mailto:${encodeURIComponent(sub.studentEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    showToast(`✉️ 已開啟「${sub.studentName}」的成績通知信件視窗！`);
+  } else {
+    // 多人批次：開啟第一封或提示綁定 Google Apps Script 即可全自動背景寄送
+    const bccList = recipients.map(r => r.studentEmail).join(',');
+    const subject = `【測驗成績公佈】${sessionObj.title} (${sessionObj.examDate}) 個人成績總表`;
+    const summaryLines = [
+      `各位考生您好，【${sessionObj.title}】測驗已結束，成績摘要如下：`,
+      `----------------------------------------`
+    ];
+    recipients.forEach(r => {
+      summaryLines.push(`• ${r.studentName} (${r.studentId})：${r.score} 分 (答對 ${r.correctCount}/${r.totalQuestions} 題)`);
+      r.emailSentAt = nowStr;
+    });
+    summaryLines.push(
+      `----------------------------------------`,
+      `💡 考官提示：若於「☁️ 雲端多人連線與寄信設定」綁定 Google Apps Script，系統即可自動為每位考生獨立寄發專屬 HTML 成績單與標準答案明細！`
+    );
+
+    if (sessionId === 'CURRENT') {
+      saveSubmissionsToStorage(false);
+    } else {
+      saveHistorySessionsToStorage(false);
+    }
+    refreshExaminerAllViews();
+    if (currentViewingHistoryId) {
+      viewHistorySessionDetail(currentViewingHistoryId);
+    }
+
+    window.location.href = `mailto:?bcc=${encodeURIComponent(bccList)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(summaryLines.join('\n'))}`;
+    showToast(`✉️ 已標記寄送狀態並開啟批次成績通知郵件（若綁定雲端即可全自動背景獨立發信）`);
+  }
+}
+
+// ==================== 將每一次測驗結果獨立成一筆歷史紀錄 (頁籤 4) ====================
+function openArchiveSessionModal() {
+  if (submissions.length === 0) {
+    alert('目前場次尚無任何考生交卷紀錄，無須歸檔！（您可先點擊「🧪 產生模擬成績」或待考生交卷後再歸檔）');
+    return;
+  }
+
+  document.getElementById('archiveStudentCount').textContent = submissions.length;
+  const defaultTitle = `${examData.title} (${examData.examDate || formatDateTime(new Date()).slice(0, 10)})`;
+  document.getElementById('archiveSessionTitle').value = defaultTitle;
+  document.getElementById('archiveAutoSendEmail').checked = true;
+  document.getElementById('archiveClearCurrent').checked = true;
+  document.getElementById('archiveSessionModal').classList.remove('hidden');
+}
+
+function closeArchiveSessionModal() {
+  document.getElementById('archiveSessionModal').classList.add('hidden');
+}
+
+async function confirmArchiveCurrentSession(event) {
+  event.preventDefault();
+  const customTitle = document.getElementById('archiveSessionTitle').value.trim() || examData.title;
+  const autoSendEmail = document.getElementById('archiveAutoSendEmail').checked;
+  const clearCurrent = document.getElementById('archiveClearCurrent').checked;
+
+  closeArchiveSessionModal();
+
+  // 若勾選歸檔同時自動寄送成績信給尚未收到信的考生
+  if (autoSendEmail) {
+    const unsentSubs = submissions.filter(s => s.studentEmail && s.studentEmail.includes('@') && !s.emailSentAt);
+    if (unsentSubs.length > 0) {
+      await dispatchScoreEmails('CURRENT', unsentSubs, {
+        title: examData.title,
+        examDate: examData.examDate,
+        questions: examData.questions,
+        submissions: submissions
+      });
+    }
+  }
+
+  const newHist = createAndSaveHistorySession(customTitle, clearCurrent, null);
+  switchExaminerTab('tabHistory');
+  viewHistorySessionDetail(newHist.id);
+  showToast(`🗂️ 已將「${customTitle}」獨立封存至歷次測驗紀錄！`);
+}
+
+function createAndSaveHistorySession(sessionTitle, clearCurrent = true, newExamData = null) {
+  const stats = calculateStatsForList(submissions);
+  const archivedRecord = {
+    id: 'HIST_' + Date.now(),
+    sessionTitle: sessionTitle || examData.title,
+    examTitle: examData.title,
+    examDate: examData.examDate,
+    durationMinutes: examData.durationMinutes,
+    archivedAt: formatDateTime(new Date()),
+    questionsSnapshot: JSON.parse(JSON.stringify(examData.questions)),
+    submissions: JSON.parse(JSON.stringify(submissions)),
+    stats: stats
+  };
+
+  historySessions.unshift(archivedRecord);
+  localStorage.setItem(STORAGE_KEYS.HISTORY_SESSIONS, JSON.stringify(historySessions));
+
+  if (clearCurrent) {
+    submissions = [];
+    localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+  }
+
+  if (newExamData) {
+    examData = newExamData;
+    localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
+  }
+
+  if (getActiveGasUrl()) {
+    postToCloud({
+      action: 'archiveSession',
+      historyRecord: archivedRecord,
+      clearCurrent: clearCurrent,
+      newExamData: newExamData
+    });
+  }
+
+  refreshExaminerAllViews();
+  return archivedRecord;
+}
+
+function renderExaminerHistoryTab() {
+  const countEl = document.getElementById('tabHistoryCount');
+  if (countEl) countEl.textContent = historySessions.length;
+
+  const tbody = document.getElementById('historyTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  if (historySessions.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 28px;">目前尚無封存的歷次測驗紀錄。於每次考試結束後點擊「📌 結束本場測驗並歸檔至歷史紀錄」，即可將每一次測驗結果獨立保存於此！</td></tr>`;
+    return;
+  }
+
+  historySessions.forEach((hist, idx) => {
+    const st = hist.stats || calculateStatsForList(hist.submissions || []);
+    const qLen = hist.questionsSnapshot ? hist.questionsSnapshot.length : 0;
+    const subLen = hist.submissions ? hist.submissions.length : 0;
+
+    const tr = document.createElement('tr');
+    if (currentViewingHistoryId === hist.id) {
+      tr.style.background = 'var(--primary-tint)';
+    }
+
+    tr.innerHTML = `
+      <td>
+        <strong>#${historySessions.length - idx}</strong>
+        <div class="text-muted text-sm">${escapeHtml(hist.archivedAt)}</div>
+      </td>
+      <td><strong>${escapeHtml(hist.sessionTitle || hist.examTitle)}</strong></td>
+      <td>${escapeHtml(hist.examDate || '-')}</td>
+      <td>${qLen} 題</td>
+      <td><strong>${subLen} 人</strong></td>
+      <td><strong style="color:var(--primary);">${st.mean} 分</strong></td>
+      <td><strong style="color:var(--accent-dark);">${st.median} 分</strong></td>
+      <td>${st.stdDev}</td>
+      <td><span class="badge ${st.passRate >= 60 ? 'badge-teal' : 'badge-danger'}">${st.passRate}%</span></td>
+      <td>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary btn-sm" onclick="viewHistorySessionDetail('${hist.id}')">🔍 檢視明細與分析</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('${hist.id}')">📥 匯出 Excel</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="sendAllScoresEmail('${hist.id}')">📧 寄送成績信</button>
+          <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteHistorySession('${hist.id}')">刪除</button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function viewHistorySessionDetail(histId) {
+  const hist = historySessions.find(h => h.id === histId);
+  if (!hist) return;
+
+  currentViewingHistoryId = histId;
+  renderExaminerHistoryTab();
+
+  const detailCard = document.getElementById('historySessionDetailCard');
+  detailCard.classList.remove('hidden');
+
+  const subs = hist.submissions || [];
+  const questions = hist.questionsSnapshot || [];
+  const st = calculateStatsForList(subs);
+
+  document.getElementById('histDetailTitle').textContent = hist.sessionTitle || hist.examTitle;
+  document.getElementById('histDetailMeta').textContent = `考試日期：${hist.examDate || '-'} ｜ 歸檔時間：${hist.archivedAt} ｜ 題數：${questions.length} 題`;
+
+  document.getElementById('btnHistSendAllEmail').onclick = () => sendAllScoresEmail(hist.id);
+  document.getElementById('btnHistExportExcel').onclick = () => exportScoresToExcel(hist.id);
+
+  document.getElementById('histStatTotal').textContent = `${subs.length} 人`;
+  document.getElementById('histStatForced').textContent = `強制終止：${st.forcedCount} 人`;
+  document.getElementById('histStatMean').textContent = `${st.mean} 分`;
+  document.getElementById('histStatStdDev').textContent = `標準差：${st.stdDev}`;
+  document.getElementById('histStatMedian').textContent = `${st.median} 分`;
+  document.getElementById('histStatPassRate').textContent = `及格率 (≥60分)：${st.passRate}%`;
+  document.getElementById('histStatMaxMin').textContent = subs.length > 0 ? `${st.max} / ${st.min}` : '- / -';
+
+  renderErrorRankingIntoContainer(
+    document.getElementById('histErrorRankingList'),
+    questions,
+    subs
+  );
+  renderDistributionIntoContainer(
+    document.getElementById('histDistributionChart'),
+    subs
+  );
+
+  const tbody = document.getElementById('histScoresTableBody');
+  tbody.innerHTML = '';
+  subs.forEach(sub => {
+    tbody.appendChild(buildSubmissionRowElement(sub, hist.id));
+  });
+
+  detailCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function closeHistorySessionDetail() {
+  currentViewingHistoryId = null;
+  document.getElementById('historySessionDetailCard').classList.add('hidden');
+  renderExaminerHistoryTab();
+}
+
+function deleteHistorySession(histId) {
+  if (!confirm('確定要永久刪除此筆歷史測驗紀錄嗎？此操作無法復原！')) return;
+  historySessions = historySessions.filter(h => h.id !== histId);
+  if (currentViewingHistoryId === histId) {
+    closeHistorySessionDetail();
+  }
+  saveHistorySessionsToStorage(true);
+  refreshExaminerAllViews();
+}
+
+// ==================== 匯出考試成績與錯題統計成 Excel (.xlsx) ====================
+function exportScoresToExcel(sessionId = 'CURRENT') {
+  const sessionObj = getSessionDataById(sessionId);
+  if (!sessionObj || sessionObj.submissions.length === 0) {
+    alert('尚無考生成績可供匯出！');
+    return;
+  }
+
+  const targetSubs = sessionObj.submissions;
+  const targetQuestions = sessionObj.questions;
+
+  const headers = [
+    '學號',
+    '考生姓名',
+    '電子郵件 (Email)',
+    '總分',
+    '答對題數',
+    '總題數',
+    '作答耗時',
+    '防作弊警告次數',
+    '交卷狀態',
+    '成績信狀態',
+    '交卷時間'
+  ];
+  targetQuestions.forEach((q, idx) => {
+    headers.push(`第${idx + 1}題(正解:${q.answer})`);
+  });
+
+  const scoreRows = [headers];
+  targetSubs.forEach(sub => {
+    const row = [
+      sub.studentId,
+      sub.studentName,
+      sub.studentEmail || '',
+      sub.score,
+      sub.correctCount,
+      sub.totalQuestions,
+      sub.timeSpentFormatted,
+      sub.warningCount,
+      sub.status,
+      sub.emailSentAt ? `已寄送 (${sub.emailSentAt})` : '尚未寄送',
+      sub.submittedAt
+    ];
+    targetQuestions.forEach(q => {
+      const d = sub.answerDetails ? sub.answerDetails[q.id] : null;
+      row.push(d ? d.selected : '未作答');
+    });
+    scoreRows.push(row);
+  });
+
+  const stats = calculateStatsForList(targetSubs);
+  scoreRows.push([]);
+  scoreRows.push(['【統計摘要】', '應試人數', targetSubs.length, '平均分數', stats.mean, '中位數', stats.median, '標準差', stats.stdDev, '及格率', `${stats.passRate}%`]);
+
+  const wsScores = XLSX.utils.aoa_to_sheet(scoreRows);
+
+  const qAnalysisHeaders = ['題號', '題目內容', '標準答案', '總作答人數', '答錯人數', '答錯率(%)', '最常誤選選項'];
+  const qAnalysisRows = [qAnalysisHeaders];
+  const itemStats = calculateQuestionErrorStatsForList(targetQuestions, targetSubs);
+
+  itemStats.forEach(item => {
+    qAnalysisRows.push([
+      `第 ${item.index} 題`,
+      item.question,
+      item.answer,
+      item.totalAttempts,
+      item.wrongCount,
+      `${item.errorRate}%`,
+      item.topWrongOption || '無'
+    ]);
+  });
+
+  const wsAnalysis = XLSX.utils.aoa_to_sheet(qAnalysisRows);
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsScores, '考生成績總表');
+  XLSX.utils.book_append_sheet(wb, wsAnalysis, '題目答錯率分析');
+
+  XLSX.writeFile(wb, `${sessionObj.title || '線上測驗'}_成績統計報表.xlsx`);
+}
+
+// ==================== 考官端頁籤 3：測驗結果分析功能 ====================
+function calculateStatsForList(targetSubmissions) {
+  const count = targetSubmissions.length;
+  if (count === 0) {
+    return { mean: 0, median: 0, stdDev: 0, max: 0, min: 0, passRate: 0, forcedCount: 0 };
+  }
+
+  const scores = targetSubmissions.map(s => Number(s.score)).sort((a, b) => a - b);
+  const sum = scores.reduce((acc, v) => acc + v, 0);
+  const mean = Number((sum / count).toFixed(1));
+
+  let median = 0;
+  const mid = Math.floor(count / 2);
+  if (count % 2 === 0) {
+    median = Number(((scores[mid - 1] + scores[mid]) / 2).toFixed(1));
+  } else {
+    median = Number(scores[mid].toFixed(1));
+  }
+
+  const variance = scores.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / count;
+  const stdDev = Number(Math.sqrt(variance).toFixed(1));
+
+  const max = scores[scores.length - 1];
+  const min = scores[0];
+  const passCount = scores.filter(s => s >= 60).length;
+  const passRate = Math.round((passCount / count) * 100);
+  const forcedCount = targetSubmissions.filter(s => String(s.status || '').includes('強制終止')).length;
+
+  return { mean, median, stdDev, max, min, passRate, forcedCount };
+}
+
+function calculateQuestionErrorStatsForList(questionsList, targetSubmissions) {
+  const totalStudents = targetSubmissions.length;
+  const list = (questionsList || []).map((q, idx) => {
+    let wrongCount = 0;
+    const wrongOptionTally = {};
+
+    targetSubmissions.forEach(sub => {
+      const detail = sub.answerDetails ? sub.answerDetails[q.id] : null;
+      const picked = detail ? detail.selected : '未作答';
+      const isCorrect = detail ? detail.isCorrect : false;
+
+      if (!isCorrect) {
+        wrongCount++;
+        wrongOptionTally[picked] = (wrongOptionTally[picked] || 0) + 1;
+      }
+    });
+
+    let topWrongOption = '';
+    let topWrongOptionCount = 0;
+    Object.entries(wrongOptionTally).forEach(([optKey, cnt]) => {
+      if (cnt > topWrongOptionCount) {
+        topWrongOptionCount = cnt;
+        topWrongOption = `${optKey} (${cnt}人)`;
+      }
+    });
+
+    const errorRate = totalStudents > 0 ? Number(((wrongCount / totalStudents) * 100).toFixed(1)) : 0;
+
+    return {
+      id: q.id,
+      index: idx + 1,
+      question: q.question,
+      answer: q.answer,
+      totalAttempts: totalStudents,
+      wrongCount,
+      errorRate,
+      topWrongOption
+    };
+  });
+
+  return list.sort((a, b) => b.errorRate - a.errorRate);
+}
+
+function renderErrorRankingIntoContainer(container, questionsList, targetSubmissions) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (targetSubmissions.length === 0) {
+    container.innerHTML = `<p class="text-muted" style="padding:16px 0;">尚無考生作答數據可供分析。</p>`;
+    return;
+  }
+
+  const itemStats = calculateQuestionErrorStatsForList(questionsList, targetSubmissions);
+  itemStats.forEach((item, rankIdx) => {
+    const badgeClass =
+      item.errorRate >= 50 ? 'badge-danger' : item.errorRate >= 25 ? 'badge-amber' : 'badge-teal';
+
+    const div = document.createElement('div');
+    div.className = 'rank-item';
+    div.innerHTML = `
+      <div class="rank-item-top">
+        <div class="rank-q-title">
+          <span class="badge badge-teal" style="margin-right:6px;">排名 #${rankIdx + 1}</span>
+          <strong>第 ${item.index} 題：</strong>${escapeHtml(item.question)}
+        </div>
+        <span class="rank-err-badge ${badgeClass}">答錯率 ${item.errorRate}%</span>
+      </div>
+      <div class="bar-bg">
+        <div class="bar-fill-danger" style="width: ${item.errorRate}%"></div>
+      </div>
+      <div class="rank-meta">
+        <span>標準答案：<strong>${escapeHtml(item.answer)}</strong></span>
+        <span>答錯人數：<strong>${item.wrongCount} / ${item.totalAttempts} 人</strong></span>
+        <span>最常誤選：<strong>${escapeHtml(item.topWrongOption || '無')}</strong></span>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function renderDistributionIntoContainer(container, targetSubmissions) {
+  if (!container) return;
+  const buckets = [
+    { label: '90 - 100 分', min: 90, max: 100, count: 0 },
+    { label: '80 - 89 分', min: 80, max: 89.99, count: 0 },
+    { label: '70 - 79 分', min: 70, max: 79.99, count: 0 },
+    { label: '60 - 69 分', min: 60, max: 69.99, count: 0 },
+    { label: '未滿 60 分', min: 0, max: 59.99, count: 0 }
+  ];
+
+  targetSubmissions.forEach(s => {
+    const sc = Number(s.score);
+    const b = buckets.find(bk => sc >= bk.min && sc <= bk.max);
+    if (b) b.count++;
+  });
+
+  container.innerHTML = buckets
+    .map(b => {
+      const pct = targetSubmissions.length > 0 ? Math.round((b.count / targetSubmissions.length) * 100) : 0;
+      return `
+        <div class="dist-row">
+          <strong>${b.label}</strong>
+          <div class="dist-bar-wrap">
+            <div class="dist-bar-fill" style="width: ${pct}%"></div>
+          </div>
+          <span style="text-align:right;">${b.count} 人 (${pct}%)</span>
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function renderExaminerAnalyticsTab() {
+  const stats = calculateStatsForList(submissions);
+
+  document.getElementById('statTotalStudents').innerHTML = `${submissions.length} <small>人</small>`;
+  document.getElementById('statForcedCount').textContent = `防作弊強制終止：${stats.forcedCount} 人`;
+  document.getElementById('statAverageScore').innerHTML = `${stats.mean} <small>分</small>`;
+  document.getElementById('statStdDev').textContent = `標準差：${stats.stdDev}`;
+  document.getElementById('statMedianScore').innerHTML = `${stats.median} <small>分</small>`;
+  document.getElementById('statPassRate').textContent = `及格率 (≥60分)：${stats.passRate}%`;
+  document.getElementById('statMaxMinScore').textContent =
+    submissions.length > 0 ? `${stats.max} / ${stats.min}` : '- / -';
+
+  renderErrorRankingIntoContainer(
+    document.getElementById('errorRateRankingList'),
+    examData.questions,
+    submissions
+  );
+
+  renderDistributionIntoContainer(
+    document.getElementById('scoreDistributionChart'),
+    submissions
+  );
+}
+
+/**
+ * 產生模擬考生成績 (方便考官測試寄送成績信、歷史歸檔、錯題分析與 Excel 匯出)
+ */
+function generateMockSubmissions() {
+  if (examData.questions.length === 1) {
+    if (confirm('目前題庫僅有 1 題，是否先自動載入「5題緊急救護示範題庫」再產生 8 位模擬考生成績，以完整展示錯題率排行、寄信與歷史場次歸檔功能？')) {
+      examData = JSON.parse(JSON.stringify(DEMO_5Q_EXAM_DATA));
+      saveExamDataToStorage(true);
+    }
+  }
+
+  const sampleStudents = [
+    { id: '112001', name: '陳冠宇', email: 'student01@example.com', accuracy: 0.9, warn: 0, forced: false },
+    { id: '112002', name: '林詩涵', email: 'student02@example.com', accuracy: 0.8, warn: 0, forced: false },
+    { id: '112003', name: '張家豪', email: 'student03@example.com', accuracy: 0.65, warn: 1, forced: false },
+    { id: '112004', name: '李佳穎', email: 'student04@example.com', accuracy: 1.0, warn: 0, forced: false },
+    { id: '112005', name: '王柏翰', email: 'student05@example.com', accuracy: 0.4, warn: 2, forced: true },
+    { id: '112006', name: '黃心怡', email: 'student06@example.com', accuracy: 0.75, warn: 0, forced: false },
+    { id: '112007', name: '吳承恩', email: 'student07@example.com', accuracy: 0.55, warn: 1, forced: false },
+    { id: '112008', name: '劉子軒', email: 'student08@example.com', accuracy: 0.85, warn: 0, forced: false }
+  ];
+
+  const totalQ = examData.questions.length;
+  const optionsPool = ['A', 'B', 'C', 'D'];
+
+  sampleStudents.forEach((st, idx) => {
+    if (submissions.some(s => s.studentId === st.id)) return;
+
+    let correctCount = 0;
+    const answerDetails = {};
+
+    examData.questions.forEach((q, qIdx) => {
+      const difficultyBias = (qIdx % 3 === 0) ? -0.25 : 0.05;
+      const isRight = Math.random() < (st.accuracy + difficultyBias);
+      let picked = q.answer;
+
+      if (!isRight) {
+        const wrongOpts = optionsPool.filter(k => k !== q.answer);
+        picked = wrongOpts[Math.floor(Math.random() * wrongOpts.length)];
+      } else {
+        correctCount++;
+      }
+
+      answerDetails[q.id] = {
+        selected: picked,
+        correctAnswer: q.answer,
+        isCorrect: isRight
+      };
+    });
+
+    const score = Number(((correctCount / totalQ) * 100).toFixed(1));
+    const secSpent = 420 + Math.floor(Math.random() * 900);
+
+    submissions.push({
+      id: 'MOCK_' + Date.now() + '_' + idx,
+      examTitle: examData.title,
+      examDate: examData.examDate,
+      studentName: st.name,
+      studentId: st.id,
+      studentEmail: st.email,
+      score,
+      correctCount,
+      totalQuestions: totalQ,
+      answeredCount: totalQ,
+      warningCount: st.warn,
+      status: st.forced ? '防作弊強制終止 (離開畫面達2次)' : '正常交卷',
+      timeSpentSeconds: secSpent,
+      timeSpentFormatted: formatDuration(secSpent),
+      submittedAt: formatDateTime(new Date(Date.now() - (8 - idx) * 360000)),
+      emailSentAt: '',
+      answerDetails
+    });
+  });
+
+  saveSubmissionsToStorage(true);
+  refreshExaminerAllViews();
+  showToast('🧪 已產生 8 位模擬考生成績（含 Email），可測試一鍵寄信與歷史場次歸檔！');
+}
+
+// ==================== 一鍵複製 Google Apps Script 後端程式碼 (Code.gs) ====================
+async function copyGasBackendCode() {
+  try {
+    const res = await fetch('gas/Code.gs');
+    if (res.ok) {
+      const code = await res.text();
+      await navigator.clipboard.writeText(code);
+      showToast('✅ 已複製 Google Apps Script (Code.gs) 完整程式碼！請貼至 Google 試算表的 Apps Script 編輯器。');
+      return;
+    }
+  } catch (e) {}
+  alert('請開啟專案目錄下的 gas/Code.gs 檔案複製內容。');
+}
+
+// ==================== 工具函式 ====================
+function showToast(message) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.remove();
+  }, 4000);
+}
+
+function formatDuration(totalSec) {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m} 分 ${s} 秒`;
+}
+
+function formatDateTime(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  const hh = String(dateObj.getHours()).padStart(2, '0');
+  const mm = String(dateObj.getMinutes()).padStart(2, '0');
+  const ss = String(dateObj.getSeconds()).padStart(2, '0');
+  return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+}
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
