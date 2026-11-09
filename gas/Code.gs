@@ -22,6 +22,9 @@ const SHEET_NAMES = {
   HISTORY_LOG: '歷次測驗紀錄'
 };
 
+// 考題圖片專用 Google 雲端硬碟資料夾 ID
+const EXAM_IMAGE_FOLDER_ID = '11vY2bQE-3G_gwrcanjCeCJMYjPbnYYrl';
+
 function doGet(e) {
   try {
     const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getExamState';
@@ -242,6 +245,55 @@ function doPost(e) {
         errors: errors,
         message: `成功寄出 ${sentCount} 封考生成績通知信！`
       });
+    }
+
+    // 7. 考題圖片上傳至 Google 雲端硬碟指定資料夾
+    if (action === 'uploadQuestionImage') {
+      const base64Data = payload.base64Data || '';
+      const mimeType = payload.mimeType || 'image/png';
+      const originalFileName = payload.fileName || `question_img_${Date.now()}.png`;
+
+      if (!base64Data) {
+        return jsonResponse({ status: 'error', message: '未收到圖片檔案資料' });
+      }
+
+      try {
+        let folder;
+        if (EXAM_IMAGE_FOLDER_ID) {
+          folder = DriveApp.getFolderById(EXAM_IMAGE_FOLDER_ID);
+        } else {
+          folder = DriveApp.getRootFolder();
+        }
+
+        const decoded = Utilities.base64Decode(base64Data);
+        const extMatch = originalFileName.match(/\.([a-zA-Z0-9]+)$/);
+        const ext = extMatch ? extMatch[1] : 'png';
+        const safeName = `exam_q_${Date.now()}_${Math.floor(Math.random()*1000)}.${ext}`;
+        const blob = Utilities.newBlob(decoded, mimeType, safeName);
+        const file = folder.createFile(blob);
+
+        // 設定檢視權限為知道連結者皆可檢視
+        try {
+          file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        } catch (shareErr) {
+          console.warn('Set sharing error:', shareErr);
+        }
+
+        const fileId = file.getId();
+        const directUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
+
+        return jsonResponse({
+          status: 'success',
+          fileId: fileId,
+          imageUrl: directUrl,
+          message: '圖片已成功上傳至 Google 雲端硬碟！'
+        });
+      } catch (uploadErr) {
+        return jsonResponse({
+          status: 'error',
+          message: '上傳圖片至雲端硬碟失敗: ' + uploadErr.toString()
+        });
+      }
     }
 
     return jsonResponse({ status: 'error', message: '未知的 POST action: ' + action });

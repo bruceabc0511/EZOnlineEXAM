@@ -1503,7 +1503,112 @@ body.examiner-mode .btn-primary:hover {
   }
 }
 
-/* 響應式設計 */
+/* 題目附圖與放大燈箱樣式 */
+.question-image-wrap {
+  margin: 12px 0 16px 0;
+  text-align: center;
+}
+
+.question-image-thumb {
+  max-width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  cursor: zoom-in;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  background: #ffffff;
+}
+
+.question-image-thumb:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+
+.question-image-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.image-lightbox-container {
+  position: relative;
+  max-width: 92vw;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  animation: zoomIn 0.2s ease-out;
+}
+
+.image-lightbox-container img {
+  max-width: 90vw;
+  max-height: 84vh;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  background: #ffffff;
+}
+
+.lightbox-close-btn {
+  position: absolute;
+  top: -16px;
+  right: -16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #0f172a;
+  color: #ffffff;
+  border: 2px solid #ffffff;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+  transition: background 0.2s;
+}
+
+.lightbox-close-btn:hover {
+  background: var(--danger);
+}
+
+.lightbox-caption {
+  color: #ffffff;
+  font-size: 0.9rem;
+  margin-top: 10px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+@keyframes zoomIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* 考題明細表格中的圖片縮圖標籤 */
+.table-img-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--primary-tint);
+  color: var(--primary-dark);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+  cursor: pointer;
+  margin-top: 4px;
+  border: 1px solid var(--primary-tint-border);
+}
+
+.table-img-badge:hover {
+  background: var(--primary);
+  color: #ffffff;
+}
 @media (max-width: 960px) {
   .quiz-layout {
     grid-template-columns: 1fr;

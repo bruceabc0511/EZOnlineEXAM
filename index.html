@@ -769,6 +769,23 @@
           <textarea id="newQText" rows="3" required placeholder="請輸入題目敘述..."></textarea>
         </div>
         <div class="form-group">
+          <label>題目圖片 (選填，支援上傳圖檔至雲端硬碟或直接輸入圖片網址)</label>
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+            <input type="text" id="newQImageUrl" placeholder="可貼上圖片網址，或點右側按鈕上傳圖檔" style="flex:1;">
+            <input type="file" id="questionImageFileInput" accept="image/*" class="hidden" onchange="handleQuestionImageSelected(event)">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('questionImageFileInput').click()" id="btnUploadQImage" style="white-space:nowrap;">
+              📁 上傳圖片
+            </button>
+            <button type="button" class="btn btn-danger-outline btn-sm hidden" id="btnClearQImage" onclick="clearQuestionImage()" style="white-space:nowrap;">
+              ✕ 移除
+            </button>
+          </div>
+          <div id="qImageUploadStatus" class="text-sm text-muted hidden" style="margin-bottom:6px;"></div>
+          <div id="newQImagePreviewWrap" class="hidden" style="margin-top:6px; border:1px solid var(--border-light); border-radius:6px; padding:8px; text-align:center; background:#fafcfc;">
+            <img id="newQImagePreview" src="" alt="題目圖片預覽" style="max-height:160px; max-width:100%; object-fit:contain; border-radius:4px;">
+          </div>
+        </div>
+        <div class="form-group">
           <label>選項內容 (每行一個選項，例如 (A)xxx) <span class="required">*</span></label>
           <textarea id="newQOptions" rows="4" required placeholder="(A)選項一&#10;(B)選項二&#10;(C)選項三&#10;(D)選項四"></textarea>
         </div>
@@ -821,6 +838,15 @@
           <button type="submit" class="btn btn-primary">確認儲存</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- 6. 題目圖片燈箱放大檢視 Modal -->
+  <div id="imageLightboxModal" class="modal-backdrop hidden" onclick="closeImageLightbox()">
+    <div class="image-lightbox-container" onclick="event.stopPropagation()">
+      <button type="button" class="lightbox-close-btn" onclick="closeImageLightbox()">✕</button>
+      <img id="lightboxImage" src="" alt="題目圖片放大檢視">
+      <div id="lightboxCaption" class="lightbox-caption">點擊背景或右上角關閉</div>
     </div>
   </div>
 

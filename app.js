@@ -854,11 +854,21 @@ function renderQuizQuestions() {
       })
       .join('');
 
+    const imgHtml = q.imageUrl
+      ? `
+        <div class="question-image-wrap">
+          <img src="${escapeHtml(q.imageUrl)}" alt="第 ${displayNum} 題圖檔" class="question-image-thumb" onclick="openImageLightbox('${escapeHtml(q.imageUrl)}', '第 ${displayNum} 題附圖')">
+          <div class="question-image-hint">🔍 點擊圖片可放大檢視</div>
+        </div>
+      `
+      : '';
+
     card.innerHTML = `
       <div class="q-header">
         <span class="q-badge">第 ${displayNum} 題</span>
         <div class="q-text">${escapeHtml(q.question)}</div>
       </div>
+      ${imgHtml}
       <div class="options-grid">
         ${optionsHtml}
       </div>
@@ -1292,9 +1302,13 @@ function renderExaminerQuestionTab() {
       .map(o => `<span class="badge badge-teal" style="margin-right:4px;">${o.key}</span>${escapeHtml(o.text)}`)
       .join('<br>');
 
+    const imgBadge = q.imageUrl
+      ? `<br><span class="table-img-badge" onclick="openImageLightbox('${escapeHtml(q.imageUrl)}', '第 ${idx + 1} 題圖檔')">🖼️ 查看圖片</span>`
+      : '';
+
     tr.innerHTML = `
       <td><strong>#${idx + 1}</strong></td>
-      <td>${escapeHtml(q.question)}</td>
+      <td>${escapeHtml(q.question)}${imgBadge}</td>
       <td style="font-size: 0.86rem; line-height: 1.7;">${formattedOpts}</td>
       <td><span class="badge badge-amber" style="font-size:0.9rem;">${escapeHtml(q.answer)}</span></td>
       <td>${pts} 分</td>
@@ -1391,6 +1405,7 @@ function openAddQuestionModal() {
   const submitBtn = document.getElementById('questionModalSubmitBtn');
   if (titleEl) titleEl.textContent = '新增單選題';
   if (submitBtn) submitBtn.textContent = '新增題目';
+  setQuestionModalImageState('');
   document.getElementById('addQuestionModal').classList.remove('hidden');
 }
 
@@ -1411,12 +1426,102 @@ function openEditQuestionModal(qId) {
   document.getElementById('newQOptions').value = formattedLines;
   document.getElementById('newQAnswer').value = String(targetQ.answer || 'A').toUpperCase();
 
+  setQuestionModalImageState(targetQ.imageUrl || '');
   document.getElementById('addQuestionModal').classList.remove('hidden');
 }
 
 function closeAddQuestionModal() {
   editingQuestionId = null;
+  setQuestionModalImageState('');
   document.getElementById('addQuestionModal').classList.add('hidden');
+}
+
+function setQuestionModalImageState(url) {
+  const urlInput = document.getElementById('newQImageUrl');
+  const previewWrap = document.getElementById('newQImagePreviewWrap');
+  const previewImg = document.getElementById('newQImagePreview');
+  const btnClear = document.getElementById('btnClearQImage');
+  const statusEl = document.getElementById('qImageUploadStatus');
+
+  if (urlInput) urlInput.value = url || '';
+  if (statusEl) {
+    statusEl.classList.add('hidden');
+    statusEl.textContent = '';
+  }
+
+  if (url) {
+    if (previewImg) previewImg.src = url;
+    if (previewWrap) previewWrap.classList.remove('hidden');
+    if (btnClear) btnClear.classList.remove('hidden');
+  } else {
+    if (previewImg) previewImg.src = '';
+    if (previewWrap) previewWrap.classList.add('hidden');
+    if (btnClear) btnClear.classList.add('hidden');
+  }
+}
+
+function clearQuestionImage() {
+  setQuestionModalImageState('');
+}
+
+async function handleQuestionImageSelected(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+
+  const gasUrl = getActiveGasUrl();
+  const statusEl = document.getElementById('qImageUploadStatus');
+  const btnUpload = document.getElementById('btnUploadQImage');
+
+  if (statusEl) {
+    statusEl.classList.remove('hidden');
+    statusEl.style.color = 'var(--text-muted)';
+    statusEl.textContent = '⏳ 正在讀取並準備上傳圖片...';
+  }
+
+  const reader = new FileReader();
+  reader.onload = async function (e) {
+    const dataUrl = e.target.result;
+    const base64Index = dataUrl.indexOf(',');
+    const base64Data = base64Index !== -1 ? dataUrl.substring(base64Index + 1) : dataUrl;
+
+    if (gasUrl) {
+      if (statusEl) statusEl.textContent = '☁️ 正在上傳圖檔至 Google 雲端硬碟資料夾...';
+      if (btnUpload) btnUpload.disabled = true;
+
+      const res = await postToCloud({
+        action: 'uploadQuestionImage',
+        base64Data: base64Data,
+        mimeType: file.type || 'image/png',
+        fileName: file.name || 'question.png'
+      });
+
+      if (btnUpload) btnUpload.disabled = false;
+
+      if (res && res.status === 'success' && res.imageUrl) {
+        setQuestionModalImageState(res.imageUrl);
+        if (statusEl) {
+          statusEl.classList.remove('hidden');
+          statusEl.style.color = '#15803d';
+          statusEl.textContent = '✅ 圖片已成功上傳至指定 Google 雲端硬碟！';
+        }
+        showToast('🖼️ 考題圖片已成功上傳至雲端資料夾！');
+        return;
+      } else {
+        const errMsg = (res && res.message) ? res.message : '雲端上傳回應異常';
+        alert(`上傳至雲端硬碟失敗（${errMsg}），系統將自動使用本機圖片預覽。`);
+      }
+    }
+
+    // 若尚未連線雲端或連線失敗，以 Data URL 作為本地備援
+    setQuestionModalImageState(dataUrl);
+    if (statusEl) {
+      statusEl.classList.remove('hidden');
+      statusEl.style.color = '#d97706';
+      statusEl.textContent = '⚠️ 已以本機圖片載入（若連線雲端可自動上傳至雲端硬碟備份）';
+    }
+  };
+  reader.readAsDataURL(file);
 }
 
 function handleSaveNewQuestion(event) {
@@ -1424,6 +1529,7 @@ function handleSaveNewQuestion(event) {
   const qText = document.getElementById('newQText').value.trim();
   const rawOpts = document.getElementById('newQOptions').value.trim();
   const ans = document.getElementById('newQAnswer').value.trim().toUpperCase();
+  const imgUrl = (document.getElementById('newQImageUrl') ? document.getElementById('newQImageUrl').value.trim() : '');
 
   const parsedOptions = parseOptionsString(rawOpts);
   if (parsedOptions.length < 2) {
@@ -1439,6 +1545,7 @@ function handleSaveNewQuestion(event) {
       targetQ.rawOptions = rawOpts;
       targetQ.options = parsedOptions;
       targetQ.answer = ans;
+      targetQ.imageUrl = imgUrl;
 
       // 若本場次已有考生交卷且考官修改了該題標準答案，同步重新計算本場次考生成績
       if (prevAns !== ans && submissions.length > 0) {
@@ -1474,6 +1581,7 @@ function handleSaveNewQuestion(event) {
   examData.questions.push({
     id: newId,
     question: qText,
+    imageUrl: imgUrl,
     rawOptions: rawOpts,
     options: parsedOptions,
     answer: ans
@@ -2564,6 +2672,7 @@ function calculateQuestionErrorStatsForList(questionsList, targetSubmissions) {
       id: q.id,
       index: idx + 1,
       question: q.question,
+      imageUrl: q.imageUrl || '',
       options: q.options || [],
       answer: q.answer,
       answerDisplay,
@@ -2730,6 +2839,12 @@ function openErrorRankingWindow(sessionId = 'CURRENT') {
       })
       .join('');
 
+    const itemImgHtml = item.imageUrl
+      ? `<div style="margin:10px 0 14px 0; text-align:center;">
+           <img src="${escapeHtml(item.imageUrl)}" alt="第 ${item.index} 題圖檔" style="max-height:240px; max-width:100%; border-radius:6px; border:1px solid #cbd5e1; cursor:zoom-in;" onclick="window.open('${escapeHtml(item.imageUrl)}', '_blank')">
+         </div>`
+      : '';
+
     return `
       <div class="review-card" data-rank="${rankNum}" data-qindex="${item.index}">
         <div class="review-card-top">
@@ -2742,6 +2857,7 @@ function openErrorRankingWindow(sessionId = 'CURRENT') {
             答錯率 ${item.errorRate}% (${item.wrongCount}/${item.totalAttempts}人)
           </span>
         </div>
+        ${itemImgHtml}
         <div class="bar-track">
           <div class="bar-fill" style="width:${item.errorRate}%;"></div>
         </div>
@@ -2936,6 +3052,25 @@ function openErrorRankingWindow(sessionId = 'CURRENT') {
   win.document.open();
   win.document.write(docHtml);
   win.document.close();
+}
+
+// ==================== 題目圖片放大檢視燈箱 ====================
+function openImageLightbox(imgUrl, caption = '題目附圖') {
+  if (!imgUrl) return;
+  const modal = document.getElementById('imageLightboxModal');
+  const imgEl = document.getElementById('lightboxImage');
+  const capEl = document.getElementById('lightboxCaption');
+
+  if (imgEl) imgEl.src = imgUrl;
+  if (capEl) capEl.textContent = `${caption}（點擊背景或右上角 ✕ 關閉）`;
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeImageLightbox() {
+  const modal = document.getElementById('imageLightboxModal');
+  const imgEl = document.getElementById('lightboxImage');
+  if (modal) modal.classList.add('hidden');
+  if (imgEl) imgEl.src = '';
 }
 
 // ==================== 一鍵複製 Google Apps Script 後端程式碼 (Code.gs) ====================
