@@ -197,7 +197,7 @@ function doPost(e) {
         }
         try {
           const subject = `【測驗成績通知】${sub.examTitle || examInfo.title || '線上筆試測驗'} - ${sub.studentName} (${sub.studentId})`;
-          const htmlBody = buildScoreEmailHtml(sub, examInfo);
+          const htmlBody = buildScoreEmailHtml(sub, examInfo, state);
 
           MailApp.sendEmail({
             to: String(sub.studentEmail).trim(),
@@ -253,16 +253,117 @@ function doPost(e) {
 }
 
 /**
- * 建立考生成績通知 HTML 信件內容 (僅含個人成績摘要，不含考題與作答明細)
+ * 建立考生成績通知 HTML 信件內容 (含個人成績摘要與 5 欄式考生作答對錯明細，不含考題與標準答案)
  */
-function buildScoreEmailHtml(sub, examInfo) {
-  const scoreColor = Number(sub.score) >= 60 ? '#0f766e' : '#dc2626';
-  const passBadge = Number(sub.score) >= 60 ? '及格' : '未達及格標準 (60分)';
-  const examDateStr = sub.examDate || (examInfo && examInfo.examDate) || '-';
+function extractStudentAnswersForGasEmail(sub, examInfo, state) {
+  if (Array.isArray(sub.studentAnswers) && sub.studentAnswers.length > 0) {
+    return sub.studentAnswers;
+  }
+
+  // 若前端未直接傳入 studentAnswers，可從 sub.answerDetails 或雲端資料庫中的交卷紀錄提取
+  let details = sub.answerDetails || null;
+  if (!details && state && Array.isArray(state.submissions)) {
+    const found = state.submissions.find(s => s.id === sub.id);
+    if (found && found.answerDetails) {
+      details = found.answerDetails;
+    }
+  }
+  if (!details && state && Array.isArray(state.historySessions)) {
+    for (let i = 0; i < state.historySessions.length; i++) {
+      const h = state.historySessions[i];
+      if (h && Array.isArray(h.submissions)) {
+        const found = h.submissions.find(s => s.id === sub.id);
+        if (found && found.answerDetails) {
+          details = found.answerDetails;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!details) return [];
+
+  const list = [];
+  const total = Number(sub.totalQuestions) || Object.keys(details).length;
+  for (let i = 1; i <= total; i++) {
+    const d = details[i];
+    list.push({
+      qNum: i,
+      selected: d && d.selected ? String(d.selected) : '-',
+      isCorrect: Boolean(d && d.isCorrect)
+    });
+  }
+  return list;
+}
+
+function buildStudentAnswerGridGasHtml(studentAnswers) {
+  if (!Array.isArray(studentAnswers) || studentAnswers.length === 0) return '';
+
+  const perRow = 5;
+  let rowsHtml = '';
+
+  for (let i = 0; i < studentAnswers.length; i += perRow) {
+    const chunk = studentAnswers.slice(i, i + perRow);
+    let qNumCells = '';
+    let ansCells = '';
+
+    for (let j = 0; j < perRow; j++) {
+      const item = chunk[j];
+      if (item) {
+        qNumCells += `<td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:8px 6px;border:1px solid #003d3d;width:15%;font-size:15px;">${item.qNum}</td>`;
+        const bg = item.isCorrect ? '#ccfbf1' : '#fca5a5';
+        const fg = item.isCorrect ? '#0f172a' : '#7f1d1d';
+        ansCells += `<td style="background:${bg};color:${fg};font-weight:700;text-align:center;padding:10px 6px;border:1px solid #003d3d;width:15%;font-size:16px;">${escapeHtmlStr(item.selected)}</td>`;
+      } else {
+        qNumCells += `<td style="background:#005959;color:#ffffff;text-align:center;padding:8px 6px;border:1px solid #003d3d;width:15%;"></td>`;
+        ansCells += `<td style="background:#f8fafc;color:#94a3b8;text-align:center;padding:10px 6px;border:1px solid #003d3d;width:15%;"></td>`;
+      }
+    }
+
+    rowsHtml += `
+      <tr>
+        <td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:8px 10px;border:1px solid #003d3d;width:25%;white-space:nowrap;font-size:15px;">題號</td>
+        ${qNumCells}
+      </tr>
+      <tr>
+        <td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:10px;border:1px solid #003d3d;width:25%;white-space:nowrap;font-size:15px;">考生答案</td>
+        ${ansCells}
+      </tr>
+    `;
+  }
 
   return `
-    <div style="font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:600px;margin:0 auto;border:1px solid #cbd5e1;border-radius:12px;overflow:hidden;background:#ffffff;">
-      <div style="background:linear-gradient(135deg,#0f766e,#115e59);color:#ffffff;padding:20px 24px;">
+    <div style="margin-top:18px;">
+      <div style="margin-bottom:8px;">
+        <span style="font-size:15px;font-weight:700;color:#005959;">📋 考生作答明細</span>
+        <span style="font-size:12.5px;color:#475569;margin-left:14px;">
+          <span style="display:inline-block;width:12px;height:12px;background:#ccfbf1;border:1px solid #005959;vertical-align:middle;margin-right:4px;"></span>答對
+          <span style="display:inline-block;width:12px;height:12px;background:#fca5a5;border:1px solid #dc2626;vertical-align:middle;margin-left:10px;margin-right:4px;"></span>答錯（紅底標記）
+        </span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;border:2px solid #003d3d;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;">
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function buildScoreEmailHtml(sub, examInfo, state) {
+  if (sub && sub.customHtmlBody) {
+    return sub.customHtmlBody;
+  }
+
+  const scoreColor = Number(sub.score) >= 60 ? '#007979' : '#dc2626';
+  const passBadge = Number(sub.score) >= 60 ? '及格' : '未達及格標準 (60分)';
+  const examDateStr = sub.examDate || (examInfo && examInfo.examDate) || '-';
+  const studentAnswers = extractStudentAnswersForGasEmail(sub, examInfo, state);
+  const gridHtml = buildStudentAnswerGridGasHtml(studentAnswers);
+
+  return `
+    <div style="font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:620px;margin:0 auto;border:1px solid #cbd5e1;border-radius:12px;overflow:hidden;background:#ffffff;">
+      <div style="background:linear-gradient(135deg,#005959,#007979);color:#ffffff;padding:20px 24px;">
         <div style="font-size:13px;opacity:0.9;">線上筆試測驗系統 — 成績通知單</div>
         <h2 style="margin:6px 0 0;font-size:20px;">${escapeHtmlStr(sub.examTitle || examInfo.title || '線上筆試測驗')}</h2>
       </div>
@@ -285,8 +386,10 @@ function buildScoreEmailHtml(sub, examInfo) {
           </div>
         </div>
 
+        ${gridHtml}
+
         <p style="margin-top:20px;font-size:12px;color:#94a3b8;text-align:center;">
-          本信件由「線上筆試測驗系統」自動發送，為維護題庫保密原則，成績單不附載試題與作答明細。
+          本信件由「線上筆試測驗系統」自動發送，僅提供個人作答選項與對錯結果，不附載試題與標準答案。
         </p>
       </div>
     </div>

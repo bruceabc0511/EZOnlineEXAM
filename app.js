@@ -1783,10 +1783,141 @@ function clearAllSubmissions() {
   refreshExaminerAllViews();
 }
 
-// ==================== 考後寄送成績單 Email 功能 (不含考題與作答明細) ====================
+// ==================== 考後寄送成績單 Email 功能 (含考生作答明細與對錯標記，不含題目與標準答案) ====================
+function extractStudentAnswersForEmail(sub, sessionObj) {
+  const details = sub.answerDetails || {};
+  const questions = (sessionObj && Array.isArray(sessionObj.questions) && sessionObj.questions.length > 0)
+    ? sessionObj.questions
+    : null;
+
+  const list = [];
+  if (questions) {
+    questions.forEach((q, idx) => {
+      const d = details[q.id];
+      list.push({
+        qNum: idx + 1,
+        selected: d && d.selected ? String(d.selected) : '-',
+        isCorrect: Boolean(d && d.isCorrect)
+      });
+    });
+  } else {
+    const total = Number(sub.totalQuestions) || Object.keys(details).length;
+    for (let i = 1; i <= total; i++) {
+      const d = details[i];
+      list.push({
+        qNum: i,
+        selected: d && d.selected ? String(d.selected) : '-',
+        isCorrect: Boolean(d && d.isCorrect)
+      });
+    }
+  }
+  return list;
+}
+
+function buildStudentAnswerGridHtml(studentAnswers) {
+  if (!Array.isArray(studentAnswers) || studentAnswers.length === 0) return '';
+
+  const perRow = 5;
+  let rowsHtml = '';
+
+  for (let i = 0; i < studentAnswers.length; i += perRow) {
+    const chunk = studentAnswers.slice(i, i + perRow);
+
+    let qNumCells = '';
+    let ansCells = '';
+
+    for (let j = 0; j < perRow; j++) {
+      const item = chunk[j];
+      if (item) {
+        qNumCells += `<td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:8px 6px;border:1px solid #003d3d;width:15%;font-size:15px;">${item.qNum}</td>`;
+        const bg = item.isCorrect ? '#ccfbf1' : '#fca5a5';
+        const fg = item.isCorrect ? '#0f172a' : '#7f1d1d';
+        ansCells += `<td style="background:${bg};color:${fg};font-weight:700;text-align:center;padding:10px 6px;border:1px solid #003d3d;width:15%;font-size:16px;">${escapeHtml(item.selected)}</td>`;
+      } else {
+        qNumCells += `<td style="background:#005959;color:#ffffff;text-align:center;padding:8px 6px;border:1px solid #003d3d;width:15%;"></td>`;
+        ansCells += `<td style="background:#f8fafc;color:#94a3b8;text-align:center;padding:10px 6px;border:1px solid #003d3d;width:15%;"></td>`;
+      }
+    }
+
+    rowsHtml += `
+      <tr>
+        <td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:8px 10px;border:1px solid #003d3d;width:25%;white-space:nowrap;font-size:15px;">題號</td>
+        ${qNumCells}
+      </tr>
+      <tr>
+        <td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:10px;border:1px solid #003d3d;width:25%;white-space:nowrap;font-size:15px;">考生答案</td>
+        ${ansCells}
+      </tr>
+    `;
+  }
+
+  return `
+    <div style="margin-top:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+        <div style="font-size:15px;font-weight:700;color:#005959;">📋 考生作答明細</div>
+        <div style="font-size:12.5px;color:#475569;">
+          <span style="display:inline-block;width:12px;height:12px;background:#ccfbf1;border:1px solid #005959;vertical-align:middle;margin-right:4px;"></span>答對
+          <span style="display:inline-block;width:12px;height:12px;background:#fca5a5;border:1px solid #dc2626;vertical-align:middle;margin-left:10px;margin-right:4px;"></span>答錯（紅底標記）
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;border:2px solid #003d3d;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;">
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function buildScoreEmailHtmlClient(sub, sessionObj, studentAnswers) {
+  const scoreColor = Number(sub.score) >= 60 ? '#007979' : '#dc2626';
+  const passBadge = Number(sub.score) >= 60 ? '及格' : '未達及格標準 (60分)';
+  const examDateStr = sub.examDate || (sessionObj && sessionObj.examDate) || '-';
+  const gridHtml = buildStudentAnswerGridHtml(studentAnswers);
+
+  return `
+    <div style="font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;max-width:620px;margin:0 auto;border:1px solid #cbd5e1;border-radius:12px;overflow:hidden;background:#ffffff;">
+      <div style="background:linear-gradient(135deg,#005959,#007979);color:#ffffff;padding:20px 24px;">
+        <div style="font-size:13px;opacity:0.9;">線上筆試測驗系統 — 成績通知單</div>
+        <h2 style="margin:6px 0 0;font-size:20px;">${escapeHtml(sub.examTitle || (sessionObj && sessionObj.title) || '線上筆試測驗')}</h2>
+      </div>
+      <div style="padding:24px;">
+        <p style="margin:0 0 16px;font-size:15px;color:#334155;">
+          <strong>${escapeHtml(sub.studentName)}</strong>（學號／座號：<strong>${escapeHtml(sub.studentId)}</strong>）您好，您的筆試測驗成績結果如下：
+        </p>
+
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 22px;margin-bottom:16px;">
+          <div style="font-size:14px;color:#64748b;">測驗總分（滿分 100 分）</div>
+          <div style="font-size:34px;font-weight:800;color:${scoreColor};margin:6px 0;">
+            ${sub.score} <span style="font-size:16px;font-weight:600;">分（${passBadge}）</span>
+          </div>
+          <div style="font-size:13.5px;color:#475569;margin-top:10px;line-height:1.8;">
+            • 考試日期：<strong>${escapeHtml(examDateStr)}</strong><br>
+            • 答對題數：<strong>${sub.correctCount} / ${sub.totalQuestions} 題</strong><br>
+            • 作答耗時：<strong>${escapeHtml(sub.timeSpentFormatted || '-')}</strong><br>
+            • 交卷狀態：<strong>${escapeHtml(sub.status || '正常交卷')}</strong><br>
+            • 交卷時間：<strong>${escapeHtml(sub.submittedAt || '-')}</strong>
+          </div>
+        </div>
+
+        ${gridHtml}
+
+        <p style="margin-top:20px;font-size:12px;color:#94a3b8;text-align:center;">
+          本信件由「線上筆試測驗系統」自動發送，僅提供個人作答選項與對錯結果，不附載試題與標準答案。
+        </p>
+      </div>
+    </div>
+  `;
+}
+
 function buildPlainTextScoreEmail(sub, sessionObj) {
   const passText = Number(sub.score) >= 60 ? '及格' : '未達及格標準(60分)';
   const examDateStr = sub.examDate || sessionObj.examDate || '-';
+  const studentAnswers = extractStudentAnswersForEmail(sub, sessionObj);
+  const ansSummaryLines = studentAnswers.map(
+    item => `第 ${item.qNum} 題：${item.selected} (${item.isCorrect ? '答對' : '答錯'})`
+  );
+
   const lines = [
     `${sub.studentName} (${sub.studentId}) 您好：`,
     ``,
@@ -1801,7 +1932,10 @@ function buildPlainTextScoreEmail(sub, sessionObj) {
     `• 交卷狀態：${sub.status}`,
     `• 交卷時間：${sub.submittedAt}`,
     `----------------------------------------`,
-    `（為維護題庫保密原則，本成績單不附載考題與作答明細）`,
+    `【考生作答明細】`,
+    ...ansSummaryLines,
+    `----------------------------------------`,
+    `（為維護題庫保密原則，本成績單不附載考題與標準答案）`,
     ``,
     `線上筆試測驗系統 敬上`
   ];
@@ -1837,7 +1971,7 @@ async function sendAllScoresEmail(sessionId, silentIfNone = false) {
   }
 
   if (!silentIfNone) {
-    if (!confirm(`確定要寄送成績通知信給本場次共 ${validSubs.length} 位考生嗎？\n（信件僅含個人測驗總分與作答統計摘要，不包含考題與作答明細）`)) {
+    if (!confirm(`確定要寄送成績通知信給本場次共 ${validSubs.length} 位考生嗎？\n（信件含個人測驗總分與考生作答對錯明細，不包含題目與標準答案）`)) {
       return;
     }
   }
@@ -1849,21 +1983,26 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
   const gasUrl = getActiveGasUrl();
   const nowStr = formatDateTime(new Date());
 
-  // 寄信資料僅傳遞成績摘要欄位，不傳遞考題與作答明細 (answerDetails)
-  const sanitizedRecipients = recipients.map(r => ({
-    id: r.id,
-    examTitle: r.examTitle,
-    examDate: r.examDate,
-    studentName: r.studentName,
-    studentId: r.studentId,
-    studentEmail: r.studentEmail,
-    score: r.score,
-    correctCount: r.correctCount,
-    totalQuestions: r.totalQuestions,
-    timeSpentFormatted: r.timeSpentFormatted,
-    status: r.status,
-    submittedAt: r.submittedAt
-  }));
+  // 寄信資料傳遞成績摘要與考生每題作答選項及對錯 (studentAnswers)，不包含題目與標準答案
+  const sanitizedRecipients = recipients.map(r => {
+    const studentAnswers = extractStudentAnswersForEmail(r, sessionObj);
+    return {
+      id: r.id,
+      examTitle: r.examTitle,
+      examDate: r.examDate,
+      studentName: r.studentName,
+      studentId: r.studentId,
+      studentEmail: r.studentEmail,
+      score: r.score,
+      correctCount: r.correctCount,
+      totalQuestions: r.totalQuestions,
+      timeSpentFormatted: r.timeSpentFormatted,
+      status: r.status,
+      submittedAt: r.submittedAt,
+      studentAnswers: studentAnswers,
+      customHtmlBody: buildScoreEmailHtmlClient(r, sessionObj, studentAnswers)
+    };
+  });
 
   // 模式 1：若已綁定 Google Apps Script 雲端後端，直接透過 Google MailApp 雲端背景自動發送 HTML 成績信
   if (gasUrl) {
