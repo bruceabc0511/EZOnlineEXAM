@@ -63,8 +63,8 @@
           <span class="badge-live">測驗進行中</span>
           <span id="liveStudentDisplay">王小明 (112001)</span>
         </div>
-        <div class="live-warning-status" id="liveWarningBadge" title="離開畫面達2次將強制交卷">
-          🛡️ 防作弊監控中 (警告: <span id="liveWarnCount">0</span>/2)
+        <div class="live-warning-status" id="liveWarningBadge" title="離開畫面達3次將強制交卷">
+          🛡️ 防作弊監控中 (警告: <span id="liveWarnCount">0</span>/3)
         </div>
         <div class="live-timer" id="liveTimerBox">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -98,8 +98,8 @@
         <div class="card-header-accent">
           <div class="header-accent-top">
             <span class="exam-tag">當前開放測驗</span>
-            <button type="button" class="btn-sync-light" onclick="syncStateFromCloud(false)" title="從雲端重新載入最新試卷">
-              🔄 同步最新試卷
+            <button type="button" class="btn-sync-light" onclick="syncStateFromCloud(false)" title="從資料庫重新載入最新試卷資訊">
+              🔄刷新試卷內容
             </button>
           </div>
           <h2 id="studentExamTitle">載入中...</h2>
@@ -119,7 +119,7 @@
               <li>每位考生（同一學號）於本場次<strong>限作答一次</strong>，交卷後不得重複應試。</li>
               <li>請填寫正確的<strong>電子郵件 (Email)</strong>，考試結束後系統將寄送個人成績單至您的信箱。</li>
               <li><strong>防作弊機制已啟用</strong>：一旦點擊「開始作答」，<strong>嚴禁切換分頁、縮小視窗、開啟其他程式或離開作答畫面</strong>。</li>
-              <li>第 <strong>1</strong> 次離開畫面將跳出嚴重警告並記錄；第 <strong>2</strong> 次離開畫面系統將<strong>立即強制終止測驗並自動交卷</strong>！</li>
+              <li>第 <strong>1、2</strong> 次離開畫面將跳出嚴重警告並記錄；第 <strong>3</strong> 次離開畫面系統將<strong>立即強制終止測驗並自動交卷</strong>！</li>
               <li>作答時間結束時，系統將自動鎖定並提交您目前已填寫的答案。</li>
             </ul>
           </div>
@@ -146,7 +146,7 @@
             <div class="consent-row">
               <label class="checkbox-label">
                 <input type="checkbox" id="studentConsent" required>
-                <span>我已詳閱並同意上述應試規則，了解離開作答畫面達 2 次將被強制終止測驗。</span>
+                <span>我已詳閱並同意上述應試規則，了解離開作答畫面達 3 次將被強制終止測驗。</span>
               </label>
             </div>
 
@@ -646,26 +646,30 @@
           <div class="grid-2col">
             <!-- 左側：設定雲端網址 -->
             <div class="card">
-              <h3>☁️ Google 雲端資料庫 & 自動寄成績信設定</h3>
+              <h3><span id="gasSecretUnlockIcon" onclick="handleGasCloudIconClick()"
+                  style="cursor: default; user-select: none;">☁️</span> Google 雲端資料庫 & 自動寄成績信設定</h3>
               <p class="text-muted text-sm" style="margin-bottom:16px;">
-                填入一次 Google Apps Script 網頁應用程式網址並儲存後，系統即會<strong>自動跨裝置綁定</strong>，不同電腦或手機開啟網頁皆會自動連線，無須重複輸入。
+                填入一次 Google Apps Script 網頁應用程式網址並儲存後，系統即會<strong>自動跨裝置綁定並鎖定保護</strong>，不同電腦或手機開啟網頁皆會自動連線，無須重複輸入。
               </p>
 
               <div class="form-group">
-                <label for="gasWebAppUrlInput">Google Apps Script 網頁應用程式網址 (`.../exec`)</label>
+                <label for="gasWebAppUrlInput">
+                  Google Apps Script 網頁應用程式網址 (`.../exec`)
+                  <span id="gasLockStatusBadge" class="badge badge-teal hidden" style="margin-left: 6px;">🔒 已綁定鎖定</span>
+                </label>
                 <input type="text" id="gasWebAppUrlInput"
                   placeholder="https://script.google.com/macros/s/AKfycb.../exec">
               </div>
 
               <div class="action-btn-group">
-                <button type="button" class="btn btn-primary" onclick="saveGasUrlConfig()">
-                  ✅ 儲存並跨裝置綁定雲端連線
+                <button type="button" class="btn btn-primary" id="btnSaveGasUrl" onclick="saveGasUrlConfig()">
+                  ✅ 儲存並綁定雲端資料庫
                 </button>
                 <button type="button" class="btn btn-secondary" onclick="testGasConnection()">
-                  🔌 測試雲端連線
+                  🔌 測試雲端資料庫連線
                 </button>
                 <button type="button" class="btn btn-outline" onclick="pushAllLocalDataToCloud()">
-                  ⬆️ 將本機題庫與紀錄推送至雲端
+                  ⬆️ 將本機題庫與紀錄上傳至雲端資料庫
                 </button>
               </div>
             </div>
@@ -699,15 +703,15 @@
 
   <!-- ==================== 彈出視窗 (Modals) ==================== -->
 
-  <!-- 1. 防作弊第 1 次離開畫面警告 Modal -->
+  <!-- 1. 防作弊離開畫面警告 Modal -->
   <div id="antiCheatModal" class="modal-backdrop hidden">
     <div class="modal-box modal-warning">
       <div class="modal-icon-danger">⚠️</div>
-      <h3>防作弊系統嚴重警告 (第 1 / 2 次)</h3>
+      <h3 id="antiCheatModalTitle">防作弊系統嚴重警告 (第 1 / 3 次)</h3>
       <p>系統偵測到您剛剛<strong>離開了作答畫面（切換視窗、分頁或失去焦點）</strong>！</p>
-      <div class="warning-rule-highlight">
+      <div class="warning-rule-highlight" id="antiCheatModalRuleText">
         請注意：這是您的<strong>第 1 次警告</strong>。<br>
-        若再次離開作答畫面（第 2 次），系統將<strong>立即強制終止您的測驗並自動交卷</strong>！
+        若離開作答畫面累計達 <strong>3 次</strong>，系統將<strong>立即強制終止您的測驗並自動交卷</strong>！
       </div>
       <button type="button" class="btn btn-danger btn-lg btn-block" onclick="acknowledgeCheatWarning()">
         我已了解，立即返回測驗作答

@@ -13,8 +13,8 @@
   --primary-tint: #e6f4f4;
   --primary-tint-border: #b3dfdf;
 
-  --accent: #f59e0b;
-  --accent-dark: #d97706;
+  --accent: #ffb638;
+  --accent-dark: #e78311;
   --accent-tint: #fef3c7;
 
   --danger: #e11d48;
@@ -242,8 +242,15 @@ body {
 }
 
 @keyframes pulseWarn {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.03); }
+
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.03);
+  }
 }
 
 .live-timer {
@@ -455,6 +462,14 @@ textarea:focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(0, 121, 121, 0.16);
+}
+
+input.input-locked,
+input:disabled {
+  background-color: #f1f5f9;
+  color: #64748b;
+  cursor: not-allowed;
+  border-color: #cbd5e1;
 }
 
 .consent-row {
@@ -1481,6 +1496,7 @@ body.examiner-mode .btn-primary:hover {
     opacity: 0;
     transform: translateY(12px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1492,9 +1508,11 @@ body.examiner-mode .btn-primary:hover {
   .quiz-layout {
     grid-template-columns: 1fr;
   }
+
   .grid-2col {
     grid-template-columns: 1fr;
   }
+
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -1504,6 +1522,7 @@ body.examiner-mode .btn-primary:hover {
   .form-row {
     grid-template-columns: 1fr;
   }
+
   .stats-grid {
     grid-template-columns: 1fr;
   }

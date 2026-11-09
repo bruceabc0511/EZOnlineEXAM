@@ -38,6 +38,9 @@ let isExaminerAuthenticated = false;
 let currentViewingHistoryId = null;
 let cloudPollTimer = null;
 let lastExamDataSaveAt = 0;
+let isGasUrlUnlockedBySecret = false;
+let gasSecretClickCount = 0;
+let gasSecretClickResetTimer = null;
 
 // 當前考試進行中狀態
 let activeSession = {
@@ -189,12 +192,36 @@ function updateCloudStatusUI() {
   const dot = document.getElementById('cloudStatusDot');
   const text = document.getElementById('cloudStatusText');
   const urlInput = document.getElementById('gasWebAppUrlInput');
+  const btnSaveGasUrl = document.getElementById('btnSaveGasUrl');
+  const lockBadge = document.getElementById('gasLockStatusBadge');
   const shareInput = document.getElementById('studentShareUrlInput');
   const qrImg = document.getElementById('studentQrImage');
   const qrHint = document.getElementById('qrCodeHint');
 
   if (urlInput && document.activeElement !== urlInput) {
     urlInput.value = gasUrl;
+  }
+
+  // 若已綁定 Google Apps Script 網址且尚未觸發 10 次暗鎖解鎖，鎖定輸入框與儲存按鈕避免誤刪
+  const shouldLockInput = Boolean(gasUrl) && !isGasUrlUnlockedBySecret;
+  if (urlInput) {
+    urlInput.readOnly = shouldLockInput;
+    urlInput.disabled = shouldLockInput;
+    urlInput.classList.toggle('input-locked', shouldLockInput);
+  }
+  if (btnSaveGasUrl) {
+    btnSaveGasUrl.disabled = shouldLockInput;
+  }
+  if (lockBadge) {
+    if (!gasUrl) {
+      lockBadge.classList.add('hidden');
+    } else if (shouldLockInput) {
+      lockBadge.textContent = '🔒 已綁定鎖定';
+      lockBadge.className = 'badge badge-teal';
+    } else {
+      lockBadge.textContent = '🔓 已解鎖編輯';
+      lockBadge.className = 'badge badge-amber';
+    }
   }
 
   if (gasUrl) {
@@ -215,6 +242,31 @@ function updateCloudStatusUI() {
       qrImg.classList.add('hidden');
       qrHint.textContent = '請先於上方填入 Google Apps Script 網址並儲存，即可產生跨裝置多人連線 QR Code';
     }
+  }
+}
+
+function handleGasCloudIconClick() {
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl || isGasUrlUnlockedBySecret) return;
+
+  gasSecretClickCount += 1;
+  if (gasSecretClickResetTimer) {
+    clearTimeout(gasSecretClickResetTimer);
+  }
+  gasSecretClickResetTimer = setTimeout(() => {
+    gasSecretClickCount = 0;
+  }, 4000);
+
+  if (gasSecretClickCount >= 10) {
+    gasSecretClickCount = 0;
+    isGasUrlUnlockedBySecret = true;
+    updateCloudStatusUI();
+    const urlInput = document.getElementById('gasWebAppUrlInput');
+    if (urlInput) {
+      urlInput.focus();
+      urlInput.select();
+    }
+    showToast('🔓 已開啟 Google Apps Script 網址欄位編輯權限！');
   }
 }
 
@@ -330,6 +382,8 @@ async function saveGasUrlConfig() {
 
   if (!val) {
     localStorage.removeItem(STORAGE_KEYS.GAS_URL);
+    isGasUrlUnlockedBySecret = false;
+    gasSecretClickCount = 0;
     await saveGlobalBoundGasUrl('');
     updateCloudStatusUI();
     showToast('⚪ 已解除綁定並切換回本機儲存模式');
@@ -342,6 +396,8 @@ async function saveGasUrlConfig() {
   }
 
   localStorage.setItem(STORAGE_KEYS.GAS_URL, val);
+  isGasUrlUnlockedBySecret = false;
+  gasSecretClickCount = 0;
   await saveGlobalBoundGasUrl(val);
   updateCloudStatusUI();
   startCloudPolling();
@@ -590,14 +646,14 @@ function renderExamControlBanner() {
     banner.classList.add('is-open');
     badge.className = 'exam-status-indicator open';
     badge.textContent = '🟢 測驗開放中';
-    desc.textContent = `目前試卷【${examData.title || '未命名測驗'}】（共 ${examData.questions.length} 題）已開放，考生連線至考生端即可作答。`;
+    desc.textContent = `目前試卷【${examData.title || '未命名測驗'}】已開放作答。`;
     btnStart.classList.add('hidden');
     btnStop.classList.remove('hidden');
   } else {
     banner.classList.remove('is-open');
     badge.className = 'exam-status-indicator closed';
     badge.textContent = '🔴 測驗已關閉';
-    desc.textContent = '目前試卷為關閉狀態，考生連線至考生端將不會看到任何內容。';
+    desc.textContent = '目前試卷為關閉狀態，考生端將不會看到任何內容。';
     btnStart.classList.remove('hidden');
     btnStop.classList.add('hidden');
   }
@@ -948,14 +1004,22 @@ function handleAntiCheatViolation(reason) {
   document.getElementById('liveWarnCount').textContent = activeSession.warningCount;
   document.getElementById('liveWarningBadge').classList.add('warned');
 
-  if (activeSession.warningCount === 1) {
-    // 第 1 次離開：跳出嚴重警告 Modal
+  if (activeSession.warningCount < 3) {
+    // 第 1、2 次離開：跳出嚴重警告 Modal
+    const titleEl = document.getElementById('antiCheatModalTitle');
+    const ruleEl = document.getElementById('antiCheatModalRuleText');
+    if (titleEl) {
+      titleEl.textContent = `防作弊系統嚴重警告 (第 ${activeSession.warningCount} / 3 次)`;
+    }
+    if (ruleEl) {
+      ruleEl.innerHTML = `請注意：這是您的<strong>第 ${activeSession.warningCount} 次警告</strong>。<br>若離開作答畫面累計達 <strong>3 次</strong>，系統將<strong>立即強制終止您的測驗並自動交卷</strong>！`;
+    }
     document.getElementById('antiCheatModal').classList.remove('hidden');
-  } else if (activeSession.warningCount >= 2) {
-    // 第 2 次離開：立即關閉所有 Modal 並強制終止測驗
+  } else if (activeSession.warningCount >= 3) {
+    // 第 3 次離開：立即關閉所有 Modal 並強制終止測驗
     document.getElementById('antiCheatModal').classList.add('hidden');
     document.getElementById('submitConfirmModal').classList.add('hidden');
-    finalizeExamSubmission('防作弊強制終止 (離開畫面達2次)');
+    finalizeExamSubmission('防作弊強制終止 (離開畫面達3次)');
   }
 }
 
@@ -1069,7 +1133,7 @@ async function finalizeExamSubmission(statusReason) {
   if (statusReason.includes('強制終止')) {
     iconWrap.classList.add('forced');
     titleEl.textContent = '⚠️ 測驗已遭系統強制終止並自動交卷';
-    subEl.textContent = '因系統偵測到您離開作答畫面達 2 次，已依防作弊規定立即終止測驗並鎖定目前已填寫之答案。考試結束後將寄送成績單至您的信箱。';
+    subEl.textContent = '因系統偵測到您離開作答畫面達 3 次，已依防作弊規定立即終止測驗並鎖定目前已填寫之答案。考試結束後將寄送成績單至您的信箱。';
   } else {
     iconWrap.classList.remove('forced');
     titleEl.textContent = '已完成測驗交卷';
@@ -1132,6 +1196,9 @@ function handlePinLogin(event) {
 
 function logoutExaminer() {
   isExaminerAuthenticated = false;
+  isGasUrlUnlockedBySecret = false;
+  gasSecretClickCount = 0;
+  updateCloudStatusUI();
   document.getElementById('examinerDashboardView').classList.add('hidden');
   document.getElementById('examinerPinView').classList.remove('hidden');
   document.getElementById('examinerPinInput').value = '';
