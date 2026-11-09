@@ -2483,16 +2483,26 @@ function calculateQuestionErrorStatsForList(questionsList, targetSubmissions) {
       ? `(${q.answer}) ${matchedOpt.text}`
       : q.answer;
 
+    // 統計各選項被選次數（供獨立檢討視窗完整呈現各選項誘答分佈）
+    const optionSelectionCounts = {};
+    targetSubmissions.forEach(sub => {
+      const detail = sub.answerDetails ? sub.answerDetails[q.id] : null;
+      const picked = detail && detail.selected ? String(detail.selected).toUpperCase() : '未作答';
+      optionSelectionCounts[picked] = (optionSelectionCounts[picked] || 0) + 1;
+    });
+
     return {
       id: q.id,
       index: idx + 1,
       question: q.question,
+      options: q.options || [],
       answer: q.answer,
       answerDisplay,
       totalAttempts: totalStudents,
       wrongCount,
       errorRate,
-      topWrongOption
+      topWrongOption,
+      optionSelectionCounts
     };
   });
 
@@ -2590,6 +2600,273 @@ function renderExaminerAnalyticsTab() {
     document.getElementById('scoreDistributionChart'),
     submissions
   );
+}
+
+function openErrorRankingWindow(sessionId = 'CURRENT') {
+  const targetId = sessionId || 'CURRENT';
+  const sessionObj = getSessionDataById(targetId);
+  if (!sessionObj || !sessionObj.questions || sessionObj.questions.length === 0) {
+    alert('目前題庫中尚無題目可供檢討！');
+    return;
+  }
+  if (!sessionObj.submissions || sessionObj.submissions.length === 0) {
+    alert('目前尚無考生作答數據可供檢討分析！');
+    return;
+  }
+
+  const itemStats = calculateQuestionErrorStatsForList(sessionObj.questions, sessionObj.submissions);
+  const stats = calculateStatsForList(sessionObj.submissions);
+  const examTitle = sessionObj.title || '線上筆試測驗';
+  const examDate = sessionObj.examDate || '-';
+
+  const win = window.open('', '_blank');
+  if (!win) {
+    alert('瀏覽器阻擋了彈出視窗，請允許本網站開啟新視窗！');
+    return;
+  }
+
+  const buildItemCardHtml = (item, rankNum) => {
+    const badgeBg = item.errorRate >= 50 ? '#fee2e2' : item.errorRate >= 25 ? '#fef3c7' : '#dcfce7';
+    const badgeFg = item.errorRate >= 50 ? '#991b1b' : item.errorRate >= 25 ? '#92400e' : '#166534';
+
+    const optionsHtml = (item.options || [])
+      .map(opt => {
+        const keyUpper = String(opt.key).toUpperCase();
+        const isCorrectOpt = keyUpper === String(item.answer).toUpperCase();
+        const count = (item.optionSelectionCounts && item.optionSelectionCounts[keyUpper]) || 0;
+        const pct = item.totalAttempts > 0 ? Math.round((count / item.totalAttempts) * 100) : 0;
+
+        let optStyle = 'background:#f8fafc;border:1.5px solid #e2e8f0;color:#1e293b;';
+        let tagHtml = '';
+        if (isCorrectOpt) {
+          optStyle = 'background:#ecfdf5;border:2px solid #16a34a;color:#065f46;font-weight:700;';
+          tagHtml = `<span style="background:#16a34a;color:#ffffff;font-size:12px;padding:2px 8px;border-radius:99px;margin-left:8px;">✔ 正確答案</span>`;
+        } else if (count > 0) {
+          optStyle = 'background:#fff1f2;border:1.5px solid #fda4af;color:#881337;';
+          tagHtml = `<span style="background:#fecdd3;color:#9f1239;font-size:12px;padding:2px 8px;border-radius:99px;margin-left:8px;font-weight:600;">誤選</span>`;
+        }
+
+        return `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-radius:8px;margin-top:8px;${optStyle}">
+            <div style="font-size:15.5px;line-height:1.5;">
+              <span style="display:inline-block;min-width:28px;font-weight:800;">(${escapeHtml(opt.key)})</span>
+              ${escapeHtml(opt.text)}
+              ${tagHtml}
+            </div>
+            <div style="white-space:nowrap;font-size:14px;font-weight:700;">
+              ${count} 人 (${pct}%)
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    return `
+      <div class="review-card" data-rank="${rankNum}" data-qindex="${item.index}">
+        <div class="review-card-top">
+          <div class="review-q-title">
+            <span class="rank-pill">排名 #${rankNum}</span>
+            <span class="qnum-pill">第 ${item.index} 題</span>
+            <span class="q-text">${escapeHtml(item.question)}</span>
+          </div>
+          <span class="err-pill" style="background:${badgeBg};color:${badgeFg};">
+            答錯率 ${item.errorRate}% (${item.wrongCount}/${item.totalAttempts}人)
+          </span>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${item.errorRate}%;"></div>
+        </div>
+        <div class="options-wrap">
+          ${optionsHtml}
+        </div>
+        <div class="review-meta">
+          <span>正確答案：<strong style="color:#15803d;">${escapeHtml(item.answerDisplay || item.answer)}</strong></span>
+          <span>答錯人數：<strong>${item.wrongCount} / ${item.totalAttempts} 人</strong></span>
+          <span>最常誤選：<strong style="color:#be123c;">${escapeHtml(item.topWrongOption || '無')}</strong></span>
+        </div>
+      </div>
+    `;
+  };
+
+  const cardsHtml = itemStats.map((item, idx) => buildItemCardHtml(item, idx + 1)).join('');
+
+  const docHtml = `<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>題目答錯率排行榜與試題檢討 — ${escapeHtml(examTitle)}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+      background: #f8f1f1;
+      color: #1e293b;
+      padding-bottom: 48px;
+    }
+    .top-header {
+      background: linear-gradient(135deg, #4a0000 0%, #750000 100%);
+      color: #ffffff;
+      padding: 20px 28px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+    .top-header h1 {
+      font-size: 1.35rem;
+      margin-bottom: 4px;
+    }
+    .top-meta {
+      font-size: 0.92rem;
+      opacity: 0.92;
+    }
+    .toolbar-btns {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn-tool {
+      border: 1px solid rgba(255,255,255,0.4);
+      background: rgba(255,255,255,0.15);
+      color: #ffffff;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-tool:hover, .btn-tool.active {
+      background: #ffffff;
+      color: #750000;
+    }
+    .container {
+      max-width: 1060px;
+      margin: 24px auto;
+      padding: 0 20px;
+    }
+    .review-card {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 22px 24px;
+      margin-bottom: 18px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    }
+    .review-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .review-q-title {
+      font-size: 1.12rem;
+      font-weight: 700;
+      line-height: 1.55;
+      color: #0f172a;
+    }
+    .rank-pill {
+      display: inline-block;
+      background: #750000;
+      color: #ffffff;
+      font-size: 0.82rem;
+      padding: 3px 10px;
+      border-radius: 99px;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .qnum-pill {
+      display: inline-block;
+      background: #f1f5f9;
+      color: #334155;
+      font-size: 0.85rem;
+      padding: 3px 10px;
+      border-radius: 99px;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    .err-pill {
+      white-space: nowrap;
+      padding: 5px 12px;
+      border-radius: 99px;
+      font-size: 0.9rem;
+      font-weight: 800;
+    }
+    .bar-track {
+      width: 100%;
+      height: 8px;
+      background: #f1f5f9;
+      border-radius: 99px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #f59e0b, #e11d48);
+      border-radius: 99px;
+    }
+    .options-wrap {
+      margin-bottom: 14px;
+    }
+    .review-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      padding-top: 12px;
+      border-top: 1px dashed #cbd5e1;
+      font-size: 0.92rem;
+      color: #475569;
+    }
+    @media print {
+      .top-header { position: static; background: #750000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .toolbar-btns { display: none; }
+      body { background: #ffffff; }
+      .review-card { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top-header">
+    <div>
+      <h1>🚨 題目答錯率排行榜與試題檢討 — ${escapeHtml(examTitle)}</h1>
+      <div class="top-meta">
+        考試日期：${escapeHtml(examDate)} ｜ 應試人數：${sessionObj.submissions.length} 人 ｜ 平均分數：${stats.mean} 分 ｜ 及格率：${stats.passRate}%
+      </div>
+    </div>
+    <div class="toolbar-btns">
+      <button type="button" class="btn-tool active" id="btnSortErr" onclick="sortCards('rank')">🔥 依答錯率排序 (高➔低)</button>
+      <button type="button" class="btn-tool" id="btnSortQNum" onclick="sortCards('qindex')">🔢 依題號排序 (第1題➔第${sessionObj.questions.length}題)</button>
+      <button type="button" class="btn-tool" onclick="window.print()">🖨️ 列印 / 匯出 PDF</button>
+    </div>
+  </header>
+  <main class="container" id="cardsContainer">
+    ${cardsHtml}
+  </main>
+  <script>
+    function sortCards(mode) {
+      const container = document.getElementById('cardsContainer');
+      const cards = Array.from(container.querySelectorAll('.review-card'));
+      cards.sort((a, b) => {
+        return Number(a.dataset[mode]) - Number(b.dataset[mode]);
+      });
+      cards.forEach(c => container.appendChild(c));
+      document.getElementById('btnSortErr').classList.toggle('active', mode === 'rank');
+      document.getElementById('btnSortQNum').classList.toggle('active', mode === 'qindex');
+    }
+  </script>
+</body>
+</html>`;
+
+  win.document.open();
+  win.document.write(docHtml);
+  win.document.close();
 }
 
 // ==================== 一鍵複製 Google Apps Script 後端程式碼 (Code.gs) ====================

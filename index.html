@@ -505,7 +505,13 @@
           <div class="grid-2col" style="margin-top: 20px;">
             <!-- 各題答錯率排行 (由高至低) -->
             <div class="card">
-              <h3>🚨 題目答錯率排行榜 (由高至低)</h3>
+              <div class="section-title-row" style="margin-bottom: 6px;">
+                <h3>🚨 題目答錯率排行榜 (由高至低)</h3>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="openErrorRankingWindow('CURRENT')"
+                  title="開啟新視窗進行題目檢討">
+                  🔎 開啟檢討視窗
+                </button>
+              </div>
               <p class="text-muted text-sm">自動統計全體考生在各題的答錯比例與最常誤選的誘答選項，協助考官檢討考題鑑別度</p>
               <div id="errorRateRankingList" class="ranking-list">
                 <!-- 動態渲染各題答錯率 -->
@@ -608,7 +614,13 @@
 
             <div class="grid-2col" style="margin-bottom: 20px;">
               <div class="card" style="background:#fafcfc;">
-                <h4>🚨 本場次題目答錯率排行</h4>
+                <div class="section-title-row" style="margin-bottom: 10px;">
+                  <h4>🚨 本場次題目答錯率排行</h4>
+                  <button type="button" class="btn btn-secondary btn-sm" id="btnHistOpenErrorWindow"
+                    onclick="openErrorRankingWindow(currentViewingHistoryId)" title="開啟新視窗進行本場次題目檢討">
+                    🔎 開啟檢討視窗
+                  </button>
+                </div>
                 <div id="histErrorRankingList" class="ranking-list" style="max-height:320px;"></div>
               </div>
               <div class="card" style="background:#fafcfc;">
