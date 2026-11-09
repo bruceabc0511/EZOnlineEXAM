@@ -3,7 +3,7 @@
  * 功能包含：
  * 1. 雲端多人同步 (Google Apps Script + GitHub Pages)：跨網路多人同時連線應試、QR Code 專屬應試連結、即時同步題庫與交卷紀錄
  * 2. 考生端 (#007979 主題)：僅在考官「開始測驗」開放試卷期間顯示內容（試卷關閉時完全不顯示任何內容）、姓名/學號/Email 登入、防重複應試、亂數題目、防作弊監控
- * 3. 考官端 (#750000 主題)：PIN碼驗證 (0000119)、開始/結束測驗開關控制、Excel 範本匯入（支援空白題庫）、考後寄送考生成績單 Email、每次測驗獨立歸檔為歷史紀錄、錯題分析
+ * 3. 考官端 (#750000 主題)：PIN 碼安全加密驗證、開始/結束測驗開關控制、Excel 範本匯入（支援空白題庫）、考後寄送考生成績單 Email、每次測驗獨立歸檔為歷史紀錄、錯題分析
  */
 
 // 若有固定部署的預設 Google Apps Script 網址可填於此處；系統亦支援填入一次後自動透過雲端 KV 跨裝置永久綁定
@@ -16,10 +16,13 @@ const STORAGE_KEYS = {
   EXAM_DATA: 'online_exam_bank_v1',
   SUBMISSIONS: 'online_exam_submissions_v1',
   HISTORY_SESSIONS: 'online_exam_history_v1',
-  GAS_URL: 'online_exam_gas_url_v1'
+  GAS_URL: 'online_exam_gas_url_v1',
+  EXAMINER_PIN_HASH: 'online_exam_pin_hash_v1'
 };
 
-const EXAMINER_PIN = '0000119';
+// 考官端 PIN 碼安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊)
+const EXAMINER_PIN_SALT = 'HD_EXAM_SECURE_SALT_2026';
+const DEFAULT_EXAMINER_PIN_HASH = 'f77548413d6d3ced941815c06f4499b328e47f9893e15b6c2d4d3c8838efa166';
 
 // 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
@@ -42,6 +45,11 @@ let isGasUrlUnlockedBySecret = false;
 let gasSecretClickCount = 0;
 let gasSecretClickResetTimer = null;
 let editingQuestionId = null;
+
+// 考官 PIN 碼登入防護狀態
+let pinFailedAttempts = 0;
+let pinLockoutRemaining = 0;
+let pinLockoutTimer = null;
 
 // 當前考試進行中狀態
 let activeSession = {
@@ -1187,12 +1195,129 @@ function resetToStudentHome() {
 }
 
 // ==================== 考官端驗證與管理後台 ====================
-function handlePinLogin(event) {
+// 純 JavaScript SHA-256 備援實作 (確保在任何環境、協定或舊版瀏覽器皆可穩定計算雜湊)
+function sha256Fallback(ascii) {
+  function rightRotate(value, amount) {
+    return (value >>> amount) | (value << (32 - amount));
+  }
+  const mathPow = Math.pow;
+  const maxWord = mathPow(2, 32);
+  const lengthProperty = 'length';
+  let i, j;
+  let result = '';
+
+  const words = [];
+  const asciiBitLength = ascii[lengthProperty] * 8;
+
+  let hash = [];
+  const k = [];
+  let primeCounter = 0;
+
+  const isComposite = {};
+  for (let candidate = 2; primeCounter < 64; candidate++) {
+    if (!isComposite[candidate]) {
+      for (i = 0; i < 313; i += candidate) {
+        isComposite[i] = candidate;
+      }
+      hash[primeCounter] = (mathPow(candidate, 0.5) * maxWord) | 0;
+      k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
+    }
+  }
+
+  hash = hash.slice(0, 8);
+
+  ascii += '\x80';
+  while (ascii[lengthProperty] % 64 - 56) ascii += '\x00';
+  for (i = 0; i < ascii[lengthProperty]; i++) {
+    j = ascii.charCodeAt(i);
+    words[i >> 2] |= j << ((3 - i) % 4) * 8;
+  }
+  words[words[lengthProperty]] = ((asciiBitLength / maxWord) | 0);
+  words[words[lengthProperty]] = (asciiBitLength) | 0;
+
+  for (j = 0; j < words[lengthProperty];) {
+    const w = words.slice(j, j += 16);
+    const oldHash = hash;
+    hash = hash.slice(0, 8);
+
+    for (i = 0; i < 64; i++) {
+      const i2 = i + j;
+      const w15 = w[i - 15], w2 = w[i - 2];
+      const a = hash[0], e = hash[4];
+      const temp1 = hash[7]
+        + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25))
+        + ((e & hash[5]) ^ ((~e) & hash[6]))
+        + k[i]
+        + (w[i] = (i < 16) ? w[i] : (
+            w[i - 16]
+            + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3))
+            + w[i - 7]
+            + (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))
+          ) | 0
+        );
+      const temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22))
+        + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+
+      hash = [(temp1 + temp2) | 0].concat(hash);
+      hash[4] = (hash[4] + temp1) | 0;
+    }
+
+    for (i = 0; i < 8; i++) {
+      hash[i] = (hash[i] + oldHash[i]) | 0;
+    }
+  }
+
+  for (i = 0; i < 8; i++) {
+    for (j = 3; j + 1; j--) {
+      const b = (hash[i] >> (j * 8)) & 255;
+      result += ((b < 16) ? '0' : '') + b.toString(16);
+    }
+  }
+  return result;
+}
+
+async function hashExaminerPin(pin) {
+  const salted = `${EXAMINER_PIN_SALT}:${pin}`;
+  if (window.crypto && window.crypto.subtle && typeof TextEncoder !== 'undefined') {
+    try {
+      const enc = new TextEncoder();
+      const data = enc.encode(salted);
+      const hashBuf = await crypto.subtle.digest('SHA-256', data);
+      const hashArr = Array.from(new Uint8Array(hashBuf));
+      return hashArr.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) {
+      console.warn('crypto.subtle 失敗，切換至純 JS 雜湊', e);
+    }
+  }
+  return sha256Fallback(salted);
+}
+
+function getStoredExaminerPinHash() {
+  const customHash = localStorage.getItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+  if (customHash && customHash.trim()) {
+    return customHash.trim().toLowerCase();
+  }
+  return DEFAULT_EXAMINER_PIN_HASH;
+}
+
+async function handlePinLogin(event) {
   event.preventDefault();
-  const pinInput = document.getElementById('examinerPinInput').value.trim();
+  const pinInputEl = document.getElementById('examinerPinInput');
+  const pinInput = pinInputEl.value.trim();
   const errBox = document.getElementById('pinErrorMsg');
 
-  if (pinInput === EXAMINER_PIN) {
+  if (pinLockoutRemaining > 0) {
+    errBox.textContent = `⚠️ 連續錯誤次數過多，目前系統鎖定中！請等待 ${pinLockoutRemaining} 秒後再試。`;
+    errBox.className = 'alert alert-danger';
+    errBox.classList.remove('hidden');
+    return;
+  }
+
+  const inputHash = await hashExaminerPin(pinInput);
+  const targetHash = getStoredExaminerPinHash();
+
+  if (inputHash === targetHash) {
+    pinFailedAttempts = 0;
     isExaminerAuthenticated = true;
     errBox.classList.add('hidden');
     showExaminerDashboard();
@@ -1200,9 +1325,83 @@ function handlePinLogin(event) {
       syncStateFromCloud(true);
     }
   } else {
+    pinFailedAttempts++;
+    if (pinFailedAttempts >= 5) {
+      startPinLockout(30);
+      errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，為防範暴力破解，系統已暫時鎖定 30 秒！';
+    } else {
+      errBox.textContent = `❌ PIN 碼錯誤，請重新確認！（剩餘 ${5 - pinFailedAttempts} 次嘗試機會）`;
+    }
+    errBox.className = 'alert alert-danger';
     errBox.classList.remove('hidden');
-    document.getElementById('examinerPinInput').select();
+    pinInputEl.select();
   }
+}
+
+function startPinLockout(seconds) {
+  pinLockoutRemaining = seconds;
+  const pinBtn = document.querySelector('#pinForm button[type="submit"]');
+  const pinInputEl = document.getElementById('examinerPinInput');
+  const errBox = document.getElementById('pinErrorMsg');
+
+  if (pinBtn) pinBtn.disabled = true;
+  if (pinInputEl) pinInputEl.disabled = true;
+
+  if (pinLockoutTimer) clearInterval(pinLockoutTimer);
+  pinLockoutTimer = setInterval(() => {
+    pinLockoutRemaining--;
+    if (pinLockoutRemaining <= 0) {
+      clearInterval(pinLockoutTimer);
+      pinLockoutTimer = null;
+      pinLockoutRemaining = 0;
+      pinFailedAttempts = 0;
+      if (pinBtn) pinBtn.disabled = false;
+      if (pinInputEl) {
+        pinInputEl.disabled = false;
+        pinInputEl.focus();
+      }
+      if (errBox) {
+        errBox.textContent = '鎖定已解除，請重新輸入 PIN 碼。';
+        errBox.className = 'alert alert-info';
+      }
+    } else {
+      if (errBox) {
+        errBox.textContent = `❌ 連續錯誤達 5 次，系統鎖定中... 請等待 ${pinLockoutRemaining} 秒後再試！`;
+      }
+    }
+  }, 1000);
+}
+
+async function handleUpdateExaminerPin() {
+  const newPinEl = document.getElementById('newExaminerPinInput');
+  const confirmPinEl = document.getElementById('confirmExaminerPinInput');
+  const newPin = (newPinEl ? newPinEl.value : '').trim();
+  const confirmPin = (confirmPinEl ? confirmPinEl.value : '').trim();
+
+  if (!newPin) {
+    alert('請輸入新 PIN 碼！');
+    return;
+  }
+  if (newPin.length < 4) {
+    alert('新 PIN 碼長度建議至少 4 碼以上！');
+    return;
+  }
+  if (newPin !== confirmPin) {
+    alert('兩次輸入的新 PIN 碼不一致，請重新確認！');
+    return;
+  }
+
+  const newHash = await hashExaminerPin(newPin);
+  localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, newHash);
+  if (newPinEl) newPinEl.value = '';
+  if (confirmPinEl) confirmPinEl.value = '';
+  showToast('✅ 考官登入 PIN 碼已成功更新！');
+}
+
+function handleResetExaminerPin() {
+  if (!confirm('確定要將考官 PIN 碼恢復為初始預設值嗎？')) return;
+  localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+  showToast('🔄 已恢復初始預設 PIN 碼！');
 }
 
 function logoutExaminer() {
