@@ -98,7 +98,7 @@ async function saveGlobalBoundGasUrl(gasUrl) {
       method: 'POST',
       body: JSON.stringify({ depId })
     });
-  } catch (e) {}
+  } catch (e) { }
 }
 
 async function fetchGlobalBoundGasUrl() {
@@ -134,7 +134,7 @@ async function fetchGlobalBoundGasUrl() {
         }
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   return '';
 }
@@ -1087,13 +1087,13 @@ async function finalizeExamSubmission(statusReason) {
 
   const cloudStatusEl = document.getElementById('receiptCloudStatus');
   if (getActiveGasUrl()) {
-    cloudStatusEl.textContent = '🔄 正在同步上傳至雲端資料庫...';
+    cloudStatusEl.textContent = '🔄 正在同步上傳...';
     const cloudRes = await postToCloud({
       action: 'submitExam',
       record: record
     });
     if (cloudRes && (cloudRes.status === 'success' || cloudRes.status === 'duplicate')) {
-      cloudStatusEl.innerHTML = '<span style="color:var(--primary);">✅ 已成功上傳至雲端多人資料庫</span>';
+      cloudStatusEl.innerHTML = '<span style="color:var(--primary);">✅ 已成功上傳</span>';
     } else {
       cloudStatusEl.innerHTML = '<span style="color:var(--accent-dark);">⚠️ 已儲存於本機 (雲端連線逾時)</span>';
     }

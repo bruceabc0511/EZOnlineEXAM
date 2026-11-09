@@ -131,8 +131,8 @@
                 <input type="text" id="studentName" required placeholder="請輸入姓名 (例：王大明)" autocomplete="off">
               </div>
               <div class="form-group">
-                <label for="studentId">學號 / 座號 <span class="required">*</span></label>
-                <input type="text" id="studentId" required placeholder="請輸入學號或座號 (例：112001)" autocomplete="off">
+                <label for="studentId">學號/座號 <span class="required">*</span></label>
+                <input type="text" id="studentId" required placeholder="請輸入學號或座號 (例：001)" autocomplete="off">
               </div>
             </div>
 
@@ -231,7 +231,7 @@
             <span class="receipt-val" id="receiptName">-</span>
           </div>
           <div class="receipt-row">
-            <span class="receipt-label">學號 / 編號</span>
+            <span class="receipt-label">學號/座號</span>
             <span class="receipt-val" id="receiptStudentId">-</span>
           </div>
           <div class="receipt-row">
@@ -300,11 +300,11 @@
           <div class="action-btn-group">
             <button type="button" class="btn btn-success-solid btn-sm" id="btnStartExamSession"
               onclick="setExamOpenStatus(true)">
-              ▶️ 開始測驗 (開放試卷)
+              ▶️ 開始測驗
             </button>
             <button type="button" class="btn btn-danger btn-sm hidden" id="btnStopExamSession"
               onclick="setExamOpenStatus(false)">
-              ⏹️ 結束測驗 (關閉試卷)
+              ⏹️ 結束測驗
             </button>
           </div>
         </div>
@@ -319,13 +319,13 @@
               📊 成績與寄信 (<span id="tabScoreCount">0</span>)
             </button>
             <button class="tab-btn" data-tab="tabAnalytics" onclick="switchExaminerTab('tabAnalytics')">
-              📈 結果分析
+              📈 測驗結果分析
             </button>
             <button class="tab-btn" data-tab="tabHistory" onclick="switchExaminerTab('tabHistory')">
               🗂️ 歷次測驗紀錄 (<span id="tabHistoryCount">0</span>)
             </button>
             <button class="tab-btn" data-tab="tabCloud" onclick="switchExaminerTab('tabCloud')">
-              ☁️ 雲端連線與寄信設定
+              ⚙️ 測驗連結 & 系統設定
             </button>
           </div>
           <div class="action-btn-group">
@@ -346,7 +346,7 @@
                 </button>
               </div>
               <p class="text-muted text-sm">
-                支援新版標準範本格式（第 1～5 列為範例不讀取，題目自第 7 列開始讀取；試卷名稱、考試日期、作答時間請於右側手動輸入）。系統會自動濾除空白題目並依有效題數自動平均配分（滿分 100 分）。
+                請依範本格式填寫題目、選項與正確答案；試卷名稱、考試日期、作答時間請於右側手動輸入。系統會自動濾除空白題目並依有效題數自動平均配分（滿分 100 分）。
               </p>
 
               <div class="upload-dropzone" id="excelDropzone"
@@ -438,16 +438,16 @@
               </div>
               <div class="action-btn-group">
                 <button type="button" class="btn btn-accent btn-sm" onclick="openArchiveSessionModal()">
-                  📌 結束本次測驗並保存至歷史紀錄
+                  📌 結束測驗
                 </button>
                 <button type="button" class="btn btn-primary btn-sm" onclick="sendAllScoresEmail('CURRENT')">
-                  📧 一鍵寄送全體考生成績信
+                  📧 寄送成績信
                 </button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('CURRENT')">
-                  📥 匯出成績單 (.xlsx)
+                  📥 匯出成績表
                 </button>
                 <button type="button" class="btn btn-danger-outline btn-sm" onclick="clearAllSubmissions()">
-                  🗑️ 清空本次成績
+                  🗑️ 清空本次測驗成績
                 </button>
               </div>
             </div>
@@ -515,7 +515,7 @@
 
             <!-- 分數組距分佈圖 -->
             <div class="card">
-              <h3>📊 考生成績分佈區間</h3>
+              <h3>📊 成績分佈區間</h3>
               <p class="text-muted text-sm">全體考生成績落點統計</p>
               <div id="scoreDistributionChart" class="distribution-chart">
                 <!-- 動態渲染分數分佈橫條圖 -->
@@ -529,7 +529,7 @@
           <div class="card">
             <div class="section-title-row">
               <div>
-                <h3>🗂️ 歷次測驗歷史紀錄總覽</h3>
+                <h3>🗂️ 歷次測驗紀錄總覽</h3>
                 <p class="text-muted text-sm">每一次結算歸檔的測驗皆獨立保存完整題庫快照、全體考生成績、統計指標與錯題分析，互不覆蓋影響</p>
               </div>
               <div class="action-btn-group">
@@ -575,7 +575,7 @@
                   📧 寄送本場次全體考生成績信
                 </button>
                 <button type="button" class="btn btn-secondary btn-sm" id="btnHistExportExcel">
-                  📥 匯出本場次 Excel 報表 (.xlsx)
+                  📥 匯出本場次成績報表
                 </button>
                 <button type="button" class="btn btn-outline btn-sm" onclick="closeHistorySessionDetail()">
                   ✕ 關閉明細
@@ -647,7 +647,7 @@
           <div class="grid-2col">
             <!-- 左側：設定雲端網址 -->
             <div class="card">
-              <h3>☁️ Google 雲端試算表資料庫 & 自動寄信連線設定</h3>
+              <h3>☁️ Google 雲端資料庫 & 自動寄成績信設定</h3>
               <p class="text-muted text-sm" style="margin-bottom:16px;">
                 填入一次 Google Apps Script 網頁應用程式網址並儲存後，系統即會<strong>自動跨裝置綁定</strong>，不同電腦或手機開啟網頁皆會自動連線，無須重複輸入。
               </p>
@@ -673,7 +673,7 @@
 
             <!-- 右側：考生專屬應試連結 / QR Code -->
             <div class="card">
-              <h3>📲 考生多人連線專屬應試連結 & QR Code</h3>
+              <h3>📲 考生作答連結 & QR Code</h3>
               <p class="text-muted text-sm" style="margin-bottom:12px;">
                 請將下方連結或 QR Code 提供給全體考生。考生在各自的手機或電腦打開即可同步載入考題並交卷回傳！
               </p>
