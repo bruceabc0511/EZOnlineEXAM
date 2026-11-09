@@ -300,11 +300,11 @@
           <div class="action-btn-group">
             <button type="button" class="btn btn-success-solid btn-sm" id="btnStartExamSession"
               onclick="setExamOpenStatus(true)">
-              ▶️ 開始測驗
+              ✅ 開放作答
             </button>
             <button type="button" class="btn btn-danger btn-sm hidden" id="btnStopExamSession"
               onclick="setExamOpenStatus(false)">
-              ⏹️ 結束測驗
+              ❎ 結束作答
             </button>
           </div>
         </div>
@@ -325,7 +325,7 @@
               🗂️ 歷次測驗紀錄 (<span id="tabHistoryCount">0</span>)
             </button>
             <button class="tab-btn" data-tab="tabCloud" onclick="switchExaminerTab('tabCloud')">
-              ⚙️ 測驗連結 & 系統設定
+              ⚙️ 測驗連結與系統設定
             </button>
           </div>
           <div class="action-btn-group">
@@ -340,9 +340,9 @@
             <!-- 匯入區塊 -->
             <div class="card">
               <div class="section-title-row">
-                <h3>📥 匯入考題 Excel / CSV 範本</h3>
+                <h3>📥 匯入考題 Excel / CSV </h3>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="downloadSampleExcel()">
-                  ⬇️ 下載標準 Excel 範本 (.xlsx)
+                  ⬇️ 下載 Excel 匯入範本 (.xlsx)
                 </button>
               </div>
               <p class="text-muted text-sm">
@@ -434,20 +434,20 @@
             <div class="section-title-row">
               <div>
                 <h3>🏆 考生成績總表</h3>
-                <p class="text-muted text-sm">可於考試結束後一鍵寄送考生成績單 Email，並將本次測驗結果獨立歸檔至「歷次測驗紀錄」</p>
+                <p class="text-muted text-sm">按下【結束測驗】即可一鍵寄送考生成績單，並將本次測驗結果歸檔至「歷次測驗紀錄」</p>
               </div>
               <div class="action-btn-group">
                 <button type="button" class="btn btn-accent btn-sm" onclick="openArchiveSessionModal()">
-                  📌 結束測驗
+                  📋 結束測驗
                 </button>
                 <button type="button" class="btn btn-primary btn-sm" onclick="sendAllScoresEmail('CURRENT')">
-                  📧 寄送成績信
+                  📩 寄送成績
                 </button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('CURRENT')">
-                  📥 匯出成績表
+                  📥 匯出成績
                 </button>
                 <button type="button" class="btn btn-danger-outline btn-sm" onclick="clearAllSubmissions()">
-                  🗑️ 清空本次測驗成績
+                  🗑️ 清空成績表
                 </button>
               </div>
             </div>
@@ -534,7 +534,7 @@
               </div>
               <div class="action-btn-group">
                 <button type="button" class="btn btn-accent btn-sm" onclick="openArchiveSessionModal()">
-                  📌 將本次測驗保存至歷史紀錄
+                  💾 將本次測驗保存至歷史紀錄
                 </button>
               </div>
             </div>
@@ -788,12 +788,6 @@
         <div class="form-group">
           <label for="archiveSessionTitle">歷史場次紀錄名稱 <span class="required">*</span></label>
           <input type="text" id="archiveSessionTitle" required placeholder="例如：2026-12-01 緊急救護筆試 (第一梯次)">
-        </div>
-        <div class="consent-row" style="margin: 12px 0;">
-          <label class="checkbox-label">
-            <input type="checkbox" id="archiveAutoSendEmail" checked>
-            <span>歸檔同時自動寄送成績單 Email 給本場次所有尚未寄信的考生</span>
-          </label>
         </div>
         <div class="consent-row" style="margin: 12px 0;">
           <label class="checkbox-label">
