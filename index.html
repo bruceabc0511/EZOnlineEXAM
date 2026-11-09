@@ -719,32 +719,6 @@
               </div>
             </div>
           </div>
-
-          <!-- 考官登入 PIN 碼安全設定 -->
-          <div class="card" style="margin-top: 20px;">
-            <h3>🔑 考官登入 PIN 碼安全設定</h3>
-            <p class="text-muted text-sm" style="margin-bottom: 14px;">
-              為維護考題安全性，系統原始碼內<strong>絕不存放任何明文密碼</strong>（採用 Salt + SHA-256 加密雜湊驗證與防暴力破解鎖定）。您可於此處隨時自訂新 PIN 碼：
-            </p>
-            <div class="grid-2col" style="gap: 16px; margin-bottom: 14px;">
-              <div class="form-group" style="margin-bottom: 0;">
-                <label for="newExaminerPinInput">設定新 PIN 碼 (建議 4 位數以上)</label>
-                <input type="password" id="newExaminerPinInput" placeholder="請輸入新 PIN 碼" autocomplete="new-password">
-              </div>
-              <div class="form-group" style="margin-bottom: 0;">
-                <label for="confirmExaminerPinInput">再次確認新 PIN 碼</label>
-                <input type="password" id="confirmExaminerPinInput" placeholder="請再次輸入新 PIN 碼" autocomplete="new-password">
-              </div>
-            </div>
-            <div class="action-btn-group">
-              <button type="button" class="btn btn-primary btn-sm" onclick="handleUpdateExaminerPin()">
-                💾 儲存新 PIN 碼
-              </button>
-              <button type="button" class="btn btn-outline btn-sm" onclick="handleResetExaminerPin()">
-                🔄 恢復預設 PIN 碼
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </section>

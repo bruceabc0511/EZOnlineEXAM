@@ -16,13 +16,12 @@ const STORAGE_KEYS = {
   EXAM_DATA: 'online_exam_bank_v1',
   SUBMISSIONS: 'online_exam_submissions_v1',
   HISTORY_SESSIONS: 'online_exam_history_v1',
-  GAS_URL: 'online_exam_gas_url_v1',
-  EXAMINER_PIN_HASH: 'online_exam_pin_hash_v1'
+  GAS_URL: 'online_exam_gas_url_v1'
 };
 
-// 考官端 PIN 碼安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊)
+// 考官端 PIN 碼安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊；日後如需變更 PIN 碼請由 Antigravity 指令更新)
 const EXAMINER_PIN_SALT = 'HD_EXAM_SECURE_SALT_2026';
-const DEFAULT_EXAMINER_PIN_HASH = 'f77548413d6d3ced941815c06f4499b328e47f9893e15b6c2d4d3c8838efa166';
+const EXAMINER_PIN_HASH = 'f77548413d6d3ced941815c06f4499b328e47f9893e15b6c2d4d3c8838efa166';
 
 // 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
@@ -1292,14 +1291,6 @@ async function hashExaminerPin(pin) {
   return sha256Fallback(salted);
 }
 
-function getStoredExaminerPinHash() {
-  const customHash = localStorage.getItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
-  if (customHash && customHash.trim()) {
-    return customHash.trim().toLowerCase();
-  }
-  return DEFAULT_EXAMINER_PIN_HASH;
-}
-
 async function handlePinLogin(event) {
   event.preventDefault();
   const pinInputEl = document.getElementById('examinerPinInput');
@@ -1314,9 +1305,8 @@ async function handlePinLogin(event) {
   }
 
   const inputHash = await hashExaminerPin(pinInput);
-  const targetHash = getStoredExaminerPinHash();
 
-  if (inputHash === targetHash) {
+  if (inputHash === EXAMINER_PIN_HASH) {
     pinFailedAttempts = 0;
     isExaminerAuthenticated = true;
     errBox.classList.add('hidden');
@@ -1370,38 +1360,6 @@ function startPinLockout(seconds) {
       }
     }
   }, 1000);
-}
-
-async function handleUpdateExaminerPin() {
-  const newPinEl = document.getElementById('newExaminerPinInput');
-  const confirmPinEl = document.getElementById('confirmExaminerPinInput');
-  const newPin = (newPinEl ? newPinEl.value : '').trim();
-  const confirmPin = (confirmPinEl ? confirmPinEl.value : '').trim();
-
-  if (!newPin) {
-    alert('請輸入新 PIN 碼！');
-    return;
-  }
-  if (newPin.length < 4) {
-    alert('新 PIN 碼長度建議至少 4 碼以上！');
-    return;
-  }
-  if (newPin !== confirmPin) {
-    alert('兩次輸入的新 PIN 碼不一致，請重新確認！');
-    return;
-  }
-
-  const newHash = await hashExaminerPin(newPin);
-  localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, newHash);
-  if (newPinEl) newPinEl.value = '';
-  if (confirmPinEl) confirmPinEl.value = '';
-  showToast('✅ 考官登入 PIN 碼已成功更新！');
-}
-
-function handleResetExaminerPin() {
-  if (!confirm('確定要將考官 PIN 碼恢復為初始預設值嗎？')) return;
-  localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
-  showToast('🔄 已恢復初始預設 PIN 碼！');
 }
 
 function logoutExaminer() {
