@@ -316,7 +316,7 @@
               📂 考題管理與匯入
             </button>
             <button class="tab-btn" data-tab="tabScores" onclick="switchExaminerTab('tabScores')">
-              📊 成績與寄信 (<span id="tabScoreCount">0</span>)
+              📊 成績總表 (<span id="tabScoreCount">0</span>)
             </button>
             <button class="tab-btn" data-tab="tabAnalytics" onclick="switchExaminerTab('tabAnalytics')">
               📈 測驗結果分析
@@ -434,17 +434,16 @@
             <div class="section-title-row">
               <div>
                 <h3>🏆 考生成績總表</h3>
-                <p class="text-muted text-sm">按下【結束測驗】即可一鍵寄送考生成績單，並將本次測驗結果歸檔至「歷次測驗紀錄」</p>
               </div>
               <div class="action-btn-group">
-                <button type="button" class="btn btn-accent btn-sm" onclick="openArchiveSessionModal()">
-                  📋 結束測驗
-                </button>
                 <button type="button" class="btn btn-primary btn-sm" onclick="sendAllScoresEmail('CURRENT')">
-                  📩 寄送成績
+                  📩 寄出成績單
                 </button>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('CURRENT')">
                   📥 匯出成績
+                </button>
+                <button type="button" class="btn btn-accent btn-sm" onclick="openArchiveSessionModal()">
+                  💾 儲存本次測驗紀錄
                 </button>
                 <button type="button" class="btn btn-danger-outline btn-sm" onclick="clearAllSubmissions()">
                   🗑️ 清空成績表
@@ -530,11 +529,11 @@
             <div class="section-title-row">
               <div>
                 <h3>🗂️ 歷次測驗紀錄總覽</h3>
-                <p class="text-muted text-sm">每一次結算歸檔的測驗皆獨立保存完整題庫快照、全體考生成績、統計指標與錯題分析，互不覆蓋影響</p>
+                <p class="text-muted text-sm">每一次結算歸檔的測驗皆獨立保存完整題目、全體考生成績、統計指標與錯題分析，互不覆蓋影響</p>
               </div>
               <div class="action-btn-group">
                 <button type="button" class="btn btn-accent btn-sm" onclick="openArchiveSessionModal()">
-                  💾 將本次測驗保存至歷史紀錄
+                  💾 儲存本次測驗紀錄
                 </button>
               </div>
             </div>
@@ -778,12 +777,12 @@
   <div id="archiveSessionModal" class="modal-backdrop hidden">
     <div class="modal-box">
       <div class="modal-header-row">
-        <h3>📌 結算並歸檔本場測驗紀錄</h3>
+        <h3>📌 結算並儲存本次測驗紀錄</h3>
         <button type="button" class="btn-close" onclick="closeArchiveSessionModal()">✕</button>
       </div>
       <form id="archiveSessionForm" onsubmit="confirmArchiveCurrentSession(event)">
         <p class="text-muted text-sm" style="margin-bottom: 14px;">
-          系統將把當前場次的<strong>完整題庫快照、考生成績 (<span id="archiveStudentCount">0</span> 人) 與統計分析</strong>獨立封存為一筆歷史紀錄。
+          系統將把當前場次的<strong>完整題目、考生成績 (<span id="archiveStudentCount">0</span> 人) 與統計分析</strong>獨立封存為一筆歷史紀錄。
         </p>
         <div class="form-group">
           <label for="archiveSessionTitle">歷史場次紀錄名稱 <span class="required">*</span></label>
@@ -791,13 +790,19 @@
         </div>
         <div class="consent-row" style="margin: 12px 0;">
           <label class="checkbox-label">
+            <input type="checkbox" id="archiveAutoSendEmail" checked>
+            <span>歸檔同時自動寄送成績單 Email 給本場次所有尚未寄信的考生</span>
+          </label>
+        </div>
+        <div class="consent-row" style="margin: 12px 0;">
+          <label class="checkbox-label">
             <input type="checkbox" id="archiveClearCurrent" checked>
-            <span>歸檔後清空「當前場次」考生成績名單（供下一梯次考生重新應試）</span>
+            <span>存檔後清空「當前場次」成績總表</span>
           </label>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-outline" onclick="closeArchiveSessionModal()">取消</button>
-          <button type="submit" class="btn btn-primary">確認歸檔儲存</button>
+          <button type="submit" class="btn btn-primary">確認儲存</button>
         </div>
       </form>
     </div>

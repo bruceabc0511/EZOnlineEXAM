@@ -1902,6 +1902,7 @@ function openArchiveSessionModal() {
   document.getElementById('archiveStudentCount').textContent = submissions.length;
   const defaultTitle = `${examData.title || '線上筆試測驗'} (${examData.examDate || formatDateTime(new Date()).slice(0, 10)})`;
   document.getElementById('archiveSessionTitle').value = defaultTitle;
+  document.getElementById('archiveAutoSendEmail').checked = true;
   document.getElementById('archiveClearCurrent').checked = true;
   document.getElementById('archiveSessionModal').classList.remove('hidden');
 }
@@ -1913,6 +1914,7 @@ function closeArchiveSessionModal() {
 async function confirmArchiveCurrentSession(event) {
   event.preventDefault();
   const customTitle = document.getElementById('archiveSessionTitle').value.trim() || examData.title || '未命名測驗';
+  const autoSendEmail = document.getElementById('archiveAutoSendEmail').checked;
   const clearCurrent = document.getElementById('archiveClearCurrent').checked;
 
   closeArchiveSessionModal();
@@ -1920,6 +1922,19 @@ async function confirmArchiveCurrentSession(event) {
   // 歸檔時一併關閉當前測驗開放狀態
   examData.isExamOpen = false;
   saveExamDataToStorage(true);
+
+  // 若勾選歸檔同時自動寄送成績信給尚未收到信的考生
+  if (autoSendEmail) {
+    const unsentSubs = submissions.filter(s => s.studentEmail && s.studentEmail.includes('@') && !s.emailSentAt);
+    if (unsentSubs.length > 0) {
+      await dispatchScoreEmails('CURRENT', unsentSubs, {
+        title: examData.title,
+        examDate: examData.examDate,
+        questions: examData.questions,
+        submissions: submissions
+      });
+    }
+  }
 
   const newHist = createAndSaveHistorySession(customTitle, clearCurrent, null);
   switchExaminerTab('tabHistory');
