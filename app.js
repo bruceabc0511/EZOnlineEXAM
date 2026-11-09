@@ -2095,6 +2095,36 @@ function deleteHistorySession(histId) {
 }
 
 // ==================== 匯出考試成績與錯題統計成 Excel (.xlsx) ====================
+function getCellDisplayWidth(val) {
+  if (val === null || val === undefined) return 0;
+  const lines = String(val).split(/\r?\n/);
+  let maxLineLen = 0;
+  lines.forEach(line => {
+    let len = 0;
+    for (const ch of line) {
+      len += ch.charCodeAt(0) > 255 ? 2.1 : 1;
+    }
+    if (len > maxLineLen) maxLineLen = len;
+  });
+  return Math.ceil(maxLineLen);
+}
+
+function autoFitWorksheetColumns(rows, worksheet, minWidth = 10, maxWidth = 90) {
+  if (!rows || rows.length === 0 || !worksheet) return;
+  const colCount = rows.reduce((max, r) => Math.max(max, Array.isArray(r) ? r.length : 0), 0);
+  const cols = [];
+  for (let c = 0; c < colCount; c++) {
+    let maxW = minWidth;
+    for (let r = 0; r < rows.length; r++) {
+      const cellVal = rows[r] ? rows[r][c] : '';
+      const w = getCellDisplayWidth(cellVal) + 4;
+      if (w > maxW) maxW = w;
+    }
+    cols.push({ wch: Math.min(maxW, maxWidth) });
+  }
+  worksheet['!cols'] = cols;
+}
+
 function exportScoresToExcel(sessionId = 'CURRENT') {
   const sessionObj = getSessionDataById(sessionId);
   if (!sessionObj || sessionObj.submissions.length === 0) {
@@ -2146,9 +2176,15 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
 
   const stats = calculateStatsForList(targetSubs);
   scoreRows.push([]);
-  scoreRows.push(['【統計摘要】', '應試人數', targetSubs.length, '平均分數', stats.mean, '中位數', stats.median, '標準差', stats.stdDev, '及格率', `${stats.passRate}%`]);
+  scoreRows.push(['【統計摘要】']);
+  scoreRows.push(['應試人數', targetSubs.length]);
+  scoreRows.push(['平均分數', stats.mean]);
+  scoreRows.push(['中位數', stats.median]);
+  scoreRows.push(['標準差', stats.stdDev]);
+  scoreRows.push(['及格率', `${stats.passRate}%`]);
 
   const wsScores = XLSX.utils.aoa_to_sheet(scoreRows);
+  autoFitWorksheetColumns(scoreRows, wsScores);
 
   const qAnalysisHeaders = ['題號', '題目內容', '標準答案', '總作答人數', '答錯人數', '答錯率(%)', '最常誤選選項'];
   const qAnalysisRows = [qAnalysisHeaders];
@@ -2167,6 +2203,7 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
   });
 
   const wsAnalysis = XLSX.utils.aoa_to_sheet(qAnalysisRows);
+  autoFitWorksheetColumns(qAnalysisRows, wsAnalysis);
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsScores, '考生成績總表');
