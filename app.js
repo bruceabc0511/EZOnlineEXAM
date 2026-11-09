@@ -41,6 +41,7 @@ let lastExamDataSaveAt = 0;
 let isGasUrlUnlockedBySecret = false;
 let gasSecretClickCount = 0;
 let gasSecretClickResetTimer = null;
+let editingQuestionId = null;
 
 // 當前考試進行中狀態
 let activeSession = {
@@ -1297,8 +1298,11 @@ function renderExaminerQuestionTab() {
       <td style="font-size: 0.86rem; line-height: 1.7;">${formattedOpts}</td>
       <td><span class="badge badge-amber" style="font-size:0.9rem;">${escapeHtml(q.answer)}</span></td>
       <td>${pts} 分</td>
-      <td>
-        <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteQuestion(${q.id})">刪除</button>
+      <td style="white-space: nowrap;">
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="openEditQuestionModal(${q.id})">編輯</button>
+          <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteQuestion(${q.id})">刪除</button>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
@@ -1381,11 +1385,37 @@ function clearAllQuestions() {
 }
 
 function openAddQuestionModal() {
+  editingQuestionId = null;
   document.getElementById('addQuestionForm').reset();
+  const titleEl = document.getElementById('questionModalTitle');
+  const submitBtn = document.getElementById('questionModalSubmitBtn');
+  if (titleEl) titleEl.textContent = '新增單選題';
+  if (submitBtn) submitBtn.textContent = '新增題目';
+  document.getElementById('addQuestionModal').classList.remove('hidden');
+}
+
+function openEditQuestionModal(qId) {
+  const targetQ = examData.questions.find(q => q.id === qId);
+  if (!targetQ) return;
+
+  editingQuestionId = qId;
+  const titleEl = document.getElementById('questionModalTitle');
+  const submitBtn = document.getElementById('questionModalSubmitBtn');
+  if (titleEl) titleEl.textContent = `✏️ 編輯第 ${qId} 題`;
+  if (submitBtn) submitBtn.textContent = '儲存修改';
+
+  document.getElementById('newQText').value = targetQ.question || '';
+  const formattedLines = Array.isArray(targetQ.options) && targetQ.options.length > 0
+    ? targetQ.options.map(o => `(${o.key}) ${o.text}`).join('\n')
+    : (targetQ.rawOptions || '');
+  document.getElementById('newQOptions').value = formattedLines;
+  document.getElementById('newQAnswer').value = String(targetQ.answer || 'A').toUpperCase();
+
   document.getElementById('addQuestionModal').classList.remove('hidden');
 }
 
 function closeAddQuestionModal() {
+  editingQuestionId = null;
   document.getElementById('addQuestionModal').classList.add('hidden');
 }
 
@@ -1398,6 +1428,45 @@ function handleSaveNewQuestion(event) {
   const parsedOptions = parseOptionsString(rawOpts);
   if (parsedOptions.length < 2) {
     alert('請輸入至少 2 個選項（每行一個選項）！');
+    return;
+  }
+
+  if (editingQuestionId !== null) {
+    const targetQ = examData.questions.find(q => q.id === editingQuestionId);
+    if (targetQ) {
+      const prevAns = String(targetQ.answer || '').toUpperCase();
+      targetQ.question = qText;
+      targetQ.rawOptions = rawOpts;
+      targetQ.options = parsedOptions;
+      targetQ.answer = ans;
+
+      // 若本場次已有考生交卷且考官修改了該題標準答案，同步重新計算本場次考生成績
+      if (prevAns !== ans && submissions.length > 0) {
+        const totalQ = examData.questions.length;
+        submissions.forEach(sub => {
+          if (sub.answerDetails && sub.answerDetails[targetQ.id]) {
+            const d = sub.answerDetails[targetQ.id];
+            d.correctAnswer = ans;
+            d.isCorrect = String(d.selected || '').toUpperCase() === ans;
+          }
+          let newCorrectCount = 0;
+          examData.questions.forEach(q => {
+            const detail = sub.answerDetails ? sub.answerDetails[q.id] : null;
+            if (detail && detail.isCorrect) newCorrectCount++;
+          });
+          sub.correctCount = newCorrectCount;
+          sub.totalQuestions = totalQ;
+          sub.score = totalQ > 0 ? Number(((newCorrectCount / totalQ) * 100).toFixed(1)) : 0;
+        });
+        saveSubmissionsToStorage(true);
+      }
+    }
+
+    const updatedId = editingQuestionId;
+    saveExamDataToStorage(true);
+    closeAddQuestionModal();
+    refreshExaminerAllViews();
+    showImportAlert(`已成功更新第 ${updatedId} 題內容並同步至雲端！`, 'success');
     return;
   }
 

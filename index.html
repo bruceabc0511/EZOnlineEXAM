@@ -417,7 +417,7 @@
                     <th>選項內容</th>
                     <th style="width: 90px;">標準答案</th>
                     <th style="width: 90px;">自動配分</th>
-                    <th style="width: 90px;">操作</th>
+                    <th style="width: 140px;">操作</th>
                   </tr>
                 </thead>
                 <tbody id="questionsTableBody">
@@ -756,11 +756,11 @@
     </div>
   </div>
 
-  <!-- 4. 手動新增題目 Modal -->
+  <!-- 4. 手動新增 / 編輯題目 Modal -->
   <div id="addQuestionModal" class="modal-backdrop hidden">
     <div class="modal-box">
       <div class="modal-header-row">
-        <h3>新增單選題</h3>
+        <h3 id="questionModalTitle">新增單選題</h3>
         <button type="button" class="btn-close" onclick="closeAddQuestionModal()">✕</button>
       </div>
       <form id="addQuestionForm" onsubmit="handleSaveNewQuestion(event)">
@@ -783,7 +783,7 @@
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-outline" onclick="closeAddQuestionModal()">取消</button>
-          <button type="submit" class="btn btn-primary">新增題目</button>
+          <button type="submit" class="btn btn-primary" id="questionModalSubmitBtn">新增題目</button>
         </div>
       </form>
     </div>
