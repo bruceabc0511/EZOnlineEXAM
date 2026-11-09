@@ -6,8 +6,11 @@
  * 3. 考官端 (#750000 主題)：PIN碼驗證 (0000119)、開始/結束測驗開關控制、Excel 範本匯入（支援空白題庫）、考後寄送考生成績單 Email、每次測驗獨立歸檔為歷史紀錄、錯題分析
  */
 
-// 若有固定部署的預設 Google Apps Script 網址可填於此處，否則可由考官端介面動態設定並透過 ?api= 參數自動分享給考生
+// 若有固定部署的預設 Google Apps Script 網址可填於此處；系統亦支援填入一次後自動透過雲端 KV 跨裝置永久綁定
 const DEFAULT_GAS_URL = '';
+const CLOUD_BIND_KV_APP_KEY = 'i1y48rk0';
+const CLOUD_BIND_KV_FIELD = 'hd_exam_gas_id';
+const CLOUD_BIND_NTFY_TOPIC = 'hd_online_exam_gas_bind_bruceabc0511';
 
 const STORAGE_KEYS = {
   EXAM_DATA: 'online_exam_bank_v1',
@@ -53,7 +56,7 @@ let activeSession = {
 
 // ==================== 初始化 ====================
 document.addEventListener('DOMContentLoaded', async () => {
-  initCloudUrlFromQueryOrDefault();
+  await initCloudUrlFromQueryOrDefault();
   updateCloudStatusUI();
   renderStudentLoginMeta();
   setupExamMetaAutoSync();
@@ -67,22 +70,102 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// ==================== 雲端多人連線與同步邏輯 (方案 B) ====================
+// ==================== 雲端多人連線與同步 ====================
 function getActiveGasUrl() {
   return (localStorage.getItem(STORAGE_KEYS.GAS_URL) || DEFAULT_GAS_URL || '').trim();
 }
 
-function initCloudUrlFromQueryOrDefault() {
+function buildFullGasUrl(depIdOrUrl) {
+  const clean = String(depIdOrUrl || '').trim();
+  if (!clean || clean === 'NONE') return '';
+  return clean.startsWith('http')
+    ? clean
+    : `https://script.google.com/macros/s/${clean}/exec`;
+}
+
+async function saveGlobalBoundGasUrl(gasUrl) {
+  const depId = extractGasDeploymentId(gasUrl) || 'NONE';
+  try {
+    await fetch(
+      `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/${CLOUD_BIND_KV_APP_KEY}/${CLOUD_BIND_KV_FIELD}/${encodeURIComponent(depId)}`,
+      { method: 'POST' }
+    );
+  } catch (e) {
+    console.warn('Global KV bind update failed:', e);
+  }
+  try {
+    await fetch(`https://ntfy.sh/${CLOUD_BIND_NTFY_TOPIC}`, {
+      method: 'POST',
+      body: JSON.stringify({ depId })
+    });
+  } catch (e) {}
+}
+
+async function fetchGlobalBoundGasUrl() {
+  // 1. 優先向永久保存的 KeyValue 雲端設定庫讀取已綁定的 GAS 部署 ID
+  try {
+    const res = await fetch(
+      `https://keyvalue.immanuel.co/api/KeyVal/GetValue/${CLOUD_BIND_KV_APP_KEY}/${CLOUD_BIND_KV_FIELD}?_t=${Date.now()}`
+    );
+    if (res.ok) {
+      const val = await res.json();
+      if (val && val !== 'NONE') {
+        return buildFullGasUrl(val);
+      }
+      if (val === 'NONE') {
+        return '';
+      }
+    }
+  } catch (e) {
+    console.warn('Global KV bind fetch failed:', e);
+  }
+
+  // 2. 備援：向 ntfy 頻道讀取最近一次綁定紀錄
+  try {
+    const res2 = await fetch(`https://ntfy.sh/${CLOUD_BIND_NTFY_TOPIC}/json?poll=1&since=all`);
+    if (res2.ok) {
+      const text = await res2.text();
+      const lines = text.trim().split('\n').filter(Boolean);
+      if (lines.length > 0) {
+        const lastEvt = JSON.parse(lines[lines.length - 1]);
+        const payload = JSON.parse(lastEvt.message || '{}');
+        if (payload.depId && payload.depId !== 'NONE') {
+          return buildFullGasUrl(payload.depId);
+        }
+      }
+    }
+  } catch (e) {}
+
+  return '';
+}
+
+async function initCloudUrlFromQueryOrDefault() {
   const params = new URLSearchParams(window.location.search);
   const apiParam = params.get('api');
   if (apiParam) {
-    const cleanParam = apiParam.trim();
-    const fullUrl = cleanParam.startsWith('http')
-      ? cleanParam
-      : `https://script.google.com/macros/s/${cleanParam}/exec`;
-    localStorage.setItem(STORAGE_KEYS.GAS_URL, fullUrl);
-  } else if (DEFAULT_GAS_URL && !localStorage.getItem(STORAGE_KEYS.GAS_URL)) {
+    const fullUrl = buildFullGasUrl(apiParam);
+    if (fullUrl) {
+      localStorage.setItem(STORAGE_KEYS.GAS_URL, fullUrl);
+      saveGlobalBoundGasUrl(fullUrl);
+      return;
+    }
+  }
+
+  if (DEFAULT_GAS_URL && !localStorage.getItem(STORAGE_KEYS.GAS_URL)) {
     localStorage.setItem(STORAGE_KEYS.GAS_URL, DEFAULT_GAS_URL);
+  }
+
+  const localUrl = getActiveGasUrl();
+  const remoteBoundUrl = await fetchGlobalBoundGasUrl();
+
+  if (remoteBoundUrl) {
+    // 若雲端已有綁定網址，所有新裝置開啟網頁時直接自動套用綁定
+    if (!localUrl || localUrl !== remoteBoundUrl) {
+      localStorage.setItem(STORAGE_KEYS.GAS_URL, remoteBoundUrl);
+    }
+  } else if (localUrl) {
+    // 若本機已填過網址但雲端尚未記錄，自動將本機網址上傳為跨裝置全域綁定
+    await saveGlobalBoundGasUrl(localUrl);
   }
 }
 
@@ -116,7 +199,7 @@ function updateCloudStatusUI() {
 
   if (gasUrl) {
     if (dot) dot.classList.remove('offline');
-    if (text) text.textContent = '雲端多人同步已連線';
+    if (text) text.textContent = '已連線';
     const shareUrl = buildStudentShareUrl();
     if (shareInput) shareInput.value = shareUrl;
     if (qrImg && qrHint) {
@@ -126,7 +209,7 @@ function updateCloudStatusUI() {
     }
   } else {
     if (dot) dot.classList.add('offline');
-    if (text) text.textContent = '本機模式 (可於考官端啟用雲端)';
+    if (text) text.textContent = '尚未連線';
     if (shareInput) shareInput.value = window.location.origin + window.location.pathname;
     if (qrImg && qrHint) {
       qrImg.classList.add('hidden');
@@ -247,8 +330,9 @@ async function saveGasUrlConfig() {
 
   if (!val) {
     localStorage.removeItem(STORAGE_KEYS.GAS_URL);
+    await saveGlobalBoundGasUrl('');
     updateCloudStatusUI();
-    showToast('⚪ 已切換回本機儲存模式');
+    showToast('⚪ 已解除綁定並切換回本機儲存模式');
     return;
   }
 
@@ -258,10 +342,11 @@ async function saveGasUrlConfig() {
   }
 
   localStorage.setItem(STORAGE_KEYS.GAS_URL, val);
+  await saveGlobalBoundGasUrl(val);
   updateCloudStatusUI();
   startCloudPolling();
 
-  showToast('🔌 正在驗證並同步雲端資料庫...');
+  showToast('🔌 正在驗證並跨裝置綁定雲端資料庫...');
   const ok = await syncStateFromCloud(false);
   if (ok) {
     await postToCloud({
@@ -285,8 +370,9 @@ async function testGasConnection() {
     const json = await res.json();
     if (json && json.status === 'success') {
       localStorage.setItem(STORAGE_KEYS.GAS_URL, url);
+      await saveGlobalBoundGasUrl(url);
       updateCloudStatusUI();
-      showToast('✅ 連線成功！' + (json.message || '雲端資料庫與寄信服務運作正常'));
+      showToast('✅ 連線成功並已完成跨裝置綁定！' + (json.message || '雲端資料庫與寄信服務運作正常'));
     } else {
       showToast('⚠️ 收到回應但狀態異常，請確認部署權限設為「所有人」');
     }
@@ -1303,7 +1389,7 @@ function processExcelFile(file) {
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
 
-      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', blankrows: true });
       parseTemplateRows(rows, file.name);
     } catch (err) {
       console.error(err);
@@ -1319,52 +1405,48 @@ function parseTemplateRows(rows, fileName) {
     return;
   }
 
-  let parsedTitle = examData.title || '';
-  let parsedDuration = examData.durationMinutes || 60;
-  let parsedDate = examData.examDate || '';
   const parsedQuestions = [];
 
-  for (let r = 0; r < Math.min(4, rows.length); r++) {
+  // 範本中第 1~5 列 (index 0~4) 為範例不需要讀取，第 6 列 (index 5) 為空白分隔列，題目從第 7 列 (index 6) 開始讀取
+  // 試卷資訊（試卷名稱、考試日期、作答時間）不再讀取匯入檔案，完全保留考官手動輸入的值
+  for (let r = 6; r < rows.length; r++) {
     const row = rows[r].map(cell => String(cell ?? '').trim());
-    for (let c = 0; c < row.length; c++) {
-      if (row[c] === '試卷名稱') {
-        parsedTitle = row[c + 1] || '';
-      }
-      if (row[c] === '作答時間' && row[c + 1]) {
-        const num = parseInt(row[c + 1], 10);
-        if (!isNaN(num) && num > 0) parsedDuration = num;
-      }
-      if (row[c] === '考試日期') {
-        parsedDate = row[c + 1] || '';
-      }
-    }
-  }
+    if (row[0] === '範例') continue;
 
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r].map(cell => String(cell ?? '').trim());
     const qLabelIdx = row.findIndex(cell => cell === '題目');
     if (qLabelIdx !== -1) {
       const questionText = row[qLabelIdx + 1] || '';
-      const nextRow = r + 1 < rows.length ? rows[r + 1].map(cell => String(cell ?? '').trim()) : [];
-
-      let rawOptionsText = '';
-      const optLabelIdx = nextRow.findIndex(cell => cell === '選項');
-      if (optLabelIdx !== -1) {
-        rawOptionsText = nextRow[optLabelIdx + 1] || '';
-      }
+      const ansLabelIdx = row.findIndex(cell => cell === '答案');
 
       let answerText = '';
-      const ansLabelIdx = row.findIndex(cell => cell === '答案');
-      if (ansLabelIdx !== -1) {
-        if (nextRow[ansLabelIdx]) {
-          answerText = nextRow[ansLabelIdx];
-        } else if (row[ansLabelIdx + 1]) {
-          answerText = row[ansLabelIdx + 1];
-        } else if (nextRow[ansLabelIdx + 1]) {
-          answerText = nextRow[ansLabelIdx + 1];
+      if (ansLabelIdx !== -1 && row[ansLabelIdx + 1]) {
+        answerText = row[ansLabelIdx + 1];
+      }
+
+      const optionLines = [];
+      let k = r + 1;
+      for (; k < rows.length; k++) {
+        const subRow = rows[k].map(cell => String(cell ?? '').trim());
+        // 遇到下一題的「題目」列時停止
+        if (subRow.includes('題目')) {
+          break;
+        }
+        // 讀取選項文字（位於「題目/選項」標籤右側欄位）
+        const optCell = subRow[qLabelIdx + 1] || '';
+        if (optCell) {
+          optionLines.push(optCell);
+        }
+        // 讀取答案文字（位於「答案」標籤正下方或右側欄位）
+        if (!answerText && ansLabelIdx !== -1) {
+          if (subRow[ansLabelIdx]) {
+            answerText = subRow[ansLabelIdx];
+          } else if (subRow[ansLabelIdx + 1]) {
+            answerText = subRow[ansLabelIdx + 1];
+          }
         }
       }
 
+      const rawOptionsText = optionLines.join('\n');
       if (questionText && rawOptionsText) {
         const optionsArr = parseOptionsString(rawOptionsText);
         const cleanAns = answerText.replace(/[^A-Za-z]/g, '').toUpperCase() || 'A';
@@ -1377,21 +1459,23 @@ function parseTemplateRows(rows, fileName) {
           answer: cleanAns
         });
       }
+
+      r = k - 1;
     }
   }
 
   const newExamObj = {
-    title: parsedTitle,
-    durationMinutes: parsedDuration,
-    examDate: normalizeDateForInput(parsedDate),
+    title: examData.title ?? '',
+    durationMinutes: examData.durationMinutes === '' ? '' : (examData.durationMinutes ?? 60),
+    examDate: normalizeDateForInput(examData.examDate ?? ''),
     isExamOpen: parsedQuestions.length > 0 ? Boolean(examData.isExamOpen) : false,
     questions: parsedQuestions
   };
 
   const pts = getPointsPerQuestion(parsedQuestions.length);
   const msg = parsedQuestions.length > 0
-    ? `成功自「${fileName}」匯入試卷【${parsedTitle || '未命名測驗'}】！共讀取 ${parsedQuestions.length} 題有效單選題，每題自動配分 ${pts} 分。`
-    : `已自「${fileName}」匯入試卷設定【${parsedTitle || '空白題庫'}】（目前有效題目為 0 題）。`;
+    ? `成功自「${fileName}」匯入題庫！共讀取 ${parsedQuestions.length} 題有效單選題，每題自動配分 ${pts} 分（試卷資訊請由右側手動設定）。`
+    : `已自「${fileName}」讀取題庫（目前有效題目為 0 題）。`;
 
   promptArchiveBeforeReplacingBank(newExamObj, msg);
 }
@@ -1432,29 +1516,40 @@ function showImportAlert(msg, type) {
 
 function downloadSampleExcel() {
   const aoa = [
-    ['', '試卷名稱', examData.title || '範本考題', '作答時間', examData.durationMinutes || 60, '分鐘'],
-    ['', '考試日期', examData.examDate || '2026-12-01', '', '', ''],
-    ['', '', '', '', '', '']
+    ['範例', '題目', '下列何者心律會以「窄的QRS波型」為最常見？', '答案'],
+    ['', '選項', '(A) Ventricular tachycardia', 'C'],
+    ['', '', '(B) PSVT with aberrant conduction', ''],
+    ['', '', '(C) Multifocal atrial tachycardia', ''],
+    ['', '', '(D) Torsade de pointes', ''],
+    ['', '', '', '']
   ];
 
   for (let i = 1; i <= 100; i++) {
     const existingQ = examData.questions[i - 1];
     if (existingQ) {
-      aoa.push([i, '題目', existingQ.question, '答案', '', '']);
-      aoa.push(['', '選項', existingQ.rawOptions, existingQ.answer, '', '']);
+      const opts = existingQ.options || [];
+      aoa.push([i, '題目', existingQ.question, '答案']);
+      aoa.push(['', '選項', opts[0] ? `(${opts[0].key}) ${opts[0].text}` : '', existingQ.answer]);
+      aoa.push(['', '', opts[1] ? `(${opts[1].key}) ${opts[1].text}` : '', '']);
+      aoa.push(['', '', opts[2] ? `(${opts[2].key}) ${opts[2].text}` : '', '']);
+      aoa.push(['', '', opts[3] ? `(${opts[3].key}) ${opts[3].text}` : '', '']);
     } else {
-      aoa.push([i, '題目', '', '答案', '', '']);
-      aoa.push(['', '選項', '', '', '', '']);
+      aoa.push([i, '題目', '', '答案']);
+      aoa.push(['', '選項', '', '']);
+      aoa.push(['', '', '', '']);
+      aoa.push(['', '', '', '']);
+      aoa.push(['', '', '', '']);
+    }
+    if (i < 100) {
+      aoa.push(['', '', '', '']);
     }
   }
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [
     { wch: 8 },
-    { wch: 12 },
+    { wch: 10 },
     { wch: 65 },
-    { wch: 10 },
-    { wch: 10 },
     { wch: 10 }
   ];
 
@@ -1500,10 +1595,6 @@ function buildSubmissionRowElement(sub, sessionId) {
     ? `<span class="badge badge-teal" title="寄送時間：${escapeHtml(sub.emailSentAt)}">✅ 已寄送</span>`
     : `<span class="badge badge-amber">尚未寄送</span>`;
 
-  const deleteBtnHtml = sessionId === 'CURRENT'
-    ? `<button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteSingleSubmission('${sub.id}')">刪除</button>`
-    : '';
-
   tr.innerHTML = `
     <td style="white-space: nowrap;"><strong>${escapeHtml(sub.studentId)}</strong></td>
     <td style="white-space: nowrap; min-width: 90px;">${escapeHtml(sub.studentName)}</td>
@@ -1515,12 +1606,8 @@ function buildSubmissionRowElement(sub, sessionId) {
     <td style="white-space: nowrap;">${statusBadge}</td>
     <td class="cell-wrap-time">${escapeHtml(sub.submittedAt)}</td>
     <td style="white-space: nowrap;">${emailStatusBadge}</td>
-    <td>
-      <div style="display:flex; gap:6px; flex-wrap:wrap;">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="viewStudentDetail('${sessionId}', '${sub.id}')">明細</button>
-        <button type="button" class="btn btn-outline btn-sm" onclick="sendSingleScoreEmail('${sessionId}', '${sub.id}')">✉️ 寄信</button>
-        ${deleteBtnHtml}
-      </div>
+    <td style="white-space: nowrap;">
+      <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteSingleSubmission('${sub.id}', '${sessionId}')">刪除</button>
     </td>
   `;
   return tr;
@@ -1601,11 +1688,24 @@ function closeStudentDetailModal() {
   document.getElementById('studentDetailModal').classList.add('hidden');
 }
 
-function deleteSingleSubmission(subId) {
-  if (!confirm('確定要刪除此位考生的作答紀錄嗎？（刪除後該學號即可於本場次重新應試）')) return;
-  submissions = submissions.filter(s => s.id !== subId);
-  saveSubmissionsToStorage(true);
-  refreshExaminerAllViews();
+function deleteSingleSubmission(subId, sessionId = 'CURRENT') {
+  if (!confirm('確定要刪除此位考生的作答紀錄嗎？（刪除後該學號即可重新應試）')) return;
+  if (sessionId === 'CURRENT') {
+    submissions = submissions.filter(s => s.id !== subId);
+    saveSubmissionsToStorage(true);
+    refreshExaminerAllViews();
+  } else {
+    const hist = historySessions.find(h => h.id === sessionId);
+    if (hist && Array.isArray(hist.submissions)) {
+      hist.submissions = hist.submissions.filter(s => s.id !== subId);
+      hist.stats = calculateStatsForList(hist.submissions);
+      saveHistorySessionsToStorage(true);
+      refreshExaminerAllViews();
+      if (currentViewingHistoryId === sessionId) {
+        viewHistorySessionDetail(sessionId);
+      }
+    }
+  }
 }
 
 function clearAllSubmissions() {
@@ -2058,7 +2158,7 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
     qAnalysisRows.push([
       `第 ${item.index} 題`,
       item.question,
-      item.answer,
+      item.answerDisplay || item.answer,
       item.totalAttempts,
       item.wrongCount,
       `${item.errorRate}%`,
@@ -2133,12 +2233,19 @@ function calculateQuestionErrorStatsForList(questionsList, targetSubmissions) {
     });
 
     const errorRate = totalStudents > 0 ? Number(((wrongCount / totalStudents) * 100).toFixed(1)) : 0;
+    const matchedOpt = (q.options || []).find(
+      o => String(o.key).toUpperCase() === String(q.answer).toUpperCase()
+    );
+    const answerDisplay = matchedOpt && matchedOpt.text
+      ? `(${q.answer}) ${matchedOpt.text}`
+      : q.answer;
 
     return {
       id: q.id,
       index: idx + 1,
       question: q.question,
       answer: q.answer,
+      answerDisplay,
       totalAttempts: totalStudents,
       wrongCount,
       errorRate,
@@ -2177,7 +2284,7 @@ function renderErrorRankingIntoContainer(container, questionsList, targetSubmiss
         <div class="bar-fill-danger" style="width: ${item.errorRate}%"></div>
       </div>
       <div class="rank-meta">
-        <span>標準答案：<strong>${escapeHtml(item.answer)}</strong></span>
+        <span>正確答案：<strong>${escapeHtml(item.answerDisplay || item.answer)}</strong></span>
         <span>答錯人數：<strong>${item.wrongCount} / ${item.totalAttempts} 人</strong></span>
         <span>最常誤選：<strong>${escapeHtml(item.topWrongOption || '無')}</strong></span>
       </div>

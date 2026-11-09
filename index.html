@@ -36,8 +36,7 @@
               <span id="cloudStatusText">本機模式</span>
             </span>
           </div>
-          <span class="brand-subtitle" id="headerSubtitle">Online Examination System (Multi-User Cloud
-            Edition)</span>
+          <span class="brand-subtitle" id="headerSubtitle">Online Examination System</span>
         </div>
       </div>
 
@@ -347,7 +346,7 @@
                 </button>
               </div>
               <p class="text-muted text-sm">
-                支援標準範本格式（第1列：試卷名稱、作答時間；第2列：考試日期；第4列起每兩列為一題單選題：題號/題目/答案 與 選項）。系統會自動濾除空白題目並依有效題數自動平均配分（滿分 100 分）。
+                支援新版標準範本格式（第 1～5 列為範例不讀取，題目自第 7 列開始讀取；試卷名稱、考試日期、作答時間請於右側手動輸入）。系統會自動濾除空白題目並依有效題數自動平均配分（滿分 100 分）。
               </p>
 
               <div class="upload-dropzone" id="excelDropzone"
@@ -646,12 +645,11 @@
         <!-- 頁籤 5：雲端多人連線與自動寄信設定 (方案 B) -->
         <div id="tabCloud" class="tab-content hidden">
           <div class="grid-2col">
-            <!-- 左側：設定雲端網址與考生專屬應試連結 / QR Code -->
+            <!-- 左側：設定雲端網址 -->
             <div class="card">
               <h3>☁️ Google 雲端試算表資料庫 & 自動寄信連線設定</h3>
               <p class="text-muted text-sm" style="margin-bottom:16px;">
-                綁定 Google Apps Script 網頁應用程式網址後，即可啟用<strong>跨網路多人同時連線應試</strong>、<strong>即時集中統計成績</strong>與<strong>自動寄發
-                  HTML 成績單 Email</strong>。
+                填入一次 Google Apps Script 網頁應用程式網址並儲存後，系統即會<strong>自動跨裝置綁定</strong>，不同電腦或手機開啟網頁皆會自動連線，無須重複輸入。
               </p>
 
               <div class="form-group">
@@ -660,9 +658,9 @@
                   placeholder="https://script.google.com/macros/s/AKfycb.../exec">
               </div>
 
-              <div class="action-btn-group" style="margin-bottom:20px;">
+              <div class="action-btn-group">
                 <button type="button" class="btn btn-primary" onclick="saveGasUrlConfig()">
-                  ✅ 儲存並啟用雲端連線
+                  ✅ 儲存並跨裝置綁定雲端連線
                 </button>
                 <button type="button" class="btn btn-secondary" onclick="testGasConnection()">
                   🔌 測試雲端連線
@@ -671,12 +669,13 @@
                   ⬆️ 將本機題庫與紀錄推送至雲端
                 </button>
               </div>
+            </div>
 
-              <hr class="divider">
-
+            <!-- 右側：考生專屬應試連結 / QR Code -->
+            <div class="card">
               <h3>📲 考生多人連線專屬應試連結 & QR Code</h3>
               <p class="text-muted text-sm" style="margin-bottom:12px;">
-                請將下方連結或 QR Code 提供給全體考生。連結已自動內嵌您的雲端資料庫參數，考生在各自的手機或電腦打開即可同步載入考題並交卷回傳！
+                請將下方連結或 QR Code 提供給全體考生。考生在各自的手機或電腦打開即可同步載入考題並交卷回傳！
               </p>
 
               <div class="share-box">
@@ -692,44 +691,6 @@
                   <div id="qrCodeHint" class="text-muted text-sm">設定雲端網址後將自動顯示考生掃描應試 QR Code</div>
                 </div>
               </div>
-            </div>
-
-            <!-- 右側：1分鐘快速部署教學與一鍵複製 Code.gs -->
-            <div class="card">
-              <div class="section-title-row">
-                <h3>🚀 1 分鐘免費建立您的專屬雲端資料庫與寄信後端</h3>
-                <a href="https://sheets.new" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm"
-                  style="text-decoration:none;">
-                  ➕ 點此新建 Google 試算表
-                </a>
-              </div>
-
-              <ol class="setup-steps-list">
-                <li>點擊右上方「<strong>➕ 點此新建 Google 試算表</strong>」，在試算表上方選單點選「<strong>擴充功能</strong>」➔「<strong>Apps
-                    Script</strong>」。</li>
-                <li>
-                  點擊下方按鈕一鍵複製後端程式碼，清空 Apps Script 編輯器原本的內容並貼上，按 <code>Ctrl + S</code> 儲存：
-                  <div style="margin: 8px 0;">
-                    <button type="button" class="btn btn-primary btn-sm" onclick="copyGasBackendCode()">
-                      📋 一鍵複製 Google Apps Script 後端程式碼 (Code.gs)
-                    </button>
-                  </div>
-                </li>
-                <li>點選 Apps Script 右上角藍色按鈕「<strong>部署</strong>」➔「<strong>新增部署作業</strong>」。</li>
-                <li>點選左側齒輪「選取類型」➔ 勾選「<strong>網頁應用程式 (Web App)</strong>」。</li>
-                <li>
-                  <strong>關鍵權限設定</strong>：
-                  <ul>
-                    <li>執行身分：選擇「<strong>我 (Me)</strong>」（系統將透過您的 Gmail 自動寄送考生成績單）</li>
-                    <li>誰可以存取：選擇「<strong>所有人 (Anyone)</strong>」（讓所有考生免登入 Google 即可跨裝置連線交卷）</li>
-                  </ul>
-                </li>
-                <li>點擊「<strong>部署</strong>」➔「<strong>授予存取權</strong>」➔ 選擇您的 Google 帳號 ➔ 點選「<strong>進階
-                    (Advanced)</strong>」➔「<strong>前往專案 (不安全)</strong>」➔「<strong>允許</strong>」。</li>
-                <li>複製產生的「<strong>網頁應用程式網址
-                    (`https://script.google.com/macros/s/.../exec`)</strong>」，貼回左側輸入框並點擊「<strong>✅
-                    儲存並啟用雲端連線</strong>」即完成！</li>
-              </ol>
             </div>
           </div>
         </div>
