@@ -1345,7 +1345,7 @@ body.examiner-mode .btn-primary:hover {
 .modal-box {
   background: #ffffff;
   border-radius: var(--radius-lg);
-  max-width: 480px;
+  max-width: 880px;
   width: 100%;
   padding: 28px;
   box-shadow: var(--shadow-lg);
@@ -1581,12 +1581,19 @@ body.examiner-mode .btn-primary:hover {
   color: #ffffff;
   font-size: 0.9rem;
   margin-top: 10px;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
 @keyframes zoomIn {
-  from { opacity: 0; transform: scale(0.92); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* 考題明細表格中的圖片縮圖標籤 */
@@ -1609,6 +1616,7 @@ body.examiner-mode .btn-primary:hover {
   background: var(--primary);
   color: #ffffff;
 }
+
 @media (max-width: 960px) {
   .quiz-layout {
     grid-template-columns: 1fr;
