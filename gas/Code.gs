@@ -25,6 +25,15 @@ const SHEET_NAMES = {
 // 考題圖片專用 Google 雲端硬碟資料夾 ID
 const EXAM_IMAGE_FOLDER_ID = '11vY2bQE-3G_gwrcanjCeCJMYjPbnYYrl';
 
+/**
+ * 首次使用考題圖片上傳時，請在 Apps Script 編輯器上方函式選單中選擇此「testDriveAuthorization」
+ * 並點選「執行」，Google 會彈出授權視窗，點擊「核對權限」->「進階」->「前往... (不安全)」->「允許」即可完成雲端硬碟授權！
+ */
+function testDriveAuthorization() {
+  const folder = DriveApp.getFolderById(EXAM_IMAGE_FOLDER_ID);
+  Logger.log('✅ Google Drive 雲端硬碟權限授權成功！目標資料夾名稱：' + folder.getName());
+}
+
 function doGet(e) {
   try {
     const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getExamState';

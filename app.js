@@ -1704,7 +1704,11 @@ async function handleQuestionImageSelected(event) {
         return;
       } else {
         const errMsg = (res && res.message) ? res.message : '雲端上傳回應異常';
-        alert(`上傳至雲端硬碟失敗（${errMsg}），系統將自動使用本機圖片預覽。`);
+        if (String(errMsg).includes('DriveApp') || String(errMsg).includes('權限') || String(errMsg).includes('authorization')) {
+          alert(`【Google 雲端硬碟尚未授權】\n\n原因：Google 尚未授予此 Apps Script 存取 Google 雲端硬碟 (DriveApp) 的權限。\n\n解決步驟：\n1. 打開 Google 試算表的「擴充功能」>「Apps Script」\n2. 上方執行函式下拉選單選擇「testDriveAuthorization」並點選「執行」\n3. 依提示完成 Google 帳號授權（核對權限 -> 進階 -> 前往 -> 允許）\n4. 點選右上角「部署」>「管理部署作業」> 點鉛筆圖示「編輯」> 版本選擇「建立新版本」後儲存即可！\n\n（本次系統已自動改用本機圖片預覽）`);
+        } else {
+          alert(`上傳至雲端硬碟失敗（${errMsg}），系統將自動使用本機圖片預覽。`);
+        }
       }
     }
 
