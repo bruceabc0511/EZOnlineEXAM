@@ -119,7 +119,8 @@
               <li>每位考生（同一學號）於本場次<strong>限作答一次</strong>，交卷後不得重複應試。</li>
               <li>請填寫正確的<strong>電子郵件 (Email)</strong>，考試結束後系統將寄送個人成績單至您的信箱。</li>
               <li><strong>防作弊機制已啟用</strong>：一旦點擊「開始作答」，<strong>嚴禁切換分頁、縮小視窗、開啟其他程式或離開作答畫面</strong>。</li>
-              <li>第 <strong>1、2</strong> 次離開畫面將跳出嚴重警告並記錄；第 <strong>3</strong> 次離開畫面系統將<strong>立即強制終止測驗並自動交卷</strong>！</li>
+              <li>第 <strong>1、2</strong> 次離開畫面將跳出嚴重警告並記錄；第 <strong>3</strong> 次離開畫面系統將<strong>立即強制終止測驗並自動交卷</strong>！
+              </li>
               <li>作答時間結束時，系統將自動鎖定並提交您目前已填寫的答案。</li>
             </ul>
           </div>
@@ -346,7 +347,16 @@
                 </button>
               </div>
               <p class="text-muted text-sm">
-                請依範本格式填寫題目、選項與正確答案；試卷名稱、考試日期、作答時間請於右側手動輸入。系統會自動濾除空白題目並依有效題數自動平均配分（滿分 100 分）。
+                👉 請依範本格式填寫題目、選項與正確答案後再匯入。
+              </p>
+              <p class="text-muted text-sm">
+                👉 試卷名稱、考試日期、作答時間 請於右側手動輸入。
+              </p>
+              <p class="text-muted text-sm">
+                👉 系統會自動濾除空白題目並依有效題數自動配分（滿分 100 分）。
+              </p>
+              <p class="text-muted text-sm">
+                👉 <strong>題目如需附上圖片，請先匯入或手動輸入題目，再從【編輯】中插入圖片。</strong>
               </p>
 
               <div class="upload-dropzone" id="excelDropzone"
@@ -667,7 +677,8 @@
               <div class="form-group">
                 <label for="gasWebAppUrlInput">
                   Google Apps Script 網頁應用程式網址 (`.../exec`)
-                  <span id="gasLockStatusBadge" class="badge badge-teal hidden" style="margin-left: 6px;">🔒 已綁定鎖定</span>
+                  <span id="gasLockStatusBadge" class="badge badge-teal hidden" style="margin-left: 6px;">🔒
+                    已綁定鎖定</span>
                 </label>
                 <input type="text" id="gasWebAppUrlInput"
                   placeholder="https://script.google.com/macros/s/AKfycb.../exec">
@@ -772,30 +783,34 @@
           <label>題目圖片 (選填，支援上傳圖檔至雲端硬碟或直接輸入圖片網址)</label>
           <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
             <input type="text" id="newQImageUrl" placeholder="可貼上圖片網址，或點右側按鈕上傳圖檔" style="flex:1;">
-            <input type="file" id="questionImageFileInput" accept="image/*" class="hidden" onchange="handleQuestionImageSelected(event)">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('questionImageFileInput').click()" id="btnUploadQImage" style="white-space:nowrap;">
+            <input type="file" id="questionImageFileInput" accept="image/*" class="hidden"
+              onchange="handleQuestionImageSelected(event)">
+            <button type="button" class="btn btn-secondary btn-sm"
+              onclick="document.getElementById('questionImageFileInput').click()" id="btnUploadQImage"
+              style="white-space:nowrap;">
               📁 上傳圖片
             </button>
-            <button type="button" class="btn btn-danger-outline btn-sm hidden" id="btnClearQImage" onclick="clearQuestionImage()" style="white-space:nowrap;">
+            <button type="button" class="btn btn-danger-outline btn-sm hidden" id="btnClearQImage"
+              onclick="clearQuestionImage()" style="white-space:nowrap;">
               ✕ 移除
             </button>
           </div>
           <div id="qImageUploadStatus" class="text-sm text-muted hidden" style="margin-bottom:6px;"></div>
-          <div id="newQImagePreviewWrap" class="hidden" style="margin-top:6px; border:1px solid var(--border-light); border-radius:6px; padding:8px; text-align:center; background:#fafcfc;">
-            <img id="newQImagePreview" src="" alt="題目圖片預覽" style="max-height:160px; max-width:100%; object-fit:contain; border-radius:4px;">
+          <div id="newQImagePreviewWrap" class="hidden"
+            style="margin-top:6px; border:1px solid var(--border-light); border-radius:6px; padding:8px; text-align:center; background:#fafcfc;">
+            <img id="newQImagePreview" src="" alt="題目圖片預覽"
+              style="max-height:160px; max-width:100%; object-fit:contain; border-radius:4px;">
           </div>
         </div>
         <div class="form-group">
           <label>選項內容 (每行一個選項，例如 (A)xxx) <span class="required">*</span></label>
-          <textarea id="newQOptions" rows="4" required placeholder="(A)選項一&#10;(B)選項二&#10;(C)選項三&#10;(D)選項四"></textarea>
+          <textarea id="newQOptions" rows="4" required placeholder="(A)選項一&#10;(B)選項二&#10;(C)選項三&#10;(D)選項四"
+            oninput="syncAnswerSelectWithOptions()"></textarea>
         </div>
         <div class="form-group">
           <label>標準答案 <span class="required">*</span></label>
           <select id="newQAnswer" required>
-            <option value="A">A</option>
-            <option value="B">B</option>
-            <option value="C">C</option>
-            <option value="D">D</option>
+            <option value="" disabled selected>請先於上方輸入選項內容（每行一項）</option>
           </select>
         </div>
         <div class="modal-actions">

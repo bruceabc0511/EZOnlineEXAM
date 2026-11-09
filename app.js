@@ -1361,6 +1361,10 @@ function promptArchiveBeforeReplacingBank(newExamObj, successMsg) {
 }
 
 function deleteQuestion(qId) {
+  const targetQ = examData.questions.find(q => q.id === qId);
+  const qPreview = targetQ && targetQ.question ? `\n\n題目：${targetQ.question}` : '';
+  if (!confirm(`確定要刪除第 ${qId} 題嗎？${qPreview}`)) return;
+
   examData.questions = examData.questions.filter(q => q.id !== qId);
   // 重新編號
   examData.questions.forEach((q, i) => {
@@ -1398,6 +1402,39 @@ function clearAllQuestions() {
   showImportAlert('已清空所有題目與上方當前試卷資訊（目前題庫為 0 題，測驗已自動設為關閉狀態）。', 'success');
 }
 
+function syncAnswerSelectWithOptions(preferredAnswer) {
+  const optionsEl = document.getElementById('newQOptions');
+  const answerSelect = document.getElementById('newQAnswer');
+  if (!optionsEl || !answerSelect) return;
+
+  const currentVal = preferredAnswer !== undefined
+    ? String(preferredAnswer || '').toUpperCase()
+    : String(answerSelect.value || '').toUpperCase();
+
+  const parsedOptions = parseOptionsString(optionsEl.value);
+  answerSelect.innerHTML = '';
+
+  if (parsedOptions.length === 0) {
+    const placeholderOpt = document.createElement('option');
+    placeholderOpt.value = '';
+    placeholderOpt.disabled = true;
+    placeholderOpt.selected = true;
+    placeholderOpt.textContent = '請先於上方輸入選項內容（每行一項）';
+    answerSelect.appendChild(placeholderOpt);
+    return;
+  }
+
+  parsedOptions.forEach(opt => {
+    const optEl = document.createElement('option');
+    optEl.value = opt.key;
+    optEl.textContent = opt.key;
+    answerSelect.appendChild(optEl);
+  });
+
+  const hasCurrent = parsedOptions.some(o => o.key === currentVal);
+  answerSelect.value = hasCurrent ? currentVal : parsedOptions[0].key;
+}
+
 function openAddQuestionModal() {
   editingQuestionId = null;
   document.getElementById('addQuestionForm').reset();
@@ -1406,6 +1443,7 @@ function openAddQuestionModal() {
   if (titleEl) titleEl.textContent = '新增單選題';
   if (submitBtn) submitBtn.textContent = '新增題目';
   setQuestionModalImageState('');
+  syncAnswerSelectWithOptions('');
   document.getElementById('addQuestionModal').classList.remove('hidden');
 }
 
@@ -1424,7 +1462,7 @@ function openEditQuestionModal(qId) {
     ? targetQ.options.map(o => `(${o.key}) ${o.text}`).join('\n')
     : (targetQ.rawOptions || '');
   document.getElementById('newQOptions').value = formattedLines;
-  document.getElementById('newQAnswer').value = String(targetQ.answer || 'A').toUpperCase();
+  syncAnswerSelectWithOptions(String(targetQ.answer || 'A').toUpperCase());
 
   setQuestionModalImageState(targetQ.imageUrl || '');
   document.getElementById('addQuestionModal').classList.remove('hidden');
@@ -1730,19 +1768,24 @@ function parseOptionsString(rawStr) {
     .map(l => l.trim())
     .filter(Boolean);
 
-  const keys = ['A', 'B', 'C', 'D', 'E', 'F'];
   const result = [];
+  const usedKeys = new Set();
 
   lines.forEach((line, idx) => {
-    const match = line.match(/^[\(\[（]?([A-Fa-f])[\)\]）．.、\s]+(.*)$/);
+    const defaultKey = idx < 26 ? String.fromCharCode(65 + idx) : String(idx + 1);
+    const match = line.match(/^[\(\[（]?([A-Za-z])[\)\]）．.、]+\s*(.*)$/);
     if (match) {
+      const parsedKey = match[1].toUpperCase();
+      const finalKey = usedKeys.has(parsedKey) ? defaultKey : parsedKey;
+      usedKeys.add(finalKey);
       result.push({
-        key: match[1].toUpperCase(),
+        key: finalKey,
         text: match[2].trim()
       });
     } else {
+      usedKeys.add(defaultKey);
       result.push({
-        key: keys[idx] || String(idx + 1),
+        key: defaultKey,
         text: line
       });
     }
@@ -1772,11 +1815,12 @@ function downloadSampleExcel() {
     const existingQ = examData.questions[i - 1];
     if (existingQ) {
       const opts = existingQ.options || [];
+      const rowCount = Math.max(opts.length, 1);
       aoa.push([i, '題目', existingQ.question, '答案']);
-      aoa.push(['', '選項', opts[0] ? `(${opts[0].key}) ${opts[0].text}` : '', existingQ.answer]);
-      aoa.push(['', '', opts[1] ? `(${opts[1].key}) ${opts[1].text}` : '', '']);
-      aoa.push(['', '', opts[2] ? `(${opts[2].key}) ${opts[2].text}` : '', '']);
-      aoa.push(['', '', opts[3] ? `(${opts[3].key}) ${opts[3].text}` : '', '']);
+      for (let idx = 0; idx < rowCount; idx++) {
+        const optText = opts[idx] ? `(${opts[idx].key}) ${opts[idx].text}` : '';
+        aoa.push(['', idx === 0 ? '選項' : '', optText, idx === 0 ? existingQ.answer : '']);
+      }
     } else {
       aoa.push([i, '題目', '', '答案']);
       aoa.push(['', '選項', '', '']);
