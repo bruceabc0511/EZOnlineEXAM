@@ -2020,9 +2020,9 @@ function renderExaminerHistoryTab() {
       <td><span class="badge ${st.passRate >= 60 ? 'badge-teal' : 'badge-danger'}">${st.passRate}%</span></td>
       <td>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          <button type="button" class="btn btn-primary btn-sm" onclick="viewHistorySessionDetail('${hist.id}')">🔍 檢視明細與分析</button>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('${hist.id}')">📥 匯出 Excel</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="sendAllScoresEmail('${hist.id}')">📧 寄送成績信</button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="viewHistorySessionDetail('${hist.id}')">🔍 檢視本場次明細</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('${hist.id}')">📥 匯出報表</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="sendAllScoresEmail('${hist.id}')">📩 寄送成績單</button>
           <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteHistorySession('${hist.id}')">刪除</button>
         </div>
       </td>
