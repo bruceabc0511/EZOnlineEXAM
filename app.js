@@ -653,14 +653,14 @@ function renderExamControlBanner() {
   if (examData.isExamOpen) {
     banner.classList.add('is-open');
     badge.className = 'exam-status-indicator open';
-    badge.textContent = '🟢 測驗開放中';
+    badge.textContent = '測驗開放中';
     desc.textContent = `目前試卷【${examData.title || '未命名測驗'}】已開放作答。`;
     btnStart.classList.add('hidden');
     btnStop.classList.remove('hidden');
   } else {
     banner.classList.remove('is-open');
     badge.className = 'exam-status-indicator closed';
-    badge.textContent = '🔴 測驗已關閉';
+    badge.textContent = '測驗已關閉';
     desc.textContent = '目前試卷為關閉狀態，考生端將不會看到任何內容。';
     btnStart.classList.remove('hidden');
     btnStop.classList.add('hidden');
@@ -861,10 +861,11 @@ function renderQuizQuestions() {
       })
       .join('');
 
-    const imgHtml = q.imageUrl
+    const displayImgUrl = formatGoogleDriveImageUrl(q.imageUrl);
+    const imgHtml = displayImgUrl
       ? `
         <div class="question-image-wrap">
-          <img src="${escapeHtml(q.imageUrl)}" alt="第 ${displayNum} 題圖檔" class="question-image-thumb" onclick="openImageLightbox('${escapeHtml(q.imageUrl)}', '第 ${displayNum} 題附圖')">
+          <img src="${escapeHtml(displayImgUrl)}" alt="第 ${displayNum} 題圖檔" class="question-image-thumb" ${getImageOnErrorAttr(displayImgUrl)} onclick="openImageLightbox('${escapeHtml(displayImgUrl)}', '第 ${displayNum} 題附圖')">
           <div class="question-image-hint">🔍 點擊圖片可放大檢視</div>
         </div>
       `
@@ -1248,11 +1249,11 @@ function sha256Fallback(ascii) {
         + ((e & hash[5]) ^ ((~e) & hash[6]))
         + k[i]
         + (w[i] = (i < 16) ? w[i] : (
-            w[i - 16]
-            + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3))
-            + w[i - 7]
-            + (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))
-          ) | 0
+          w[i - 16]
+          + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3))
+          + w[i - 7]
+          + (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))
+        ) | 0
         );
       const temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22))
         + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
@@ -1459,8 +1460,9 @@ function renderExaminerQuestionTab() {
       .map(o => `<span class="badge badge-teal" style="margin-right:4px;">${o.key}</span>${escapeHtml(o.text)}`)
       .join('<br>');
 
-    const imgBadge = q.imageUrl
-      ? `<br><span class="table-img-badge" onclick="openImageLightbox('${escapeHtml(q.imageUrl)}', '第 ${idx + 1} 題圖檔')">🖼️ 查看圖片</span>`
+    const displayTableImg = formatGoogleDriveImageUrl(q.imageUrl);
+    const imgBadge = displayTableImg
+      ? `<br><span class="table-img-badge" onclick="openImageLightbox('${escapeHtml(displayTableImg)}', '第 ${idx + 1} 題圖檔')">🖼️ 查看圖片</span>`
       : '';
 
     tr.innerHTML = `
@@ -1631,27 +1633,105 @@ function closeAddQuestionModal() {
   document.getElementById('addQuestionModal').classList.add('hidden');
 }
 
-function setQuestionModalImageState(url) {
+/**
+ * 將各類 Google 雲端硬碟檔案連結格式自動轉換為可跨域直接在 <img> 標籤中載入的直連圖片網址
+ */
+function formatGoogleDriveImageUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  const url = rawUrl.trim();
+
+  // 若為 Data URL 或一般外鏈非 Google Drive 圖片，直接返回
+  if (url.startsWith('data:')) {
+    return url;
+  }
+
+  // 匹配 Google Drive File ID 的各種常見格式
+  const patterns = [
+    /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i,
+    /drive\.google\.com\/open\?[^#]*id=([a-zA-Z0-9_-]+)/i,
+    /drive\.google\.com\/uc\?[^#]*id=([a-zA-Z0-9_-]+)/i,
+    /drive\.google\.com\/thumbnail\?[^#]*id=([a-zA-Z0-9_-]+)/i,
+    /drive\.google\.com\/.*[?&]id=([a-zA-Z0-9_-]+)/i,
+    /googleusercontent\.com\/d\/([a-zA-Z0-9_-]+)/i
+  ];
+
+  for (const reg of patterns) {
+    const match = url.match(reg);
+    if (match && match[1]) {
+      const fileId = match[1];
+      // 優先使用 Google 官方 CDN 直連網址，支援跨域嵌入 <img>
+      return `https://lh3.googleusercontent.com/d/${fileId}`;
+    }
+  }
+
+  return url;
+}
+
+/**
+ * 取得圖片載入失敗時的自動 fallback 屬性 (若 lh3.googleusercontent.com 失敗則切換至 drive thumbnail)
+ */
+function getImageOnErrorAttr(url) {
+  if (!url) return '';
+  const fileIdMatch = String(url).match(/(?:d\/|[?&]id=)([a-zA-Z0-9_-]{20,})/);
+  if (!fileIdMatch) return '';
+  const fileId = fileIdMatch[1];
+  return `onerror="if(!this.dataset.fallback){this.dataset.fallback='1';this.src='https://drive.google.com/thumbnail?id=${fileId}&sz=w1600';}"`;
+}
+
+function setQuestionModalImageState(url, localPreviewUrl) {
+  const formattedUrl = formatGoogleDriveImageUrl(url);
   const urlInput = document.getElementById('newQImageUrl');
   const previewWrap = document.getElementById('newQImagePreviewWrap');
   const previewImg = document.getElementById('newQImagePreview');
   const btnClear = document.getElementById('btnClearQImage');
   const statusEl = document.getElementById('qImageUploadStatus');
 
-  if (urlInput) urlInput.value = url || '';
+  if (urlInput) urlInput.value = formattedUrl || '';
   if (statusEl) {
     statusEl.classList.add('hidden');
     statusEl.textContent = '';
   }
 
-  if (url) {
-    if (previewImg) previewImg.src = url;
+  const effectiveSrc = localPreviewUrl || formattedUrl;
+
+  if (effectiveSrc) {
+    if (previewImg) {
+      previewImg.removeAttribute('data-fallback');
+      previewImg.src = effectiveSrc;
+      const fileIdMatch = formattedUrl.match(/(?:d\/|[?&]id=)([a-zA-Z0-9_-]{20,})/);
+      if (fileIdMatch && !localPreviewUrl) {
+        const fileId = fileIdMatch[1];
+        previewImg.onerror = function () {
+          if (!this.dataset.fallback) {
+            this.dataset.fallback = '1';
+            this.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
+          }
+        };
+      } else {
+        previewImg.onerror = null;
+      }
+    }
     if (previewWrap) previewWrap.classList.remove('hidden');
     if (btnClear) btnClear.classList.remove('hidden');
   } else {
-    if (previewImg) previewImg.src = '';
+    if (previewImg) {
+      previewImg.src = '';
+      previewImg.onerror = null;
+    }
     if (previewWrap) previewWrap.classList.add('hidden');
     if (btnClear) btnClear.classList.add('hidden');
+  }
+}
+
+function handleImageUrlInput() {
+  const urlInput = document.getElementById('newQImageUrl');
+  if (!urlInput) return;
+  const rawUrl = urlInput.value.trim();
+  if (rawUrl) {
+    const formatted = formatGoogleDriveImageUrl(rawUrl);
+    setQuestionModalImageState(formatted);
+  } else {
+    setQuestionModalImageState('');
   }
 }
 
@@ -1694,7 +1774,8 @@ async function handleQuestionImageSelected(event) {
       if (btnUpload) btnUpload.disabled = false;
 
       if (res && res.status === 'success' && res.imageUrl) {
-        setQuestionModalImageState(res.imageUrl);
+        // 設定雲端直連網址並以本機 dataUrl 確保預覽立即順暢顯示
+        setQuestionModalImageState(res.imageUrl, dataUrl);
         if (statusEl) {
           statusEl.classList.remove('hidden');
           statusEl.style.color = '#15803d';
@@ -1728,7 +1809,8 @@ function handleSaveNewQuestion(event) {
   const qText = document.getElementById('newQText').value.trim();
   const rawOpts = document.getElementById('newQOptions').value.trim();
   const ans = document.getElementById('newQAnswer').value.trim().toUpperCase();
-  const imgUrl = (document.getElementById('newQImageUrl') ? document.getElementById('newQImageUrl').value.trim() : '');
+  const rawImgUrl = (document.getElementById('newQImageUrl') ? document.getElementById('newQImageUrl').value.trim() : '');
+  const imgUrl = formatGoogleDriveImageUrl(rawImgUrl);
 
   const parsedOptions = parseOptionsString(rawOpts);
   if (parsedOptions.length < 2) {
@@ -3044,9 +3126,10 @@ function openErrorRankingWindow(sessionId = 'CURRENT') {
       })
       .join('');
 
-    const itemImgHtml = item.imageUrl
+    const displayItemImg = formatGoogleDriveImageUrl(item.imageUrl);
+    const itemImgHtml = displayItemImg
       ? `<div style="margin:10px 0 14px 0; text-align:center;">
-           <img src="${escapeHtml(item.imageUrl)}" alt="第 ${item.index} 題圖檔" style="max-height:240px; max-width:100%; border-radius:6px; border:1px solid #cbd5e1; cursor:zoom-in;" onclick="window.open('${escapeHtml(item.imageUrl)}', '_blank')">
+           <img src="${escapeHtml(displayItemImg)}" alt="第 ${item.index} 題圖檔" ${getImageOnErrorAttr(displayItemImg)} style="max-height:240px; max-width:100%; border-radius:6px; border:1px solid #cbd5e1; cursor:zoom-in;" onclick="window.open('${escapeHtml(displayItemImg)}', '_blank')">
          </div>`
       : '';
 
@@ -3262,11 +3345,27 @@ function openErrorRankingWindow(sessionId = 'CURRENT') {
 // ==================== 題目圖片放大檢視燈箱 ====================
 function openImageLightbox(imgUrl, caption = '題目附圖') {
   if (!imgUrl) return;
+  const formattedUrl = formatGoogleDriveImageUrl(imgUrl);
   const modal = document.getElementById('imageLightboxModal');
   const imgEl = document.getElementById('lightboxImage');
   const capEl = document.getElementById('lightboxCaption');
 
-  if (imgEl) imgEl.src = imgUrl;
+  if (imgEl) {
+    imgEl.removeAttribute('data-fallback');
+    imgEl.src = formattedUrl;
+    const fileIdMatch = formattedUrl.match(/(?:d\/|[?&]id=)([a-zA-Z0-9_-]{20,})/);
+    if (fileIdMatch) {
+      const fileId = fileIdMatch[1];
+      imgEl.onerror = function () {
+        if (!this.dataset.fallback) {
+          this.dataset.fallback = '1';
+          this.src = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
+        }
+      };
+    } else {
+      imgEl.onerror = null;
+    }
+  }
   if (capEl) capEl.textContent = `${caption}（點擊背景或右上角 ✕ 關閉）`;
   if (modal) modal.classList.remove('hidden');
 }

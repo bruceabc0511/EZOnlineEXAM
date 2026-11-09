@@ -295,7 +295,7 @@
         <!-- 測驗開始 / 結束控制列 -->
         <div class="exam-control-banner card" id="examControlBanner">
           <div class="exam-control-info">
-            <span class="exam-status-indicator closed" id="examOpenStatusBadge">🔴 測驗已關閉</span>
+            <span class="exam-status-indicator closed" id="examOpenStatusBadge">測驗已關閉</span>
             <span class="exam-control-desc" id="examOpenStatusDesc">目前試卷為關閉狀態，考生連線至考生端將不會看到任何內容。</span>
           </div>
           <div class="action-btn-group">
@@ -782,7 +782,8 @@
         <div class="form-group">
           <label>題目圖片 (選填，支援上傳圖檔至雲端硬碟或直接輸入圖片網址)</label>
           <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
-            <input type="text" id="newQImageUrl" placeholder="可貼上圖片網址，或點右側按鈕上傳圖檔" style="flex:1;">
+            <input type="text" id="newQImageUrl" placeholder="可貼上圖片網址，或點右側按鈕上傳圖檔" style="flex:1;"
+              oninput="handleImageUrlInput()" onchange="handleImageUrlInput()">
             <input type="file" id="questionImageFileInput" accept="image/*" class="hidden"
               onchange="handleQuestionImageSelected(event)">
             <button type="button" class="btn btn-secondary btn-sm"

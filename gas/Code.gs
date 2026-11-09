@@ -289,12 +289,15 @@ function doPost(e) {
         }
 
         const fileId = file.getId();
-        const directUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
+        // 採用 Google 官方 CDN 直連網址 (lh3.googleusercontent.com) 與 thumbnail 備援，支援網頁 <img> 標籤直接顯示
+        const directUrl = `https://lh3.googleusercontent.com/d/${fileId}`;
+        const thumbUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
 
         return jsonResponse({
           status: 'success',
           fileId: fileId,
           imageUrl: directUrl,
+          thumbnailUrl: thumbUrl,
           message: '圖片已成功上傳至 Google 雲端硬碟！'
         });
       } catch (uploadErr) {
