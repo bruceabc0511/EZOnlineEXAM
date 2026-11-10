@@ -96,10 +96,15 @@ function doPost(e) {
 
     // 1-b. 考官儲存試卷庫 (多份試卷獨立保存於試卷庫資料工作表)
     if (action === 'saveExamLibrary') {
-      if (Array.isArray(payload.examLibrary)) {
-        state.examLibrary = payload.examLibrary;
-        const { librarySheet } = ensureSheetsInitialized();
+      const libraryData = Array.isArray(payload.examLibrary)
+        ? payload.examLibrary
+        : (payload.examLibrary ? [payload.examLibrary] : null);
+
+      if (libraryData) {
+        state.examLibrary = libraryData;
+        const { stateSheet, librarySheet } = ensureSheetsInitialized();
         syncExamLibrarySheet(librarySheet, state.examLibrary);
+        stateSheet.getRange('A5:B5').setValues([['UPDATED_AT', new Date().toISOString()]]);
       }
       return jsonResponse({
         status: 'success',
@@ -536,10 +541,18 @@ function loadExamLibraryFromSheet(librarySheet) {
     try {
       if (r[6]) questions = JSON.parse(r[6]);
     } catch (e) {}
+
+    let dateVal = '';
+    if (r[2] instanceof Date) {
+      dateVal = Utilities.formatDate(r[2], Session.getScriptTimeZone() || 'GMT+8', 'yyyy-MM-dd');
+    } else {
+      dateVal = String(r[2] || '').trim();
+    }
+
     library.push({
       id: String(r[0] || ''),
       title: String(r[1] || ''),
-      examDate: String(r[2] || ''),
+      examDate: dateVal,
       durationMinutes: r[3] !== '' ? Number(r[3]) : 60,
       questions: Array.isArray(questions) ? questions : [],
       updatedAt: String(r[5] || '')
@@ -553,17 +566,58 @@ function syncExamLibrarySheet(librarySheet, examLibrary) {
   const headers = ['試卷ID', '試卷名稱', '考試日期', '測驗時間(分)', '題目數', '建立/更新時間', '完整考題資料JSON'];
   const rows = [headers];
   (examLibrary || []).forEach(exam => {
+    let questionsJson = '[]';
+    try {
+      // 若考題內含過長之本地 Base64 預覽字串，先進行精簡以防超過試算表單一儲存格 50,000 字元限制
+      const sanitizedQuestions = (exam.questions || []).map(q => {
+        if (q.imageUrl && String(q.imageUrl).startsWith('data:')) {
+          const clone = Object.assign({}, q);
+          delete clone.imageUrl;
+          return clone;
+        }
+        return q;
+      });
+      questionsJson = JSON.stringify(sanitizedQuestions);
+      if (questionsJson.length > 49000) {
+        questionsJson = questionsJson.substring(0, 49000);
+      }
+    } catch (e) {
+      questionsJson = '[]';
+    }
+
+    let examDateStr = '';
+    if (exam.examDate instanceof Date) {
+      examDateStr = Utilities.formatDate(exam.examDate, Session.getScriptTimeZone() || 'GMT+8', 'yyyy-MM-dd');
+    } else {
+      examDateStr = String(exam.examDate || '');
+    }
+
     rows.push([
       exam.id || '',
       exam.title || '未命名試卷',
-      exam.examDate || '',
+      examDateStr,
       exam.durationMinutes !== '' ? exam.durationMinutes : 60,
       Array.isArray(exam.questions) ? exam.questions.length : 0,
       exam.updatedAt || new Date().toISOString(),
-      JSON.stringify(exam.questions || [])
+      questionsJson
     ]);
   });
+
+  // 自動拓展工作表長寬以避免超出維度錯誤
+  if (librarySheet.getMaxRows() < rows.length) {
+    librarySheet.insertRowsAfter(librarySheet.getMaxRows(), rows.length - librarySheet.getMaxRows());
+  }
+  if (librarySheet.getMaxColumns() < headers.length) {
+    librarySheet.insertColumnsAfter(librarySheet.getMaxColumns(), headers.length - librarySheet.getMaxColumns());
+  }
+
   librarySheet.getRange(1, 1, rows.length, headers.length).setValues(rows);
+
+  // 格式化標題列背景色與防止長 JSON 折行撐高儲存格
+  try {
+    librarySheet.getRange(1, 1, 1, headers.length).setBackground('#f1f5f9').setFontWeight('bold');
+    librarySheet.getRange(1, 7, rows.length, 1).setWrap(false);
+  } catch (fmtErr) {}
 }
 
 function loadCloudState() {

@@ -46,6 +46,7 @@ let isExaminerAuthenticated = false;
 let currentViewingHistoryId = null;
 let cloudPollTimer = null;
 let lastExamDataSaveAt = 0;
+let lastExamLibrarySaveAt = 0;
 let isGasUrlUnlockedBySecret = false;
 let gasSecretClickCount = 0;
 let gasSecretClickResetTimer = null;
@@ -346,7 +347,9 @@ async function syncStateFromCloud(silent = true) {
         historySessions = json.historySessions;
         localStorage.setItem(STORAGE_KEYS.HISTORY_SESSIONS, JSON.stringify(historySessions));
       }
-      if (Array.isArray(json.examLibrary) && json.examLibrary.length > 0) {
+      // 當考官已登入後台或剛異動過試卷庫時，背景靜默輪詢 (silent=true) 不覆蓋本機試卷庫，避免新匯入或手動編輯內容被雲端舊狀態覆蓋
+      const shouldSyncExamLibrary = !silent || (!isExaminerAuthenticated && (Date.now() - lastExamLibrarySaveAt > 15000));
+      if (shouldSyncExamLibrary && Array.isArray(json.examLibrary) && json.examLibrary.length > 0) {
         examLibrary = json.examLibrary;
         localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
         if (!currentSelectedExamId || !examLibrary.some(e => e.id === currentSelectedExamId)) {
@@ -465,7 +468,7 @@ async function pushAllLocalDataToCloud() {
     return;
   }
   showToast('⬆️ 正在將本機試卷庫、當前試卷、成績與歷史紀錄完整推送至雲端...');
-  await postToCloud({ action: 'saveExamData', examData });
+  await postToCloud({ action: 'saveExamData', examData, examLibrary });
   await postToCloud({ action: 'saveExamLibrary', examLibrary });
   await postToCloud({ action: 'syncSubmissions', examData, submissions });
   const res = await postToCloud({ action: 'syncHistory', historySessions });
@@ -596,11 +599,23 @@ function loadExamLibrary() {
 }
 
 function saveExamLibraryToStorage(syncCloud = true) {
+  lastExamLibrarySaveAt = Date.now();
   localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
   if (syncCloud && getActiveGasUrl()) {
     postToCloud({
       action: 'saveExamLibrary',
       examLibrary: examLibrary
+    }).then(res => {
+      if (res && res.status === 'error' && String(res.message).includes('saveExamLibrary')) {
+        console.warn('雲端 Apps Script 尚未部署最新程式碼 (不支援 saveExamLibrary)，嘗試以 saveExamData 備援同步');
+        postToCloud({
+          action: 'saveExamData',
+          examData: examData,
+          examLibrary: examLibrary
+        });
+      }
+    }).catch(err => {
+      console.error('儲存試卷庫至雲端失敗:', err);
     });
   }
 }
