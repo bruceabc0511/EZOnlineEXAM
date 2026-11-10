@@ -30,7 +30,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.16)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.18)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -64,7 +64,8 @@
           <span id="liveStudentDisplay">王小明(112001)</span>
         </div>
         <div class="live-warning-status" id="liveWarningBadge" title="離開畫面達3次將強制交卷">
-          🛡️<span class="live-warn-label">防作弊監控中</span><span class="live-warn-paren">(</span><span id="liveWarnCount">0</span>/3<span class="live-warn-paren">)</span>
+          🚨<span class="live-warn-label">防作弊監控中</span><span class="live-warn-paren">(</span><span
+            id="liveWarnCount">0</span>/3<span class="live-warn-paren">)</span>
         </div>
         <div class="live-timer" id="liveTimerBox">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -382,7 +383,8 @@
             <div class="card">
               <div class="section-title-row">
                 <h3>📥 匯入考題 Excel / CSV </h3>
-                <a href="考題匯入範本.xlsx" download="考題匯入範本.xlsx" class="btn btn-secondary btn-sm" style="text-decoration: none;" onclick="downloadSampleExcel(event)">
+                <a href="考題匯入範本.xlsx" download="考題匯入範本.xlsx" class="btn btn-secondary btn-sm"
+                  style="text-decoration: none;" onclick="downloadSampleExcel(event)">
                   ⬇️ 下載 Excel 匯入範本 (.xlsx)
                 </a>
               </div>
