@@ -1594,6 +1594,14 @@ function handleApplyAsActiveExam() {
     return;
   }
 
+  // 當有測驗正在開放中，如欲套用的試卷與開放中的試卷不相同時，跳出提醒並不讓使用者覆蓋
+  if (examData.isExamOpen) {
+    alert(
+      `⚠️ 目前正在測驗中！\n\n試卷【${examData.title || '未命名測驗'}】目前正處於「測驗開放中」狀態。\n若將其他試卷設為當前會影響目前進行中的測驗與線上考生作答！\n\n如需切換為此試卷，請先於上方控制列點擊「結束作答」關閉測驗後再進行更換。`
+    );
+    return;
+  }
+
   if (submissions.length > 0) {
     const shouldArchive = confirm(
       `切換測驗試卷前提醒：\n目前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
