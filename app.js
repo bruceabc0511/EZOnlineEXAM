@@ -2420,10 +2420,12 @@ function parseOptionsString(rawStr) {
 }
 
 function showImportAlert(msg, type) {
-  const box = document.getElementById('importAlertBox');
-  box.textContent = msg;
-  box.className = `alert alert-${type === 'danger' ? 'danger' : 'success'}`;
-  box.classList.remove('hidden');
+  const boxes = document.querySelectorAll('#importAlertBox');
+  boxes.forEach(box => {
+    box.textContent = msg;
+    box.className = `alert alert-${type === 'danger' ? 'danger' : 'success'}`;
+    box.classList.remove('hidden');
+  });
 }
 
 function downloadSampleExcel() {

@@ -330,7 +330,7 @@
             </button>
           </div>
           <div class="action-btn-group">
-            <button class="btn btn-secondary btn-sm" onclick="syncStateFromCloud(false)">🔄 同步雲端</button>
+            <button class="btn btn-secondary btn-sm" onclick="syncStateFromCloud(false)">🔄 同步雲端資料庫</button>
             <button class="btn btn-outline btn-sm" onclick="logoutExaminer()">🔒 退出考官端</button>
           </div>
         </div>
@@ -406,7 +406,7 @@
                   <line x1="12" y1="3" x2="12" y2="15"></line>
                 </svg>
                 <p class="dropzone-main-text">點擊選擇檔案，或將 Excel (.xlsx / .csv) 拖曳至此</p>
-                <span class="dropzone-sub-text">匯入後將即時解析題目並同步更新至雲端試卷</span>
+                <span class="dropzone-sub-text">匯入後將即時解析題目並同步更新至雲端試卷庫</span>
               </div>
 
               <div id="importAlertBox" class="alert hidden" style="margin-top: 12px;"></div>
@@ -437,9 +437,10 @@
                   <div>總分設定：<strong>100</strong> 分</div>
                   <div>每題自動配分：<strong id="metaPointsPerQ">0</strong> 分</div>
                 </div>
-                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 12px;">💾 儲存試題設定 &
-                  同步至試題資料庫</button>
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 12px;">💾 儲存 &
+                  同步至試卷資料庫</button>
               </form>
+              <div id="importAlertBox" class="alert hidden" style="margin-top: 12px;"></div>
             </div>
           </div>
 
@@ -730,7 +731,7 @@
                   🔌 測試雲端資料庫連線
                 </button>
                 <button type="button" class="btn btn-outline" onclick="pushAllLocalDataToCloud()">
-                  ⬆️ 將本機題庫與紀錄上傳至雲端資料庫
+                  ⬆️ 將本地端資料上傳至雲端資料庫
                 </button>
               </div>
             </div>
