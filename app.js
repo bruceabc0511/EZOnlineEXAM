@@ -23,10 +23,10 @@ const STORAGE_KEYS = {
 
 // 考官端 PIN 碼與管理員金鑰安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊)
 const EXAMINER_PIN_SALT = 'HD_EXAM_SECURE_SALT_2026';
-const DEFAULT_EXAMINER_PIN_HASH = '391f59f4ca8480648b504098e96bffa16f970d261a5cacea40fe5e7789c3f961'; // 預設 PIN: 9999
+const DEFAULT_EXAMINER_PIN_HASH = '391f59f4ca8480648b504098e96bffa16f970d261a5cacea40fe5e7789c3f961';
 
 const ADMIN_KEY_SALT = 'HD_EXAM_ADMIN_SALT_2026';
-const ADMIN_KEY_HASH = '4007531f25ed2a163a091d340f3fcb5d7bbabb98c22c65074d60152eec2c9b6a'; // 管理員金鑰驗證雜湊 (Chin7381236)
+const ADMIN_KEY_HASH = '4007531f25ed2a163a091d340f3fcb5d7bbabb98c22c65074d60152eec2c9b6a';
 
 // 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
@@ -35,6 +35,7 @@ const DEFAULT_EXAM_DATA = {
   durationMinutes: 60,
   examDate: '',
   isExamOpen: false,
+  openedAt: null,
   questions: []
 };
 
@@ -49,6 +50,7 @@ let historySessions = loadHistorySessions();
 let isExaminerAuthenticated = false;
 let currentViewingHistoryId = null;
 let cloudPollTimer = null;
+let examinerLiveTimerInterval = null;
 let lastExamDataSaveAt = 0;
 let lastExamLibrarySaveAt = 0;
 let isGasUrlUnlockedBySecret = false;
@@ -324,7 +326,7 @@ async function syncStateFromCloud(silent = true) {
   }
 
   if (!silent) {
-    showToast('🔄 正在從雲端資料庫同步最新試卷與考生成績...');
+    showToast('🔄 正在從雲端資料庫同步最新試卷資訊...');
   }
 
   try {
@@ -340,6 +342,7 @@ async function syncStateFromCloud(silent = true) {
           durationMinutes: json.examData.durationMinutes === '' ? '' : (Number(json.examData.durationMinutes) || 60),
           examDate: normalizeDateForInput(json.examData.examDate ?? ''),
           isExamOpen: Boolean(json.examData.isExamOpen),
+          openedAt: json.examData.openedAt ? Number(json.examData.openedAt) : (json.examData.isExamOpen ? (examData.openedAt || Date.now()) : null),
           questions: json.examData.questions
         };
         localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
@@ -466,7 +469,7 @@ async function testGasConnection() {
       updateCloudStatusUI();
 
       if (json.hasExamLibrarySupport) {
-        showToast('✅ 連線成功！試算表雲端資料庫（支援獨立試卷庫工作表）運作正常！');
+        showToast('✅ 連線成功！雲端資料庫運作正常！');
       } else {
         alert(
           '✅ 連線成功！雲端資料庫運作正常。\n\n💡 系統偵測到試算表 Apps Script 目前處於舊版部署（已自動啟用狀態庫雙軌同步，試卷庫跨裝置切換不受影響）。\n若您希望在 Google 試算表中看到獨立的【試卷庫資料】工作表，請於 Apps Script「管理部署作業」編輯時選擇「建立新版本」重新部署。'
@@ -492,7 +495,7 @@ async function pushAllLocalDataToCloud() {
   await postToCloud({ action: 'syncSubmissions', examData, submissions });
   const res = await postToCloud({ action: 'syncHistory', historySessions });
   if (res && res.status === 'success') {
-    showToast('✅ 已將本機所有試卷庫、當前試卷、成績與歷史紀錄同步至 Google 試算表！');
+    showToast('✅ 已將本機所有試卷庫、當前試卷、成績與歷史紀錄同步至雲端資料庫！');
   } else {
     showToast('⚠️ 推送完成，若部分資料未更新請檢查網路連線');
   }
@@ -561,6 +564,7 @@ function loadExamData() {
           durationMinutes: parsed.durationMinutes === '' ? '' : (Number(parsed.durationMinutes) || 60),
           examDate: normalizeDateForInput(parsed.examDate ?? ''),
           isExamOpen: Boolean(parsed.isExamOpen),
+          openedAt: parsed.openedAt ? Number(parsed.openedAt) : (parsed.isExamOpen ? Date.now() : null),
           questions: parsed.questions
         };
       }
@@ -776,6 +780,7 @@ function renderExamControlBanner() {
     desc.textContent = `目前試卷【${examData.title || '未命名測驗'}】已開放作答。`;
     btnStart.classList.add('hidden');
     btnStop.classList.remove('hidden');
+    startExaminerLiveTimer();
   } else {
     banner.classList.remove('is-open');
     badge.className = 'exam-status-indicator closed';
@@ -783,6 +788,89 @@ function renderExamControlBanner() {
     desc.textContent = '目前試卷為關閉狀態，考生端將不會看到任何內容。';
     btnStart.classList.remove('hidden');
     btnStop.classList.add('hidden');
+    stopExaminerLiveTimer();
+  }
+}
+
+// 考官端即時正數計時器 (開放作答即開始計時，距結束前5分鐘紅底提醒，超時不停止繼續計時，結束作答才歸零隱藏)
+function startExaminerLiveTimer() {
+  if (!examData.isExamOpen) {
+    stopExaminerLiveTimer();
+    return;
+  }
+  if (!examData.openedAt) {
+    examData.openedAt = Date.now();
+  }
+  updateExaminerLiveTimerDisplay();
+  if (!examinerLiveTimerInterval) {
+    examinerLiveTimerInterval = setInterval(updateExaminerLiveTimerDisplay, 1000);
+  }
+}
+
+function stopExaminerLiveTimer() {
+  if (examinerLiveTimerInterval) {
+    clearInterval(examinerLiveTimerInterval);
+    examinerLiveTimerInterval = null;
+  }
+  const timerEl = document.getElementById('examinerLiveTimer');
+  const displayEl = document.getElementById('examinerTimerDisplay');
+  const overdueTag = document.getElementById('examinerTimerOverdueBadge');
+  if (timerEl) {
+    timerEl.classList.add('hidden');
+    timerEl.classList.remove('timer-warning');
+  }
+  if (displayEl) {
+    displayEl.textContent = '00:00';
+  }
+  if (overdueTag) {
+    overdueTag.classList.add('hidden');
+  }
+}
+
+function updateExaminerLiveTimerDisplay() {
+  const timerEl = document.getElementById('examinerLiveTimer');
+  const displayEl = document.getElementById('examinerTimerDisplay');
+  const overdueTag = document.getElementById('examinerTimerOverdueBadge');
+  if (!timerEl || !displayEl) return;
+
+  if (!examData.isExamOpen || !examData.openedAt) {
+    stopExaminerLiveTimer();
+    return;
+  }
+
+  timerEl.classList.remove('hidden');
+
+  const now = Date.now();
+  const elapsedSec = Math.max(0, Math.floor((now - Number(examData.openedAt)) / 1000));
+  const hrs = Math.floor(elapsedSec / 3600);
+  const mins = Math.floor((elapsedSec % 3600) / 60);
+  const secs = elapsedSec % 60;
+
+  const formatted = hrs > 0
+    ? `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+    : `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+  displayEl.textContent = formatted;
+
+  // 計算警示門檻 (設定作答時間前 5 分鐘)
+  const durationMins = Number(examData.durationMinutes) || 60;
+  const targetSec = durationMins * 60;
+  const warningSec = Math.max(0, targetSec - 5 * 60);
+
+  // 快到達作答時間前 5 分鐘改為紅色底色提醒；超時依然不停止計時 (紅底繼續跑)
+  if (elapsedSec >= warningSec) {
+    timerEl.classList.add('timer-warning');
+  } else {
+    timerEl.classList.remove('timer-warning');
+  }
+
+  // 超過設定作答時間時顯示「已逾時」標記
+  if (overdueTag) {
+    if (elapsedSec >= targetSec) {
+      overdueTag.classList.remove('hidden');
+    } else {
+      overdueTag.classList.add('hidden');
+    }
   }
 }
 
@@ -791,10 +879,11 @@ function setExamOpenStatus(isOpen) {
     const currentExam = getCurrentSelectedExam();
     const targetExam = currentExam || examData;
     if (!targetExam || !targetExam.questions || targetExam.questions.length === 0) {
-      alert('目前試卷中沒有任何題目（0 題），請先匯入考題範本或手動新增題目後再開始測驗！');
+      alert('目前試卷中沒有任何題目（0 題），請先匯入考題或手動新增題目後再開始測驗！');
       return;
     }
 
+    const openNow = Date.now();
     // 若當前選中的試卷與目前活動的 examData 不同，確認套用選中的試卷
     if (currentExam && examData.id !== currentExam.id) {
       const confirmSwitch = confirm(`確定要將目前選中的試卷【${currentExam.title}】（共 ${currentExam.questions.length} 題）設為本次測驗試卷並開放作答嗎？`);
@@ -805,17 +894,21 @@ function setExamOpenStatus(isOpen) {
         examDate: currentExam.examDate,
         durationMinutes: currentExam.durationMinutes,
         isExamOpen: true,
+        openedAt: openNow,
         questions: JSON.parse(JSON.stringify(currentExam.questions || []))
       };
     } else {
       examData.isExamOpen = true;
+      examData.openedAt = openNow;
     }
 
     saveExamDataToStorage(true);
     refreshExaminerAllViews();
-    showToast(`🟢 已開始測驗！試卷【${examData.title || '未命名測驗'}】現已對考生端開放作答。`);
+    showToast(`🟢 已開始測驗！試卷【${examData.title || '未命名測驗'}】現已開放作答。`);
   } else {
     examData.isExamOpen = false;
+    examData.openedAt = null;
+    stopExaminerLiveTimer();
     saveExamDataToStorage(true);
     refreshExaminerAllViews();
     showToast('🔴 已結束測驗並關閉試卷！考生端目前已隱藏所有內容。');
@@ -1166,7 +1259,7 @@ function handleAntiCheatViolation(reason) {
     const titleEl = document.getElementById('antiCheatModalTitle');
     const ruleEl = document.getElementById('antiCheatModalRuleText');
     if (titleEl) {
-      titleEl.textContent = `防作弊系統嚴重警告 (第 ${activeSession.warningCount} / 3 次)`;
+      titleEl.textContent = `防作弊系統警告 (第 ${activeSession.warningCount} / 3 次)`;
     }
     if (ruleEl) {
       ruleEl.innerHTML = `請注意：這是您的<strong>第 ${activeSession.warningCount} 次警告</strong>。<br>若離開作答畫面累計達 <strong>3 次</strong>，系統將<strong>立即強制終止您的測驗並自動交卷</strong>！`;
@@ -1498,7 +1591,7 @@ async function handlePinLogin(event) {
     pinFailedAttempts++;
     if (pinFailedAttempts >= 5) {
       startPinLockout(30);
-      errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，為防範暴力破解，系統已暫時鎖定 30 秒！';
+      errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，系統已暫時鎖定 30 秒！';
     } else {
       errBox.textContent = `❌ PIN 碼錯誤，請重新確認！（剩餘 ${5 - pinFailedAttempts} 次嘗試機會）`;
     }
@@ -1583,7 +1676,7 @@ async function handleUpdateExaminerPin(event) {
   // 1. 驗證管理員金鑰 (採用 Salt + SHA-256 雜湊對比)
   const inputAdminHash = await hashAdminKey(adminKey);
   if (inputAdminHash !== ADMIN_KEY_HASH) {
-    showPinAlert('❌ 管理員金鑰驗證失敗！金鑰不正確，無法變更考官 PIN 碼。', 'danger');
+    showPinAlert('❌ 管理員金鑰驗證失敗！無法變更考官 PIN 碼。', 'danger');
     if (adminKeyEl) adminKeyEl.select();
     return;
   }
@@ -1641,7 +1734,7 @@ async function handleResetExaminerPin() {
   localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
   const alertBox = document.getElementById('updatePinAlertBox');
   if (alertBox) {
-    alertBox.textContent = '🔄 考官 PIN 碼已成功恢復為系統初始預設值 (預設 PIN: 9999)！';
+    alertBox.textContent = '🔄 考官 PIN 碼已成功恢復為系統初始預設值 (9999)！';
     alertBox.className = 'alert alert-info';
     alertBox.classList.remove('hidden');
   }
@@ -1838,7 +1931,7 @@ function setupExamMetaAutoSync() {
     const libSelect = document.getElementById('examLibrarySelect');
     if (libSelect && libSelect.selectedOptions && libSelect.selectedOptions[0]) {
       const isActive = examData && examData.id === currentExam.id;
-      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢測驗進行中]' : ' [📌當前試卷]') : '';
+      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢測驗進行中]' : ' [📍當前試卷]') : '';
       libSelect.selectedOptions[0].textContent = `${currentExam.title || '未命名試卷'} (${(currentExam.questions || []).length} 題)${statusMark}`;
     }
 
@@ -1870,7 +1963,7 @@ function renderExaminerQuestionTab() {
       const opt = document.createElement('option');
       opt.value = exam.id;
       const isActive = examData && examData.id === exam.id;
-      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢測驗進行中]' : ' [📌當前試卷]') : '';
+      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢測驗進行中]' : ' [📍當前試卷]') : '';
       opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${statusMark}`;
       libSelect.appendChild(opt);
     });

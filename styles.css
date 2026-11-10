@@ -995,6 +995,71 @@ input:disabled {
   color: #14532d;
 }
 
+/* 考官後台測驗開放即時正數計時器 */
+.examiner-live-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  color: #15803d;
+  border: 1.5px solid #86efac;
+  padding: 5px 14px;
+  border-radius: var(--radius-md);
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  white-space: nowrap;
+  transition: all 0.3s ease;
+}
+
+.examiner-live-timer svg {
+  flex-shrink: 0;
+  stroke: currentColor;
+}
+
+.examiner-live-timer .timer-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: inherit;
+  opacity: 0.9;
+}
+
+/* 快到達作答時間前 5 分鐘及超過時：紅色底色提醒，時間繼續跑 */
+.examiner-live-timer.timer-warning {
+  background: #e11d48;
+  color: #ffffff;
+  border-color: #fda4af;
+  box-shadow: 0 3px 14px rgba(225, 29, 72, 0.38);
+  animation: examinerTimerPulse 1.5s infinite;
+}
+
+.examiner-live-timer.timer-warning .timer-title {
+  color: #ffffff;
+}
+
+.timer-overdue-tag {
+  background: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 99px;
+  margin-left: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.5px;
+}
+
+@keyframes examinerTimerPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+    box-shadow: 0 4px 18px rgba(225, 29, 72, 0.55);
+  }
+}
+
 .exam-control-banner .action-btn-group .btn {
   padding: 10px 20px;
   font-size: 0.95rem;
@@ -1638,6 +1703,11 @@ body.examiner-mode .btn-primary:hover {
 
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .examiner-live-timer {
+    padding: 4px 10px;
+    font-size: 0.92rem;
   }
 
   /* ===== 手機版作答模式：精簡頂部狀態列 ===== */

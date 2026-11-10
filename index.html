@@ -298,6 +298,15 @@
           <div class="exam-control-info">
             <span class="exam-status-indicator closed" id="examOpenStatusBadge">測驗已關閉</span>
             <span class="exam-control-desc" id="examOpenStatusDesc">目前試卷為關閉狀態，考生連線至考生端將不會看到任何內容。</span>
+            <div class="examiner-live-timer hidden" id="examinerLiveTimer" title="試卷開放作答累計時間">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              <span class="timer-title">已開放：</span>
+              <span id="examinerTimerDisplay">00:00</span>
+              <span id="examinerTimerOverdueBadge" class="timer-overdue-tag hidden">已逾時</span>
+            </div>
           </div>
           <div class="action-btn-group">
             <button type="button" class="btn btn-success-solid btn-sm" id="btnStartExamSession"
