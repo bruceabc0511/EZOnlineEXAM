@@ -22,7 +22,7 @@ const STORAGE_KEYS = {
 
 // 考官端 PIN 碼安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊；日後如需變更 PIN 碼請由 Antigravity 指令更新)
 const EXAMINER_PIN_SALT = 'HD_EXAM_SECURE_SALT_2026';
-const EXAMINER_PIN_HASH = 'f77548413d6d3ced941815c06f4499b328e47f9893e15b6c2d4d3c8838efa166';
+const EXAMINER_PIN_HASH = 'f019306584afed3d66239ede39a4ff22f3157215af1df5a891e79c725620ade4';
 
 // 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
