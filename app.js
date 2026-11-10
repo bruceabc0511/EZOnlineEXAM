@@ -331,6 +331,7 @@ async function syncStateFromCloud(silent = true) {
       const shouldSyncExamData = !silent || (!isExaminerAuthenticated && (Date.now() - lastExamDataSaveAt > 15000));
       if (shouldSyncExamData && json.examData && Array.isArray(json.examData.questions)) {
         examData = {
+          id: json.examData.id || 'exam_default',
           title: json.examData.title ?? '',
           durationMinutes: json.examData.durationMinutes === '' ? '' : (Number(json.examData.durationMinutes) || 60),
           examDate: normalizeDateForInput(json.examData.examDate ?? ''),
@@ -351,8 +352,8 @@ async function syncStateFromCloud(silent = true) {
       const cloudLibrary = (Array.isArray(json.examLibrary) && json.examLibrary.length > 0)
         ? json.examLibrary
         : (json.examData && Array.isArray(json.examData.examLibrary) && json.examData.examLibrary.length > 0
-            ? json.examData.examLibrary
-            : null);
+          ? json.examData.examLibrary
+          : null);
 
       // 當考官已登入後台或剛異動過試卷庫時，背景靜默輪詢 (silent=true) 不覆蓋本機試卷庫，避免新匯入或手動編輯內容被雲端舊狀態覆蓋
       const shouldSyncExamLibrary = !silent || (!isExaminerAuthenticated && (Date.now() - lastExamLibrarySaveAt > 15000));
@@ -569,8 +570,9 @@ function loadExamData() {
 
 function saveExamDataToStorage(syncCloud = true) {
   lastExamDataSaveAt = Date.now();
-  if (examData && typeof examLibrary !== 'undefined') {
-    examData.examLibrary = examLibrary;
+  // 保持 examData 乾淨，不將試卷庫附加於當前測驗設定中
+  if (examData && examData.examLibrary) {
+    delete examData.examLibrary;
   }
   localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
   renderStudentLoginMeta();
@@ -596,11 +598,6 @@ function loadExamLibrary() {
         return parsed;
       }
     }
-    // 降級嘗試從 examData.examLibrary 讀取
-    if (typeof examData !== 'undefined' && examData && Array.isArray(examData.examLibrary) && examData.examLibrary.length > 0) {
-      localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examData.examLibrary));
-      return examData.examLibrary;
-    }
   } catch (e) {
     console.error('載入試卷庫失敗:', e);
   }
@@ -625,25 +622,20 @@ function saveExamLibraryToStorage(syncCloud = true) {
   lastExamLibrarySaveAt = Date.now();
   localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
 
-  // 同步將試卷庫附加於 examData 中，確保在任何舊版 GAS 部署環境亦能 100% 透過系統狀態庫完成跨裝置同步
-  if (examData) {
-    examData.examLibrary = examLibrary;
+  // 確保 examData 保持純淨，不存放試卷庫
+  if (examData && examData.examLibrary) {
+    delete examData.examLibrary;
     localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
   }
 
   if (syncCloud && getActiveGasUrl()) {
-    // 雙軌同步：先呼叫 saveExamData（保證跨裝置與跨分頁同步），再呼叫 saveExamLibrary（專屬試卷庫資料工作表）
-    postToCloud({
-      action: 'saveExamData',
-      examData: examData,
-      examLibrary: examLibrary
-    });
+    // 試卷庫資料專屬寫入雲端「試卷庫資料」工作表
     postToCloud({
       action: 'saveExamLibrary',
       examLibrary: examLibrary
     }).then(res => {
-      if (res && res.status === 'error' && String(res.message).includes('saveExamLibrary')) {
-        console.warn('雲端 Apps Script 尚未部署最新 Code.gs (不支援 saveExamLibrary)，已透過 saveExamData 完成雙軌同步備援');
+      if (res && res.status === 'success') {
+        console.log('試卷庫已成功同步至「試卷庫資料」工作表');
       }
     }).catch(err => {
       console.error('儲存試卷庫專屬工作表失敗:', err);
@@ -1816,7 +1808,7 @@ function saveExamMetadata(event) {
 
   saveExamLibraryToStorage(true);
   refreshExaminerAllViews();
-  showImportAlert(`已成功儲存試卷【${currentExam.title}】的設定並同步至雲端！`, 'success');
+  showImportAlert(`已成功儲存試卷【${currentExam.title}】的設定並同步至試題資料庫！`, 'success');
 }
 
 function deleteQuestion(qId) {

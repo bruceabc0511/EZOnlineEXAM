@@ -645,18 +645,27 @@ function loadCloudState() {
   } catch (e) {}
 
   let examLibrary = loadExamLibraryFromSheet(librarySheet);
-  // 若試卷庫工作表尚無試卷資料但 EXAM_DATA 有資料，自動無痛遷移為第一筆試卷
+  // 若試卷庫工作表尚無試卷資料但 EXAM_DATA 有資料，自動無痛遷移為試卷庫資料
   if (examLibrary.length === 0 && examData && Array.isArray(examData.questions)) {
-    const initialExam = {
-      id: examData.id || ('exam_' + Date.now()),
-      title: examData.title || '預設試卷',
-      examDate: examData.examDate || '',
-      durationMinutes: examData.durationMinutes !== '' ? examData.durationMinutes : 60,
-      questions: examData.questions,
-      updatedAt: new Date().toISOString()
-    };
-    examLibrary = [initialExam];
+    if (Array.isArray(examData.examLibrary) && examData.examLibrary.length > 0) {
+      examLibrary = examData.examLibrary;
+    } else {
+      const initialExam = {
+        id: examData.id || ('exam_' + Date.now()),
+        title: examData.title || '預設試卷',
+        examDate: examData.examDate || '',
+        durationMinutes: examData.durationMinutes !== '' ? examData.durationMinutes : 60,
+        questions: examData.questions,
+        updatedAt: new Date().toISOString()
+      };
+      examLibrary = [initialExam];
+    }
     syncExamLibrarySheet(librarySheet, examLibrary);
+  }
+
+  // 確保 EXAM_DATA 乾淨單純，不冗餘堆疊試卷庫資料
+  if (examData && examData.examLibrary) {
+    delete examData.examLibrary;
   }
 
   return {
@@ -671,8 +680,16 @@ function loadCloudState() {
 function saveCloudState(state) {
   const { stateSheet, librarySheet } = ensureSheetsInitialized();
   const nowIso = new Date().toISOString();
+
+  // 確保寫入「系統狀態資料庫」的 EXAM_DATA 僅存放當前測驗設定，所有試卷資料統一保存在「試卷庫資料」工作表中
+  let cleanExamData = null;
+  if (state.examData) {
+    cleanExamData = Object.assign({}, state.examData);
+    delete cleanExamData.examLibrary;
+  }
+
   stateSheet.getRange('A2:B5').setValues([
-    ['EXAM_DATA', state.examData ? JSON.stringify(state.examData) : ''],
+    ['EXAM_DATA', cleanExamData ? JSON.stringify(cleanExamData) : ''],
     ['SUBMISSIONS', JSON.stringify(state.submissions || [])],
     ['HISTORY_SESSIONS', JSON.stringify(state.historySessions || [])],
     ['UPDATED_AT', nowIso]
