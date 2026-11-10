@@ -2568,50 +2568,23 @@ function showImportAlert(msg, type) {
   });
 }
 
-function downloadSampleExcel() {
-  const currentExam = getCurrentSelectedExam() || examData;
-  const aoa = [
-    ['範例', '題目', '下列何者心律會以「窄的QRS波型」為最常見？', '答案'],
-    ['', '選項', '(A) Ventricular tachycardia', 'C'],
-    ['', '', '(B) PSVT with aberrant conduction', ''],
-    ['', '', '(C) Multifocal atrial tachycardia', ''],
-    ['', '', '(D) Torsade de pointes', ''],
-    ['', '', '', '']
-  ];
+function downloadSampleExcel(event) {
+  showToast('📥 正在下載「考題匯入範本.xlsx」...');
+  const sampleFileName = '考題匯入範本.xlsx';
+  const githubRawUrl = 'https://raw.githubusercontent.com/bruceabc0511/EZOnlineEXAM/main/%E8%80%83%E9%A1%8C%E5%8C%AF%E5%85%A5%E7%AF%84%E6%9C%AC.xlsx';
 
-  for (let i = 1; i <= 100; i++) {
-    const existingQ = (currentExam.questions || [])[i - 1];
-    if (existingQ) {
-      const opts = existingQ.options || [];
-      const rowCount = Math.max(opts.length, 1);
-      aoa.push([i, '題目', existingQ.question, '答案']);
-      for (let idx = 0; idx < rowCount; idx++) {
-        const optText = opts[idx] ? `(${opts[idx].key}) ${opts[idx].text}` : '';
-        aoa.push(['', idx === 0 ? '選項' : '', optText, idx === 0 ? existingQ.answer : '']);
-      }
-    } else {
-      aoa.push([i, '題目', '', '答案']);
-      aoa.push(['', '選項', '', '']);
-      aoa.push(['', '', '', '']);
-      aoa.push(['', '', '', '']);
-      aoa.push(['', '', '', '']);
-    }
-    if (i < 100) {
-      aoa.push(['', '', '', '']);
-    }
+  // 若為原生 <a> 點擊，瀏覽器將依 href 與 download 屬性自動觸發下載
+  if (event && event.currentTarget && event.currentTarget.tagName === 'A') {
+    return;
   }
 
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [
-    { wch: 8 },
-    { wch: 10 },
-    { wch: 65 },
-    { wch: 10 }
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '考題範本');
-  XLSX.writeFile(wb, `${currentExam.title || '線上測驗'}_考題範本.xlsx`);
+  const link = document.createElement('a');
+  link.href = window.location.protocol.startsWith('http') ? encodeURI(sampleFileName) : githubRawUrl;
+  link.download = sampleFileName;
+  link.target = '_blank';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 // ==================== 考官端頁籤 2：當前場次成績統計與寄送 Email ====================
