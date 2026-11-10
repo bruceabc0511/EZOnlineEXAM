@@ -1639,4 +1639,76 @@ body.examiner-mode .btn-primary:hover {
   .stats-grid {
     grid-template-columns: 1fr;
   }
+
+  /* ===== 手機版作答模式：精簡頂部狀態列 ===== */
+  body.exam-mode .brand {
+    display: none;
+  }
+
+  body.exam-mode .header-container {
+    padding: 8px 12px;
+    gap: 0;
+    padding-top: max(8px, env(safe-area-inset-top));
+  }
+
+  body.exam-mode .exam-live-bar {
+    width: 100%;
+    flex-wrap: nowrap;
+    gap: 8px;
+    justify-content: space-between;
+  }
+
+  body.exam-mode .live-student-info {
+    min-width: 0;
+    flex: 1 1 auto;
+    gap: 6px;
+    font-size: 0.85rem;
+  }
+
+  body.exam-mode #liveStudentDisplay {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  body.exam-mode .badge-live {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  body.exam-mode .live-warning-status {
+    padding: 3px 8px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  body.exam-mode .live-warn-label,
+  body.exam-mode .live-warn-paren {
+    display: none;
+  }
+
+  body.exam-mode .live-timer {
+    padding: 4px 10px;
+    font-size: 1rem;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+
+  body.exam-mode .live-timer svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  body.exam-mode .main-container {
+    margin-top: 14px;
+  }
+}
+
+@media (max-width: 360px) {
+  body.exam-mode .badge-live {
+    display: none;
+  }
 }

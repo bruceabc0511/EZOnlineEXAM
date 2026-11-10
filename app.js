@@ -945,6 +945,7 @@ async function handleStartExam(event) {
   // 切換頂部導覽列為考試監控模式
   document.getElementById('roleSwitcher').classList.add('hidden');
   document.getElementById('examLiveBar').classList.remove('hidden');
+  document.body.classList.add('exam-mode'); // 手機版作答時精簡頂部列
   document.getElementById('liveStudentDisplay').textContent = `${nameInput} (${idInput})`;
   document.getElementById('liveWarnCount').textContent = '0';
   document.getElementById('liveWarningBadge').classList.remove('warned');
@@ -1277,6 +1278,7 @@ async function finalizeExamSubmission(statusReason) {
   // 恢復頂部導覽列
   document.getElementById('examLiveBar').classList.add('hidden');
   document.getElementById('roleSwitcher').classList.remove('hidden');
+  document.body.classList.remove('exam-mode');
 
   // 顯示交卷完成憑證畫面 (不顯示分數與標準答案)
   document.getElementById('studentQuizView').classList.add('hidden');
