@@ -19,7 +19,8 @@
 const SHEET_NAMES = {
   STATE: '系統狀態資料庫',
   CURRENT_SCORES: '當前考生成績',
-  HISTORY_LOG: '歷次測驗紀錄'
+  HISTORY_LOG: '歷次測驗紀錄',
+  EXAM_LIBRARY: '試卷庫資料'
 };
 
 // 考題圖片專用 Google 雲端硬碟資料夾 ID
@@ -54,6 +55,7 @@ function doGet(e) {
         examData: state.examData,
         submissions: state.submissions,
         historySessions: state.historySessions,
+        examLibrary: state.examLibrary,
         updatedAt: state.updatedAt
       });
     }
@@ -80,11 +82,29 @@ function doPost(e) {
       if (payload.examData) {
         state.examData = payload.examData;
       }
+      if (Array.isArray(payload.examLibrary)) {
+        state.examLibrary = payload.examLibrary;
+      }
       saveCloudState(state);
       return jsonResponse({
         status: 'success',
         message: '題庫與試卷設定已同步至雲端',
-        examData: state.examData
+        examData: state.examData,
+        examLibrary: state.examLibrary
+      });
+    }
+
+    // 1-b. 考官儲存試卷庫 (多份試卷獨立保存於試卷庫資料工作表)
+    if (action === 'saveExamLibrary') {
+      if (Array.isArray(payload.examLibrary)) {
+        state.examLibrary = payload.examLibrary;
+        const { librarySheet } = ensureSheetsInitialized();
+        syncExamLibrarySheet(librarySheet, state.examLibrary);
+      }
+      return jsonResponse({
+        status: 'success',
+        message: '試卷庫已同步至雲端',
+        examLibrary: state.examLibrary
       });
     }
 
@@ -494,11 +514,60 @@ function ensureSheetsInitialized() {
     ]]);
   }
 
-  return { ss, stateSheet, scoreSheet, histSheet };
+  let librarySheet = ss.getSheetByName(SHEET_NAMES.EXAM_LIBRARY);
+  if (!librarySheet) {
+    librarySheet = ss.insertSheet(SHEET_NAMES.EXAM_LIBRARY);
+    librarySheet.getRange('A1:G1').setValues([[
+      '試卷ID', '試卷名稱', '考試日期', '測驗時間(分)', '題目數', '建立/更新時間', '完整考題資料JSON'
+    ]]);
+  }
+
+  return { ss, stateSheet, scoreSheet, histSheet, librarySheet };
+}
+
+function loadExamLibraryFromSheet(librarySheet) {
+  const lastRow = librarySheet.getLastRow();
+  if (lastRow <= 1) return [];
+  const rows = librarySheet.getRange(2, 1, lastRow - 1, 7).getValues();
+  const library = [];
+  rows.forEach(r => {
+    if (!r[0] && !r[1]) return;
+    let questions = [];
+    try {
+      if (r[6]) questions = JSON.parse(r[6]);
+    } catch (e) {}
+    library.push({
+      id: String(r[0] || ''),
+      title: String(r[1] || ''),
+      examDate: String(r[2] || ''),
+      durationMinutes: r[3] !== '' ? Number(r[3]) : 60,
+      questions: Array.isArray(questions) ? questions : [],
+      updatedAt: String(r[5] || '')
+    });
+  });
+  return library;
+}
+
+function syncExamLibrarySheet(librarySheet, examLibrary) {
+  librarySheet.clearContents();
+  const headers = ['試卷ID', '試卷名稱', '考試日期', '測驗時間(分)', '題目數', '建立/更新時間', '完整考題資料JSON'];
+  const rows = [headers];
+  (examLibrary || []).forEach(exam => {
+    rows.push([
+      exam.id || '',
+      exam.title || '未命名試卷',
+      exam.examDate || '',
+      exam.durationMinutes !== '' ? exam.durationMinutes : 60,
+      Array.isArray(exam.questions) ? exam.questions.length : 0,
+      exam.updatedAt || new Date().toISOString(),
+      JSON.stringify(exam.questions || [])
+    ]);
+  });
+  librarySheet.getRange(1, 1, rows.length, headers.length).setValues(rows);
 }
 
 function loadCloudState() {
-  const { stateSheet } = ensureSheetsInitialized();
+  const { stateSheet, librarySheet } = ensureSheetsInitialized();
   const rows = stateSheet.getRange('A2:B5').getValues();
   const map = {};
   rows.forEach(r => {
@@ -519,16 +588,32 @@ function loadCloudState() {
     if (map.HISTORY_SESSIONS) historySessions = JSON.parse(map.HISTORY_SESSIONS);
   } catch (e) {}
 
+  let examLibrary = loadExamLibraryFromSheet(librarySheet);
+  // 若試卷庫工作表尚無試卷資料但 EXAM_DATA 有資料，自動無痛遷移為第一筆試卷
+  if (examLibrary.length === 0 && examData && Array.isArray(examData.questions)) {
+    const initialExam = {
+      id: examData.id || ('exam_' + Date.now()),
+      title: examData.title || '預設試卷',
+      examDate: examData.examDate || '',
+      durationMinutes: examData.durationMinutes !== '' ? examData.durationMinutes : 60,
+      questions: examData.questions,
+      updatedAt: new Date().toISOString()
+    };
+    examLibrary = [initialExam];
+    syncExamLibrarySheet(librarySheet, examLibrary);
+  }
+
   return {
     examData: examData,
     submissions: Array.isArray(submissions) ? submissions : [],
     historySessions: Array.isArray(historySessions) ? historySessions : [],
+    examLibrary: examLibrary,
     updatedAt: map.UPDATED_AT || ''
   };
 }
 
 function saveCloudState(state) {
-  const { stateSheet } = ensureSheetsInitialized();
+  const { stateSheet, librarySheet } = ensureSheetsInitialized();
   const nowIso = new Date().toISOString();
   stateSheet.getRange('A2:B5').setValues([
     ['EXAM_DATA', state.examData ? JSON.stringify(state.examData) : ''],
@@ -536,6 +621,10 @@ function saveCloudState(state) {
     ['HISTORY_SESSIONS', JSON.stringify(state.historySessions || [])],
     ['UPDATED_AT', nowIso]
   ]);
+
+  if (Array.isArray(state.examLibrary)) {
+    syncExamLibrarySheet(librarySheet, state.examLibrary);
+  }
 }
 
 function syncCurrentScoresSheet(examData, submissions) {

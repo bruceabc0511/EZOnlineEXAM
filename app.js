@@ -16,7 +16,8 @@ const STORAGE_KEYS = {
   EXAM_DATA: 'online_exam_bank_v1',
   SUBMISSIONS: 'online_exam_submissions_v1',
   HISTORY_SESSIONS: 'online_exam_history_v1',
-  GAS_URL: 'online_exam_gas_url_v1'
+  GAS_URL: 'online_exam_gas_url_v1',
+  EXAM_LIBRARY: 'online_exam_library_v1'
 };
 
 // 考官端 PIN 碼安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊；日後如需變更 PIN 碼請由 Antigravity 指令更新)
@@ -25,6 +26,7 @@ const EXAMINER_PIN_HASH = 'f77548413d6d3ced941815c06f4499b328e47f9893e15b6c2d4d3
 
 // 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
+  id: 'exam_default',
   title: '未命名測驗',
   durationMinutes: 60,
   examDate: '',
@@ -34,6 +36,10 @@ const DEFAULT_EXAM_DATA = {
 
 // 系統狀態
 let examData = loadExamData();
+let examLibrary = loadExamLibrary();
+let currentSelectedExamId = (examData && examData.id && examLibrary.some(e => e.id === examData.id))
+  ? examData.id
+  : (examLibrary[0] ? examLibrary[0].id : 'exam_default');
 let submissions = loadSubmissions();
 let historySessions = loadHistorySessions();
 let isExaminerAuthenticated = false;
@@ -340,6 +346,13 @@ async function syncStateFromCloud(silent = true) {
         historySessions = json.historySessions;
         localStorage.setItem(STORAGE_KEYS.HISTORY_SESSIONS, JSON.stringify(historySessions));
       }
+      if (Array.isArray(json.examLibrary) && json.examLibrary.length > 0) {
+        examLibrary = json.examLibrary;
+        localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
+        if (!currentSelectedExamId || !examLibrary.some(e => e.id === currentSelectedExamId)) {
+          currentSelectedExamId = examLibrary[0].id;
+        }
+      }
 
       if (!activeSession.isActive) {
         renderStudentLoginMeta();
@@ -451,12 +464,13 @@ async function pushAllLocalDataToCloud() {
     alert('請先設定並儲存 Google Apps Script 網址！');
     return;
   }
-  showToast('⬆️ 正在將本機題庫、當前成績與歷史紀錄完整推送至雲端...');
+  showToast('⬆️ 正在將本機試卷庫、當前試卷、成績與歷史紀錄完整推送至雲端...');
   await postToCloud({ action: 'saveExamData', examData });
+  await postToCloud({ action: 'saveExamLibrary', examLibrary });
   await postToCloud({ action: 'syncSubmissions', examData, submissions });
   const res = await postToCloud({ action: 'syncHistory', historySessions });
   if (res && res.status === 'success') {
-    showToast('✅ 已將本機所有題庫、成績與歷史紀錄同步至 Google 試算表！');
+    showToast('✅ 已將本機所有試卷庫、當前試卷、成績與歷史紀錄同步至 Google 試算表！');
   } else {
     showToast('⚠️ 推送完成，若部分資料未更新請檢查網路連線');
   }
@@ -520,6 +534,7 @@ function loadExamData() {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.questions)) {
         return {
+          id: parsed.id || 'exam_default',
           title: parsed.title ?? '',
           durationMinutes: parsed.durationMinutes === '' ? '' : (Number(parsed.durationMinutes) || 60),
           examDate: normalizeDateForInput(parsed.examDate ?? ''),
@@ -548,6 +563,55 @@ function saveExamDataToStorage(syncCloud = true) {
       examData: examData
     });
   }
+}
+
+// ==================== 試卷庫 (Exam Library) 儲存與管理 ====================
+function loadExamLibrary() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.EXAM_LIBRARY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('載入試卷庫失敗:', e);
+  }
+
+  // 首次初始化遷移：以當前 examData 作為試卷庫第一份試卷
+  const initialId = (typeof examData !== 'undefined' && examData && examData.id) ? examData.id : ('exam_' + Date.now());
+  const initialExam = {
+    id: initialId,
+    title: (typeof examData !== 'undefined' && examData && examData.title) ? examData.title : '預設試卷',
+    examDate: (typeof examData !== 'undefined' && examData && examData.examDate) ? examData.examDate : '',
+    durationMinutes: (typeof examData !== 'undefined' && examData && examData.durationMinutes !== '') ? examData.durationMinutes : 60,
+    questions: (typeof examData !== 'undefined' && examData && Array.isArray(examData.questions)) ? JSON.parse(JSON.stringify(examData.questions)) : [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  const list = [initialExam];
+  localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(list));
+  return list;
+}
+
+function saveExamLibraryToStorage(syncCloud = true) {
+  localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
+  if (syncCloud && getActiveGasUrl()) {
+    postToCloud({
+      action: 'saveExamLibrary',
+      examLibrary: examLibrary
+    });
+  }
+}
+
+function getCurrentSelectedExam() {
+  let exam = examLibrary.find(e => e.id === currentSelectedExamId);
+  if (!exam) {
+    exam = examLibrary[0];
+    if (exam) currentSelectedExamId = exam.id;
+  }
+  return exam;
 }
 
 function loadSubmissions() {
@@ -669,14 +733,32 @@ function renderExamControlBanner() {
 
 function setExamOpenStatus(isOpen) {
   if (isOpen) {
-    if (!examData.questions || examData.questions.length === 0) {
-      alert('目前題庫中沒有任何題目（0 題），請先匯入考題範本或手動新增題目後再開始測驗！');
+    const currentExam = getCurrentSelectedExam();
+    const targetExam = currentExam || examData;
+    if (!targetExam || !targetExam.questions || targetExam.questions.length === 0) {
+      alert('目前試卷中沒有任何題目（0 題），請先匯入考題範本或手動新增題目後再開始測驗！');
       return;
     }
-    examData.isExamOpen = true;
+
+    // 若當前選中的試卷與目前活動的 examData 不同，確認套用選中的試卷
+    if (currentExam && examData.id !== currentExam.id) {
+      const confirmSwitch = confirm(`確定要將目前選中的試卷【${currentExam.title}】（共 ${currentExam.questions.length} 題）設為本次測驗試卷並開放作答嗎？`);
+      if (!confirmSwitch) return;
+      examData = {
+        id: currentExam.id,
+        title: currentExam.title,
+        examDate: currentExam.examDate,
+        durationMinutes: currentExam.durationMinutes,
+        isExamOpen: true,
+        questions: JSON.parse(JSON.stringify(currentExam.questions || []))
+      };
+    } else {
+      examData.isExamOpen = true;
+    }
+
     saveExamDataToStorage(true);
     refreshExaminerAllViews();
-    showToast('🟢 已開始測驗！試卷現已對考生端開放顯示。');
+    showToast(`🟢 已開始測驗！試卷【${examData.title || '未命名測驗'}】現已對考生端開放作答。`);
   } else {
     examData.isExamOpen = false;
     saveExamDataToStorage(true);
@@ -1401,20 +1483,171 @@ function refreshExaminerAllViews() {
   updateCloudStatusUI();
 }
 
-// ==================== 考官端頁籤 1：考題管理與 Excel 範本匯入 (支援完全空白題庫) ====================
+// ==================== 考官端頁籤 1：試卷庫與考題管理 (支援多份試卷獨立保存) ====================
+function handleSelectExamFromLibrary(examId) {
+  if (!examId) return;
+  currentSelectedExamId = examId;
+  refreshExaminerAllViews();
+  const exam = getCurrentSelectedExam();
+  if (exam) {
+    showToast(`📖 已載入試卷【${exam.title || '未命名試卷'}】（共 ${(exam.questions || []).length} 題）`);
+  }
+}
+
+function handleCreateNewExamPaper() {
+  const defaultTitle = `新試卷 ${examLibrary.length + 1}`;
+  const inputTitle = prompt('請輸入新試卷名稱：', defaultTitle);
+  if (inputTitle === null) return;
+  const title = inputTitle.trim() || defaultTitle;
+
+  const isDup = examLibrary.some(e => e.title.trim().toLowerCase() === title.toLowerCase());
+  if (isDup) {
+    alert(`試卷庫中已存在同名試卷「${title}」，請使用其他名稱！`);
+    return;
+  }
+
+  const todayStr = normalizeDateForInput(new Date().toISOString().slice(0, 10));
+  const newExam = {
+    id: 'exam_' + Date.now(),
+    title: title,
+    examDate: todayStr,
+    durationMinutes: 60,
+    questions: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  examLibrary.push(newExam);
+  currentSelectedExamId = newExam.id;
+  saveExamLibraryToStorage(true);
+  refreshExaminerAllViews();
+  showToast(`➕ 已建立新試卷「${title}」！您可直接開始新增考題或自左側匯入 Excel。`);
+}
+
+function handleRenameExamPaper() {
+  const currentExam = getCurrentSelectedExam();
+  if (!currentExam) return;
+  const newTitle = prompt('請輸入此份試卷的新名稱：', currentExam.title || '');
+  if (newTitle === null) return;
+  const trimmed = newTitle.trim();
+  if (!trimmed) {
+    alert('試卷名稱不可為空白！');
+    return;
+  }
+
+  const isDup = examLibrary.some(e => e.id !== currentExam.id && e.title.trim().toLowerCase() === trimmed.toLowerCase());
+  if (isDup) {
+    alert(`試卷庫中已存在同名試卷「${trimmed}」，請使用其他名稱！`);
+    return;
+  }
+
+  currentExam.title = trimmed;
+  currentExam.updatedAt = new Date().toISOString();
+
+  if (examData.id === currentExam.id) {
+    examData.title = trimmed;
+    saveExamDataToStorage(true);
+  }
+
+  saveExamLibraryToStorage(true);
+  refreshExaminerAllViews();
+  showToast(`✏️ 試卷已重新命名為「${trimmed}」！`);
+}
+
+function handleDeleteExamPaper() {
+  const currentExam = getCurrentSelectedExam();
+  if (!currentExam) return;
+  if (examLibrary.length <= 1) {
+    alert('試卷庫中至少需保留一份試卷！若要清空考題，請使用「清空全部題目」按鈕。');
+    return;
+  }
+  if (examData.id === currentExam.id && examData.isExamOpen) {
+    alert(`試卷「${currentExam.title}」目前正處於「測驗開放中」狀態！\n\n請先於上方控制列點擊「結束作答」後再進行刪除。`);
+    return;
+  }
+
+  const qCount = (currentExam.questions || []).length;
+  if (!confirm(`確定要自試卷庫中刪除試卷「${currentExam.title}」嗎？\n\n（此試卷內含 ${qCount} 題考題將一併刪除，此操作無法復原）`)) {
+    return;
+  }
+
+  examLibrary = examLibrary.filter(e => e.id !== currentExam.id);
+  currentSelectedExamId = examLibrary[0].id;
+
+  if (examData.id === currentExam.id) {
+    examData = {
+      ...examLibrary[0],
+      isExamOpen: false
+    };
+    saveExamDataToStorage(true);
+  }
+
+  saveExamLibraryToStorage(true);
+  refreshExaminerAllViews();
+  showToast(`🗑️ 已自試卷庫中刪除試卷「${currentExam.title}」！`);
+}
+
+function handleApplyAsActiveExam() {
+  const currentExam = getCurrentSelectedExam();
+  if (!currentExam) return;
+  if (examData.id === currentExam.id) {
+    showToast(`此試卷【${currentExam.title}】已經是當前測驗試卷！`);
+    return;
+  }
+
+  if (submissions.length > 0) {
+    const shouldArchive = confirm(
+      `切換測驗試卷前提醒：\n目前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
+    );
+    if (shouldArchive) {
+      createAndSaveHistorySession(`${examData.title || '未命名測驗'} (${examData.examDate || '-'})`, true);
+    }
+  }
+
+  examData = {
+    id: currentExam.id,
+    title: currentExam.title,
+    examDate: currentExam.examDate,
+    durationMinutes: currentExam.durationMinutes,
+    isExamOpen: false,
+    questions: JSON.parse(JSON.stringify(currentExam.questions || []))
+  };
+
+  saveExamDataToStorage(true);
+  refreshExaminerAllViews();
+  showToast(`✅ 已將試卷【${currentExam.title}】設為當前測驗試卷（目前為關閉狀態，確認無誤後可點擊上方開放作答）！`);
+}
+
 function setupExamMetaAutoSync() {
   const titleInput = document.getElementById('metaExamTitle');
   const dateInput = document.getElementById('metaExamDate');
   const durationInput = document.getElementById('metaExamDuration');
 
   const syncMetaFromInputs = (pushCloud = false) => {
-    if (titleInput) examData.title = titleInput.value;
-    if (dateInput) examData.examDate = normalizeDateForInput(dateInput.value);
+    const currentExam = getCurrentSelectedExam();
+    if (!currentExam) return;
+    if (titleInput) currentExam.title = titleInput.value.trim();
+    if (dateInput) currentExam.examDate = normalizeDateForInput(dateInput.value);
     if (durationInput) {
       const rawVal = durationInput.value.trim();
-      examData.durationMinutes = rawVal === '' ? '' : Math.max(1, Number(rawVal) || 60);
+      currentExam.durationMinutes = rawVal === '' ? '' : Math.max(1, Number(rawVal) || 60);
     }
-    saveExamDataToStorage(pushCloud);
+    currentExam.updatedAt = new Date().toISOString();
+
+    // 即時更新下拉選單文字
+    const libSelect = document.getElementById('examLibrarySelect');
+    if (libSelect && libSelect.selectedOptions && libSelect.selectedOptions[0]) {
+      const isActive = examData && examData.id === currentExam.id;
+      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢開放中]' : ' [當前]') : '';
+      libSelect.selectedOptions[0].textContent = `${currentExam.title || '未命名試卷'} (${(currentExam.questions || []).length} 題)${statusMark}`;
+    }
+
+    if (examData.id === currentExam.id) {
+      examData.title = currentExam.title;
+      examData.examDate = currentExam.examDate;
+      examData.durationMinutes = currentExam.durationMinutes;
+      saveExamDataToStorage(pushCloud);
+    }
+    saveExamLibraryToStorage(pushCloud);
   };
 
   [titleInput, dateInput, durationInput].forEach(el => {
@@ -1425,7 +1658,49 @@ function setupExamMetaAutoSync() {
 }
 
 function renderExaminerQuestionTab() {
-  const qCount = examData.questions.length;
+  const currentExam = getCurrentSelectedExam();
+  if (!currentExam) return;
+
+  // 1. 渲染試卷庫下拉選單
+  const libSelect = document.getElementById('examLibrarySelect');
+  if (libSelect) {
+    libSelect.innerHTML = '';
+    examLibrary.forEach(exam => {
+      const opt = document.createElement('option');
+      opt.value = exam.id;
+      const isActive = examData && examData.id === exam.id;
+      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢開放中]' : ' [當前]') : '';
+      opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${statusMark}`;
+      libSelect.appendChild(opt);
+    });
+    libSelect.value = currentExam.id;
+  }
+
+  // 2. 顯示當前選中試卷是否為活動測驗試卷的徽章與套用按鈕
+  const activeBadge = document.getElementById('currentExamActiveBadge');
+  const btnApply = document.getElementById('btnApplyAsActiveExam');
+  const isCurrentActive = examData && examData.id === currentExam.id;
+
+  if (activeBadge) {
+    if (isCurrentActive) {
+      activeBadge.classList.remove('hidden');
+      if (examData.isExamOpen) {
+        activeBadge.className = 'badge badge-teal';
+        activeBadge.textContent = '🟢 進行中測驗試卷 (開放中)';
+      } else {
+        activeBadge.className = 'badge badge-secondary';
+        activeBadge.textContent = '⚪ 當前測驗試卷 (未開放)';
+      }
+    } else {
+      activeBadge.classList.add('hidden');
+    }
+  }
+
+  if (btnApply) {
+    btnApply.style.display = isCurrentActive ? 'none' : 'inline-block';
+  }
+
+  const qCount = (currentExam.questions || []).length;
   const pts = getPointsPerQuestion(qCount);
 
   const titleInput = document.getElementById('metaExamTitle');
@@ -1433,13 +1708,13 @@ function renderExaminerQuestionTab() {
   const durationInput = document.getElementById('metaExamDuration');
 
   if (titleInput && document.activeElement !== titleInput) {
-    titleInput.value = examData.title ?? '';
+    titleInput.value = currentExam.title ?? '';
   }
   if (dateInput && document.activeElement !== dateInput) {
-    dateInput.value = normalizeDateForInput(examData.examDate ?? '');
+    dateInput.value = normalizeDateForInput(currentExam.examDate ?? '');
   }
   if (durationInput && document.activeElement !== durationInput) {
-    durationInput.value = examData.durationMinutes === '' ? '' : (examData.durationMinutes ?? 60);
+    durationInput.value = currentExam.durationMinutes === '' ? '' : (currentExam.durationMinutes ?? 60);
   }
 
   document.getElementById('metaValidQCount').textContent = qCount;
@@ -1450,13 +1725,13 @@ function renderExaminerQuestionTab() {
   tbody.innerHTML = '';
 
   if (qCount === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 24px;">目前題庫為空白（0 題），可從上方匯入 Excel 範本或點擊「➕ 手動新增單選題」</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 24px;">目前試卷【${escapeHtml(currentExam.title)}】為空白（0 題），可從左側匯入 Excel 範本或點擊「➕ 手動新增單選題」</td></tr>`;
     return;
   }
 
-  examData.questions.forEach((q, idx) => {
+  currentExam.questions.forEach((q, idx) => {
     const tr = document.createElement('tr');
-    const formattedOpts = q.options
+    const formattedOpts = (q.options || [])
       .map(o => `<span class="badge badge-teal" style="margin-right:4px;">${o.key}</span>${escapeHtml(o.text)}`)
       .join('<br>');
 
@@ -1484,81 +1759,71 @@ function renderExaminerQuestionTab() {
 
 function saveExamMetadata(event) {
   event.preventDefault();
-  examData.title = document.getElementById('metaExamTitle').value.trim();
-  examData.examDate = normalizeDateForInput(document.getElementById('metaExamDate').value.trim());
+  const currentExam = getCurrentSelectedExam();
+  if (!currentExam) return;
+
+  currentExam.title = document.getElementById('metaExamTitle').value.trim();
+  currentExam.examDate = normalizeDateForInput(document.getElementById('metaExamDate').value.trim());
   const rawDuration = document.getElementById('metaExamDuration').value.trim();
-  examData.durationMinutes = rawDuration === '' ? '' : Math.max(1, Number(rawDuration) || 60);
+  currentExam.durationMinutes = rawDuration === '' ? '' : Math.max(1, Number(rawDuration) || 60);
+  currentExam.updatedAt = new Date().toISOString();
 
-  saveExamDataToStorage(true);
-  refreshExaminerAllViews();
-  showImportAlert('已成功儲存試卷設定並同步至雲端！', 'success');
-}
-
-/**
- * 當考官更換新題庫且當前場次已有考生成績時，貼心詢問是否先將當前場次歸檔至「歷次測驗紀錄」
- */
-function promptArchiveBeforeReplacingBank(newExamObj, successMsg) {
-  // 保留當前是否開放的狀態（若新題庫為 0 題則自動關閉）
-  newExamObj.isExamOpen = newExamObj.questions.length > 0 ? Boolean(examData.isExamOpen) : false;
-
-  if (submissions.length > 0) {
-    const shouldArchive = confirm(
-      `偵測到目前場次【${examData.title || '未命名測驗'}】已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將這 ${submissions.length} 筆成績自動封存為一筆獨立的「歷次測驗紀錄」，並清空當前場次名單以供新試卷應試？`
-    );
-    if (shouldArchive) {
-      const prevCount = submissions.length;
-      createAndSaveHistorySession(`${examData.title || '未命名測驗'} (${examData.examDate || '-'})`, true, newExamObj);
-      showImportAlert(`${successMsg}（原場次 ${prevCount} 人成績已自動封存至「歷次測驗紀錄」）`, 'success');
-      return;
-    }
+  if (examData.id === currentExam.id) {
+    examData.title = currentExam.title;
+    examData.examDate = currentExam.examDate;
+    examData.durationMinutes = currentExam.durationMinutes;
+    saveExamDataToStorage(true);
   }
 
-  examData = newExamObj;
-  saveExamDataToStorage(true);
+  saveExamLibraryToStorage(true);
   refreshExaminerAllViews();
-  showImportAlert(successMsg, 'success');
+  showImportAlert(`已成功儲存試卷【${currentExam.title}】的設定並同步至雲端！`, 'success');
 }
 
 function deleteQuestion(qId) {
-  const targetQ = examData.questions.find(q => q.id === qId);
+  const currentExam = getCurrentSelectedExam();
+  if (!currentExam) return;
+  const targetQ = currentExam.questions.find(q => q.id === qId);
   const qPreview = targetQ && targetQ.question ? `\n\n題目：${targetQ.question}` : '';
   if (!confirm(`確定要刪除第 ${qId} 題嗎？${qPreview}`)) return;
 
-  examData.questions = examData.questions.filter(q => q.id !== qId);
+  currentExam.questions = currentExam.questions.filter(q => q.id !== qId);
   // 重新編號
-  examData.questions.forEach((q, i) => {
+  currentExam.questions.forEach((q, i) => {
     q.id = i + 1;
   });
-  // 若題庫已刪空為 0 題，自動將測驗狀態設為關閉
-  if (examData.questions.length === 0) {
-    examData.isExamOpen = false;
+  currentExam.updatedAt = new Date().toISOString();
+
+  if (examData.id === currentExam.id) {
+    examData.questions = currentExam.questions;
+    if (examData.questions.length === 0) {
+      examData.isExamOpen = false;
+    }
+    saveExamDataToStorage(true);
   }
-  saveExamDataToStorage(true);
+  saveExamLibraryToStorage(true);
   refreshExaminerAllViews();
 }
 
 function clearAllQuestions() {
-  const hasQuestions = examData.questions.length > 0;
-  const hasMeta = Boolean(examData.title || examData.examDate || examData.durationMinutes !== '');
-  if (!hasQuestions && !hasMeta) return;
-  if (!confirm('確定要清空目前題庫中的所有題目與上方「當前試卷資訊」嗎？')) return;
+  const currentExam = getCurrentSelectedExam();
+  if (!currentExam) return;
+  const hasQuestions = (currentExam.questions || []).length > 0;
+  if (!hasQuestions) return;
+  if (!confirm(`確定要清空試卷「${currentExam.title}」中的所有考題嗎？`)) return;
 
-  examData.title = '';
-  examData.examDate = '';
-  examData.durationMinutes = '';
-  examData.questions = [];
-  examData.isExamOpen = false;
+  currentExam.questions = [];
+  currentExam.updatedAt = new Date().toISOString();
 
-  const titleInput = document.getElementById('metaExamTitle');
-  const dateInput = document.getElementById('metaExamDate');
-  const durationInput = document.getElementById('metaExamDuration');
-  if (titleInput) titleInput.value = '';
-  if (dateInput) dateInput.value = '';
-  if (durationInput) durationInput.value = '';
+  if (examData.id === currentExam.id) {
+    examData.questions = [];
+    examData.isExamOpen = false;
+    saveExamDataToStorage(true);
+  }
 
-  saveExamDataToStorage(true);
+  saveExamLibraryToStorage(true);
   refreshExaminerAllViews();
-  showImportAlert('已清空所有題目與上方當前試卷資訊（目前題庫為 0 題，測驗已自動設為關閉狀態）。', 'success');
+  showImportAlert(`已清空試卷「${currentExam.title}」中的所有題目。`, 'success');
 }
 
 function syncAnswerSelectWithOptions(preferredAnswer) {
@@ -1607,7 +1872,8 @@ function openAddQuestionModal() {
 }
 
 function openEditQuestionModal(qId) {
-  const targetQ = examData.questions.find(q => q.id === qId);
+  const currentExam = getCurrentSelectedExam();
+  const targetQ = (currentExam ? currentExam.questions : examData.questions).find(q => q.id === qId);
   if (!targetQ) return;
 
   editingQuestionId = qId;
@@ -1806,6 +2072,9 @@ async function handleQuestionImageSelected(event) {
 
 function handleSaveNewQuestion(event) {
   event.preventDefault();
+  const currentExam = getCurrentSelectedExam();
+  if (!currentExam) return;
+
   const qText = document.getElementById('newQText').value.trim();
   const rawOpts = document.getElementById('newQOptions').value.trim();
   const ans = document.getElementById('newQAnswer').value.trim().toUpperCase();
@@ -1819,7 +2088,7 @@ function handleSaveNewQuestion(event) {
   }
 
   if (editingQuestionId !== null) {
-    const targetQ = examData.questions.find(q => q.id === editingQuestionId);
+    const targetQ = currentExam.questions.find(q => q.id === editingQuestionId);
     if (targetQ) {
       const prevAns = String(targetQ.answer || '').toUpperCase();
       targetQ.question = qText;
@@ -1828,8 +2097,8 @@ function handleSaveNewQuestion(event) {
       targetQ.answer = ans;
       targetQ.imageUrl = imgUrl;
 
-      // 若本場次已有考生交卷且考官修改了該題標準答案，同步重新計算本場次考生成績
-      if (prevAns !== ans && submissions.length > 0) {
+      // 若目前選取的試卷恰為當前進行中的測驗且已有考生交卷，考官修改答案時同步重算考生成績
+      if (examData.id === currentExam.id && prevAns !== ans && submissions.length > 0) {
         const totalQ = examData.questions.length;
         submissions.forEach(sub => {
           if (sub.answerDetails && sub.answerDetails[targetQ.id]) {
@@ -1850,16 +2119,20 @@ function handleSaveNewQuestion(event) {
       }
     }
 
-    const updatedId = editingQuestionId;
-    saveExamDataToStorage(true);
+    currentExam.updatedAt = new Date().toISOString();
+    if (examData.id === currentExam.id) {
+      examData.questions = currentExam.questions;
+      saveExamDataToStorage(true);
+    }
+    saveExamLibraryToStorage(true);
     closeAddQuestionModal();
     refreshExaminerAllViews();
-    showImportAlert(`已成功更新第 ${updatedId} 題內容並同步至雲端！`, 'success');
+    showImportAlert(`已成功更新試卷【${currentExam.title}】第 ${editingQuestionId} 題內容並同步！`, 'success');
     return;
   }
 
-  const newId = examData.questions.length + 1;
-  examData.questions.push({
+  const newId = (currentExam.questions || []).length + 1;
+  currentExam.questions.push({
     id: newId,
     question: qText,
     imageUrl: imgUrl,
@@ -1867,11 +2140,16 @@ function handleSaveNewQuestion(event) {
     options: parsedOptions,
     answer: ans
   });
+  currentExam.updatedAt = new Date().toISOString();
 
-  saveExamDataToStorage(true);
+  if (examData.id === currentExam.id) {
+    examData.questions = currentExam.questions;
+    saveExamDataToStorage(true);
+  }
+  saveExamLibraryToStorage(true);
   closeAddQuestionModal();
   refreshExaminerAllViews();
-  showImportAlert(`已新增第 ${newId} 題，系統已自動重新平均配分並同步雲端！`, 'success');
+  showImportAlert(`已新增第 ${newId} 題至試卷【${currentExam.title}】！`, 'success');
 }
 
 // ==================== Excel 範本匯入與解析 ====================
@@ -1989,20 +2267,80 @@ function parseTemplateRows(rows, fileName) {
     }
   }
 
-  const newExamObj = {
-    title: examData.title ?? '',
-    durationMinutes: examData.durationMinutes === '' ? '' : (examData.durationMinutes ?? 60),
-    examDate: normalizeDateForInput(examData.examDate ?? ''),
-    isExamOpen: parsedQuestions.length > 0 ? Boolean(examData.isExamOpen) : false,
-    questions: parsedQuestions
+  const fileBaseTitle = fileName.replace(/\.[^/.]+$/, '').replace(/_考題範本$/, '').trim() || '匯入試卷';
+  const existingExam = examLibrary.find(e => e.title.trim().toLowerCase() === fileBaseTitle.toLowerCase());
+
+  if (existingExam) {
+    const shouldOverwrite = confirm(
+      `偵測到試卷庫中已存在同名試卷「${fileBaseTitle}」（現有 ${(existingExam.questions || []).length} 題）！\n\n【確定】：覆蓋更新原試卷「${fileBaseTitle}」的題目內容\n【取消】：另存為新試卷（將另存為新版試卷獨立保存）`
+    );
+
+    if (shouldOverwrite) {
+      if (examData.id === existingExam.id && submissions.length > 0) {
+        const shouldArchive = confirm(
+          `提醒：當前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
+        );
+        if (shouldArchive) {
+          createAndSaveHistorySession(`${examData.title || '未命名測驗'} (${examData.examDate || '-'})`, true);
+        }
+      }
+
+      existingExam.questions = parsedQuestions;
+      existingExam.updatedAt = new Date().toISOString();
+      currentSelectedExamId = existingExam.id;
+
+      if (examData.id === existingExam.id) {
+        examData.questions = parsedQuestions;
+        saveExamDataToStorage(true);
+      }
+
+      saveExamLibraryToStorage(true);
+      refreshExaminerAllViews();
+      showImportAlert(`已成功覆蓋更新試卷「${fileBaseTitle}」！共讀取 ${parsedQuestions.length} 題有效單選題。`, 'success');
+      return;
+    } else {
+      // 另存為新試卷
+      let newTitle = `${fileBaseTitle} (新版)`;
+      let counter = 2;
+      while (examLibrary.some(e => e.title.trim().toLowerCase() === newTitle.toLowerCase())) {
+        newTitle = `${fileBaseTitle} (新版 ${counter++})`;
+      }
+
+      const todayStr = normalizeDateForInput(new Date().toISOString().slice(0, 10));
+      const newExam = {
+        id: 'exam_' + Date.now(),
+        title: newTitle,
+        examDate: todayStr,
+        durationMinutes: 60,
+        questions: parsedQuestions,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      examLibrary.push(newExam);
+      currentSelectedExamId = newExam.id;
+      saveExamLibraryToStorage(true);
+      refreshExaminerAllViews();
+      showImportAlert(`已將題目另存為新試卷「${newTitle}」！共讀取 ${parsedQuestions.length} 題有效單選題。`, 'success');
+      return;
+    }
+  }
+
+  // 試卷庫中尚無同名試卷，直接新建一份
+  const todayStr = normalizeDateForInput(new Date().toISOString().slice(0, 10));
+  const newExam = {
+    id: 'exam_' + Date.now(),
+    title: fileBaseTitle,
+    examDate: todayStr,
+    durationMinutes: 60,
+    questions: parsedQuestions,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
-
-  const pts = getPointsPerQuestion(parsedQuestions.length);
-  const msg = parsedQuestions.length > 0
-    ? `成功自「${fileName}」匯入題庫！共讀取 ${parsedQuestions.length} 題有效單選題，每題自動配分 ${pts} 分（試卷資訊請由右側手動設定）。`
-    : `已自「${fileName}」讀取題庫（目前有效題目為 0 題）。`;
-
-  promptArchiveBeforeReplacingBank(newExamObj, msg);
+  examLibrary.push(newExam);
+  currentSelectedExamId = newExam.id;
+  saveExamLibraryToStorage(true);
+  refreshExaminerAllViews();
+  showImportAlert(`成功自「${fileName}」匯入新試卷「${fileBaseTitle}」至試卷庫！共讀取 ${parsedQuestions.length} 題有效單選題。`, 'success');
 }
 
 function parseOptionsString(rawStr) {
@@ -2045,6 +2383,7 @@ function showImportAlert(msg, type) {
 }
 
 function downloadSampleExcel() {
+  const currentExam = getCurrentSelectedExam() || examData;
   const aoa = [
     ['範例', '題目', '下列何者心律會以「窄的QRS波型」為最常見？', '答案'],
     ['', '選項', '(A) Ventricular tachycardia', 'C'],
@@ -2055,7 +2394,7 @@ function downloadSampleExcel() {
   ];
 
   for (let i = 1; i <= 100; i++) {
-    const existingQ = examData.questions[i - 1];
+    const existingQ = (currentExam.questions || [])[i - 1];
     if (existingQ) {
       const opts = existingQ.options || [];
       const rowCount = Math.max(opts.length, 1);
@@ -2086,7 +2425,7 @@ function downloadSampleExcel() {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '考題範本');
-  XLSX.writeFile(wb, `${examData.title || '線上測驗'}_考題範本.xlsx`);
+  XLSX.writeFile(wb, `${currentExam.title || '線上測驗'}_考題範本.xlsx`);
 }
 
 // ==================== 考官端頁籤 2：當前場次成績統計與寄送 Email ====================
