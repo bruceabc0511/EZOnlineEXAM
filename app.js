@@ -1645,7 +1645,7 @@ function setupExamMetaAutoSync() {
     const libSelect = document.getElementById('examLibrarySelect');
     if (libSelect && libSelect.selectedOptions && libSelect.selectedOptions[0]) {
       const isActive = examData && examData.id === currentExam.id;
-      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢開放中]' : ' [當前]') : '';
+      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢測驗進行中]' : ' [📌當前試卷]') : '';
       libSelect.selectedOptions[0].textContent = `${currentExam.title || '未命名試卷'} (${(currentExam.questions || []).length} 題)${statusMark}`;
     }
 
@@ -1677,7 +1677,7 @@ function renderExaminerQuestionTab() {
       const opt = document.createElement('option');
       opt.value = exam.id;
       const isActive = examData && examData.id === exam.id;
-      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢開放中]' : ' [當前]') : '';
+      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢測驗進行中]' : ' [📌當前試卷]') : '';
       opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${statusMark}`;
       libSelect.appendChild(opt);
     });
@@ -1688,21 +1688,6 @@ function renderExaminerQuestionTab() {
   const activeBadge = document.getElementById('currentExamActiveBadge');
   const btnApply = document.getElementById('btnApplyAsActiveExam');
   const isCurrentActive = examData && examData.id === currentExam.id;
-
-  if (activeBadge) {
-    if (isCurrentActive) {
-      activeBadge.classList.remove('hidden');
-      if (examData.isExamOpen) {
-        activeBadge.className = 'badge badge-teal';
-        activeBadge.textContent = '🟢 進行中測驗試卷 (開放中)';
-      } else {
-        activeBadge.className = 'badge badge-secondary';
-        activeBadge.textContent = '⚪ 當前測驗試卷 (未開放)';
-      }
-    } else {
-      activeBadge.classList.add('hidden');
-    }
-  }
 
   if (btnApply) {
     btnApply.style.display = isCurrentActive ? 'none' : 'inline-block';

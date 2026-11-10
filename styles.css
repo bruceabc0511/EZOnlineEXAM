@@ -85,7 +85,7 @@ body {
 }
 
 .header-container {
-  max-width: 1240px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 14px 24px;
   display: flex;
@@ -275,7 +275,7 @@ body {
 
 /* ==================== 主容器與通用卡片 ==================== */
 .main-container {
-  max-width: 1240px;
+  max-width: 1440px;
   width: 100%;
   margin: 28px auto;
   padding: 0 24px 48px;

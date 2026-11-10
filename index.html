@@ -341,11 +341,14 @@
           <div class="card" style="margin-bottom: 20px;">
             <div class="section-title-row" style="flex-wrap: wrap; gap: 12px; align-items: center;">
               <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 280px;">
-                <h3 style="margin: 0; white-space: nowrap;">📚 試卷庫：</h3>
-                <select id="examLibrarySelect" style="flex: 1; max-width: 360px; font-weight: 600; padding: 6px 10px; border: 1.5px solid var(--border-color); border-radius: 6px; font-size: 0.95rem;" onchange="handleSelectExamFromLibrary(this.value)">
+                <h3 style="margin: 0; white-space: nowrap;">📚 試卷庫</h3>
+                <select id="examLibrarySelect"
+                  style="flex: 1; max-width: 660px; font-weight: 600; padding: 6px 10px; border: 1.5px solid var(--border-color); border-radius: 6px; font-size: 0.95rem;"
+                  onchange="handleSelectExamFromLibrary(this.value)">
                   <!-- 動態載入試卷清單 -->
                 </select>
-                <span id="currentExamActiveBadge" class="badge badge-teal hidden" style="white-space: nowrap;">🟢 當前應試卷</span>
+                <span id="currentExamActiveBadge" class="badge badge-teal hidden" style="white-space: nowrap;">🟢
+                  當前應試卷</span>
               </div>
               <div class="action-btn-group" style="display: flex; gap: 8px; flex-wrap: wrap;">
                 <button type="button" class="btn btn-secondary btn-sm" onclick="handleCreateNewExamPaper()">
@@ -357,13 +360,17 @@
                 <button type="button" class="btn btn-danger-outline btn-sm" onclick="handleDeleteExamPaper()">
                   🗑️ 刪除試卷
                 </button>
-                <button type="button" class="btn btn-accent btn-sm" id="btnApplyAsActiveExam" onclick="handleApplyAsActiveExam()" title="將目前選中的試卷設定為全體考生應試的試卷">
+                <button type="button" class="btn btn-accent btn-sm" id="btnApplyAsActiveExam"
+                  onclick="handleApplyAsActiveExam()" title="將目前選中的試卷設定為全體考生應試的試卷">
                   📌 設為當前測驗試卷
                 </button>
               </div>
             </div>
             <p class="text-muted text-sm" style="margin-top: 8px; margin-bottom: 0;">
-              💡 系統支援同時獨立保存多份不同試卷。您可在上方切換檢視與個別編輯，點選「📌 設為當前測驗試卷」或上方「開放作答」即可指派給考生應試。
+              💡 您可在上方切換檢視與個別編輯試卷。 點選「📌設為當前測驗試卷」再點選上方「開放作答」即可指派給考生作答。
+            </p>
+            <p class="text-muted text-sm" style="margin-top: 8px; margin-bottom: 0;">
+              ⚠️ 測驗進行中時，可進行個別試卷編輯但無法執行「📌設為當前測驗試卷」功能。
             </p>
           </div>
 
@@ -413,7 +420,7 @@
               <form id="examMetaForm" onsubmit="saveExamMetadata(event)">
                 <div class="form-group">
                   <label>試卷名稱</label>
-                  <input type="text" id="metaExamTitle" placeholder="請輸入試卷名稱 (可留空)">
+                  <input type="text" id="metaExamTitle" placeholder="請輸入試卷名稱">
                 </div>
                 <div class="form-row">
                   <div class="form-group">
@@ -422,7 +429,7 @@
                   </div>
                   <div class="form-group">
                     <label>作答時間 (分鐘)</label>
-                    <input type="number" id="metaExamDuration" min="1" max="300" placeholder="請輸入分鐘數 (例：60)">
+                    <input type="number" id="metaExamDuration" min="1" max="300" placeholder="請輸入分鐘數(例:60)">
                   </div>
                 </div>
                 <div class="meta-summary-strip">
