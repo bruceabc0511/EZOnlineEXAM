@@ -23,7 +23,7 @@ const STORAGE_KEYS = {
 
 // 考官端 PIN 碼與管理員金鑰安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊)
 const EXAMINER_PIN_SALT = 'HD_EXAM_SECURE_SALT_2026';
-const DEFAULT_EXAMINER_PIN_HASH = 'f019306584afed3d66239ede39a4ff22f3157215af1df5a891e79c725620ade4'; // 預設 PIN: 54321
+const DEFAULT_EXAMINER_PIN_HASH = '391f59f4ca8480648b504098e96bffa16f970d261a5cacea40fe5e7789c3f961'; // 預設 PIN: 9999
 
 const ADMIN_KEY_SALT = 'HD_EXAM_ADMIN_SALT_2026';
 const ADMIN_KEY_HASH = '4007531f25ed2a163a091d340f3fcb5d7bbabb98c22c65074d60152eec2c9b6a'; // 管理員金鑰驗證雜湊 (Chin7381236)
@@ -1439,6 +1439,14 @@ async function hashAdminKey(key) {
 
 function getStoredExaminerPinHash() {
   const customHash = localStorage.getItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+  // 若本機儲存的是舊版預設 PIN (54321 或 0000119) 之雜湊，自動清除回歸最新預設 9999
+  if (customHash && (
+    customHash === 'f019306584afed3d66239ede39a4ff22f3157215af1df5a891e79c725620ade4' ||
+    customHash === 'f77548413d6d3ced941815c06f4499b328e47f9893e15b6c2d4d3c8838efa166'
+  )) {
+    localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+    return DEFAULT_EXAMINER_PIN_HASH;
+  }
   if (customHash && customHash.trim()) {
     return customHash.trim().toLowerCase();
   }
@@ -1455,6 +1463,22 @@ async function handlePinLogin(event) {
     errBox.textContent = `⚠️ 連續錯誤次數過多，目前系統鎖定中！請等待 ${pinLockoutRemaining} 秒後再試。`;
     errBox.className = 'alert alert-danger';
     errBox.classList.remove('hidden');
+    return;
+  }
+
+  if (!pinInput) {
+    errBox.textContent = '⚠️ 請輸入考官登入 PIN 碼！';
+    errBox.className = 'alert alert-danger';
+    errBox.classList.remove('hidden');
+    pinInputEl.focus();
+    return;
+  }
+
+  if (!/^\d{4,12}$/.test(pinInput)) {
+    errBox.textContent = '❌ PIN 碼格式不符（僅能為 4 至 12 碼半形數字）！';
+    errBox.className = 'alert alert-danger';
+    errBox.classList.remove('hidden');
+    pinInputEl.select();
     return;
   }
 
@@ -1563,14 +1587,19 @@ async function handleUpdateExaminerPin(event) {
     return;
   }
 
-  // 2. 驗證新 PIN 碼格式
+  // 2. 驗證新 PIN 碼格式 (僅限半形數字，至少4碼，至多12碼)
   if (!newPin) {
     showPinAlert('⚠️ 請輸入新考官 PIN 碼！', 'danger');
     if (newPinEl) newPinEl.focus();
     return;
   }
-  if (newPin.length < 4) {
-    showPinAlert('⚠️ 新 PIN 碼長度建議至少 4 碼以上！', 'danger');
+  if (!/^\d+$/.test(newPin)) {
+    showPinAlert('⚠️ 考官 PIN 碼僅能使用半形數字 (0~9)，不得包含英文字母、空格或符號！', 'danger');
+    if (newPinEl) newPinEl.focus();
+    return;
+  }
+  if (newPin.length < 4 || newPin.length > 12) {
+    showPinAlert('⚠️ 考官 PIN 碼長度須介於 4 至 12 碼之間！', 'danger');
     if (newPinEl) newPinEl.focus();
     return;
   }
@@ -1611,11 +1640,11 @@ async function handleResetExaminerPin() {
   localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
   const alertBox = document.getElementById('updatePinAlertBox');
   if (alertBox) {
-    alertBox.textContent = '🔄 考官 PIN 碼已成功恢復為系統初始預設值 (預設 PIN: 54321)！';
+    alertBox.textContent = '🔄 考官 PIN 碼已成功恢復為系統初始預設值 (預設 PIN: 9999)！';
     alertBox.className = 'alert alert-info';
     alertBox.classList.remove('hidden');
   }
-  showToast('🔄 已成功恢復預設考官 PIN 碼 (54321)！');
+  showToast('🔄 已成功恢復預設考官 PIN 碼 (9999)！');
 }
 
 function showExaminerDashboard() {

@@ -282,8 +282,8 @@
 
         <form id="pinForm" onsubmit="handlePinLogin(event)">
           <div class="pin-input-wrap">
-            <input type="password" id="examinerPinInput" placeholder="請輸入 PIN 碼" required autocomplete="off"
-              inputmode="numeric">
+            <input type="password" id="examinerPinInput" placeholder="請輸入 4~12 碼數字 PIN 碼" required autocomplete="off"
+              inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="請輸入 4 至 12 碼半形數字">
           </div>
           <div id="pinErrorMsg" class="alert alert-danger hidden">PIN 碼錯誤，請重新確認！</div>
           <button type="submit" class="btn btn-primary btn-lg btn-block">驗證並進入後台</button>
@@ -316,6 +316,9 @@
             <button class="tab-btn active" data-tab="tabQuestions" onclick="switchExaminerTab('tabQuestions')">
               📂 考題管理與匯入
             </button>
+            <button class="tab-btn" data-tab="tabExamLink" onclick="switchExaminerTab('tabExamLink')">
+              🔗 測驗連結
+            </button>
             <button class="tab-btn" data-tab="tabScores" onclick="switchExaminerTab('tabScores')">
               🏆 成績總表 (<span id="tabScoreCount">0</span>)
             </button>
@@ -324,9 +327,6 @@
             </button>
             <button class="tab-btn" data-tab="tabHistory" onclick="switchExaminerTab('tabHistory')">
               🗂️ 歷次測驗紀錄 (<span id="tabHistoryCount">0</span>)
-            </button>
-            <button class="tab-btn" data-tab="tabExamLink" onclick="switchExaminerTab('tabExamLink')">
-              🔗 測驗連結
             </button>
             <button class="tab-btn" data-tab="tabSettings" onclick="switchExaminerTab('tabSettings')">
               ⚙️ 系統設定
@@ -731,7 +731,8 @@
               </div>
             </div>
 
-            <div style="margin-top: 16px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.9rem; color: var(--text-secondary);">
+            <div
+              style="margin-top: 16px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.9rem; color: var(--text-secondary);">
               <strong>💡 應試發送指南：</strong>
               <ul style="margin: 6px 0 0 18px; padding: 0; line-height: 1.7;">
                 <li>可直接點擊「📋 複製作答連結」貼入通訊軟體群組 (LINE/Teams/Meet) 或發信通知考生。</li>
@@ -778,9 +779,9 @@
 
             <!-- 右側：考官登入 PIN 碼設定 -->
             <div class="card">
-              <h3>🔐 考官登入 PIN 碼安全設定</h3>
+              <h3>🔐 考官登入 PIN 碼設定</h3>
               <p class="text-muted text-sm" style="margin-bottom:16px;">
-                為保障系統安全，變更考官登入 PIN 碼前必須先輸入<strong>管理員金鑰</strong>驗證身分。管理員金鑰與考官 PIN 碼皆採用 <code>Salt + SHA-256</code> 高強度加密雜湊防護，絕不於瀏覽器或原始碼中保存明文。
+                變更考官登入 PIN 碼或恢復預設 PIN 碼，必須先輸入<strong>管理員金鑰</strong>驗證身分才可變更。PIN 碼僅能使用 <strong>4 至 12 碼半形數字</strong>。
               </p>
 
               <form id="updatePinForm" onsubmit="handleUpdateExaminerPin(event)">
@@ -788,23 +789,26 @@
                   <label for="adminSecretKeyInput">
                     🔑 管理員金鑰驗證 <span class="required">*</span>
                   </label>
-                  <input type="password" id="adminSecretKeyInput" placeholder="請輸入管理員金鑰以取得變更權限" required autocomplete="off">
+                  <input type="password" id="adminSecretKeyInput" placeholder="請輸入管理員金鑰以取得變更權限" required
+                    autocomplete="off">
                 </div>
 
                 <div class="form-row">
                   <div class="form-group">
-                    <label for="newExaminerPinInput">新考官 PIN 碼 <span class="required">*</span></label>
-                    <input type="password" id="newExaminerPinInput" placeholder="請輸入新 PIN 碼 (至少 4 碼)" required autocomplete="new-password">
+                    <label for="newExaminerPinInput">新 PIN 碼 (4~12 位半形數字) <span class="required">*</span></label>
+                    <input type="password" id="newExaminerPinInput" placeholder="請輸入 4~12 碼半形數字" required
+                      autocomplete="new-password" inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="僅能使用 4 至 12 碼半形數字">
                   </div>
                   <div class="form-group">
                     <label for="confirmExaminerPinInput">確認新 PIN 碼 <span class="required">*</span></label>
-                    <input type="password" id="confirmExaminerPinInput" placeholder="請再次輸入新 PIN 碼" required autocomplete="new-password">
+                    <input type="password" id="confirmExaminerPinInput" placeholder="請再次輸入新 PIN 碼" required
+                      autocomplete="new-password" inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="僅能使用 4 至 12 碼半形數字">
                   </div>
                 </div>
 
                 <div class="action-btn-group" style="margin-top: 14px; flex-wrap: wrap;">
                   <button type="submit" class="btn btn-primary">
-                    🔒 驗證金鑰並變更 PIN 碼
+                    🔒 確認變更 PIN 碼
                   </button>
                   <button type="button" class="btn btn-outline" onclick="handleResetExaminerPin()">
                     🔄 恢復預設 PIN 碼
