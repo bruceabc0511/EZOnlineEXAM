@@ -17,12 +17,16 @@ const STORAGE_KEYS = {
   SUBMISSIONS: 'online_exam_submissions_v1',
   HISTORY_SESSIONS: 'online_exam_history_v1',
   GAS_URL: 'online_exam_gas_url_v1',
-  EXAM_LIBRARY: 'online_exam_library_v1'
+  EXAM_LIBRARY: 'online_exam_library_v1',
+  EXAMINER_PIN_HASH: 'online_exam_pin_hash_v1'
 };
 
-// 考官端 PIN 碼安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊；日後如需變更 PIN 碼請由 Antigravity 指令更新)
+// 考官端 PIN 碼與管理員金鑰安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊)
 const EXAMINER_PIN_SALT = 'HD_EXAM_SECURE_SALT_2026';
-const EXAMINER_PIN_HASH = 'f019306584afed3d66239ede39a4ff22f3157215af1df5a891e79c725620ade4';
+const DEFAULT_EXAMINER_PIN_HASH = 'f019306584afed3d66239ede39a4ff22f3157215af1df5a891e79c725620ade4'; // 預設 PIN: 54321
+
+const ADMIN_KEY_SALT = 'HD_EXAM_ADMIN_SALT_2026';
+const ADMIN_KEY_HASH = '4007531f25ed2a163a091d340f3fcb5d7bbabb98c22c65074d60152eec2c9b6a'; // 管理員金鑰驗證雜湊 (Chin7381236)
 
 // 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
@@ -289,13 +293,13 @@ function handleCloudPillClick() {
   if (activeSession.isActive) return;
   if (isExaminerAuthenticated) {
     switchRole('examiner');
-    switchExaminerTab('tabCloud');
+    switchExaminerTab('tabSettings');
   } else {
     const gasUrl = getActiveGasUrl();
     if (gasUrl) {
       syncStateFromCloud(false);
     } else {
-      showToast('💡 請切換至「考官端」➔「雲端多人連線與寄信設定」綁定 Google 雲端試算表');
+      showToast('💡 請切換至「考官端」➔「系統設定」綁定 Google 雲端試算表');
     }
   }
 }
@@ -1409,8 +1413,8 @@ function sha256Fallback(ascii) {
   return result;
 }
 
-async function hashExaminerPin(pin) {
-  const salted = `${EXAMINER_PIN_SALT}:${pin}`;
+async function hashWithSalt(salt, value) {
+  const salted = `${salt}:${value}`;
   if (window.crypto && window.crypto.subtle && typeof TextEncoder !== 'undefined') {
     try {
       const enc = new TextEncoder();
@@ -1423,6 +1427,22 @@ async function hashExaminerPin(pin) {
     }
   }
   return sha256Fallback(salted);
+}
+
+async function hashExaminerPin(pin) {
+  return hashWithSalt(EXAMINER_PIN_SALT, pin);
+}
+
+async function hashAdminKey(key) {
+  return hashWithSalt(ADMIN_KEY_SALT, key);
+}
+
+function getStoredExaminerPinHash() {
+  const customHash = localStorage.getItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+  if (customHash && customHash.trim()) {
+    return customHash.trim().toLowerCase();
+  }
+  return DEFAULT_EXAMINER_PIN_HASH;
 }
 
 async function handlePinLogin(event) {
@@ -1439,8 +1459,9 @@ async function handlePinLogin(event) {
   }
 
   const inputHash = await hashExaminerPin(pinInput);
+  const targetHash = getStoredExaminerPinHash();
 
-  if (inputHash === EXAMINER_PIN_HASH) {
+  if (inputHash === targetHash) {
     pinFailedAttempts = 0;
     isExaminerAuthenticated = true;
     errBox.classList.add('hidden');
@@ -1506,6 +1527,97 @@ function logoutExaminer() {
   document.getElementById('examinerPinInput').value = '';
 }
 
+async function handleUpdateExaminerPin(event) {
+  if (event) event.preventDefault();
+  const adminKeyEl = document.getElementById('adminSecretKeyInput');
+  const newPinEl = document.getElementById('newExaminerPinInput');
+  const confirmPinEl = document.getElementById('confirmExaminerPinInput');
+  const alertBox = document.getElementById('updatePinAlertBox');
+
+  const adminKey = (adminKeyEl ? adminKeyEl.value : '').trim();
+  const newPin = (newPinEl ? newPinEl.value : '').trim();
+  const confirmPin = (confirmPinEl ? confirmPinEl.value : '').trim();
+
+  function showPinAlert(msg, type) {
+    if (!alertBox) {
+      if (type === 'danger') alert(msg);
+      else showToast(msg);
+      return;
+    }
+    alertBox.textContent = msg;
+    alertBox.className = `alert alert-${type === 'danger' ? 'danger' : 'success'}`;
+    alertBox.classList.remove('hidden');
+  }
+
+  if (!adminKey) {
+    showPinAlert('⚠️ 請輸入管理員金鑰以取得變更權限！', 'danger');
+    if (adminKeyEl) adminKeyEl.focus();
+    return;
+  }
+
+  // 1. 驗證管理員金鑰 (採用 Salt + SHA-256 雜湊對比)
+  const inputAdminHash = await hashAdminKey(adminKey);
+  if (inputAdminHash !== ADMIN_KEY_HASH) {
+    showPinAlert('❌ 管理員金鑰驗證失敗！金鑰不正確，無法變更考官 PIN 碼。', 'danger');
+    if (adminKeyEl) adminKeyEl.select();
+    return;
+  }
+
+  // 2. 驗證新 PIN 碼格式
+  if (!newPin) {
+    showPinAlert('⚠️ 請輸入新考官 PIN 碼！', 'danger');
+    if (newPinEl) newPinEl.focus();
+    return;
+  }
+  if (newPin.length < 4) {
+    showPinAlert('⚠️ 新 PIN 碼長度建議至少 4 碼以上！', 'danger');
+    if (newPinEl) newPinEl.focus();
+    return;
+  }
+  if (newPin !== confirmPin) {
+    showPinAlert('⚠️ 兩次輸入的新 PIN 碼不一致，請重新確認！', 'danger');
+    if (confirmPinEl) confirmPinEl.focus();
+    return;
+  }
+
+  // 3. 計算新 PIN 碼的 Salt + SHA-256 雜湊並保存至本機安全性儲存
+  const newPinHash = await hashExaminerPin(newPin);
+  localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, newPinHash);
+
+  // 清空輸入框
+  if (adminKeyEl) adminKeyEl.value = '';
+  if (newPinEl) newPinEl.value = '';
+  if (confirmPinEl) confirmPinEl.value = '';
+
+  showPinAlert('✅ 考官登入 PIN 碼已成功更新！日後登入請使用新設定的 PIN 碼。', 'success');
+  showToast('✅ 考官 PIN 碼已成功變更！');
+}
+
+async function handleResetExaminerPin() {
+  const adminKey = prompt('請輸入管理員金鑰以恢復預設 PIN 碼：');
+  if (adminKey === null) return;
+  const trimmedKey = adminKey.trim();
+  if (!trimmedKey) {
+    alert('⚠️ 必須輸入管理員金鑰！');
+    return;
+  }
+
+  const inputAdminHash = await hashAdminKey(trimmedKey);
+  if (inputAdminHash !== ADMIN_KEY_HASH) {
+    alert('❌ 管理員金鑰驗證失敗！無法恢復預設 PIN 碼。');
+    return;
+  }
+
+  localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+  const alertBox = document.getElementById('updatePinAlertBox');
+  if (alertBox) {
+    alertBox.textContent = '🔄 考官 PIN 碼已成功恢復為系統初始預設值 (預設 PIN: 54321)！';
+    alertBox.className = 'alert alert-info';
+    alertBox.classList.remove('hidden');
+  }
+  showToast('🔄 已成功恢復預設考官 PIN 碼 (54321)！');
+}
+
 function showExaminerDashboard() {
   document.getElementById('examinerPinView').classList.add('hidden');
   document.getElementById('examinerDashboardView').classList.remove('hidden');
@@ -1517,7 +1629,7 @@ function switchExaminerTab(tabId) {
     btn.classList.toggle('active', btn.dataset.tab === tabId);
   });
 
-  ['tabQuestions', 'tabScores', 'tabAnalytics', 'tabHistory', 'tabCloud'].forEach(id => {
+  ['tabQuestions', 'tabScores', 'tabAnalytics', 'tabHistory', 'tabExamLink', 'tabSettings'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('hidden', id !== tabId);
   });
