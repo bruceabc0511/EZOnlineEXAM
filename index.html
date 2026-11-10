@@ -30,7 +30,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.16)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -61,10 +61,10 @@
       <div class="exam-live-bar hidden" id="examLiveBar">
         <div class="live-student-info">
           <span class="badge-live">測驗進行中</span>
-          <span id="liveStudentDisplay">王小明 (112001)</span>
+          <span id="liveStudentDisplay">王小明(112001)</span>
         </div>
         <div class="live-warning-status" id="liveWarningBadge" title="離開畫面達3次將強制交卷">
-          🛡️ 防作弊監控中 (警告: <span id="liveWarnCount">0</span>/3)
+          🛡️防作弊監控中(<span id="liveWarnCount">0</span>/3)
         </div>
         <div class="live-timer" id="liveTimerBox">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -282,7 +282,7 @@
 
         <form id="pinForm" onsubmit="handlePinLogin(event)">
           <div class="pin-input-wrap">
-            <input type="password" id="examinerPinInput" placeholder="請輸入 4~12 碼數字 PIN 碼" required autocomplete="off"
+            <input type="password" id="examinerPinInput" placeholder="＊＊＊＊" required autocomplete="off"
               inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="請輸入 4 至 12 碼半形數字">
           </div>
           <div id="pinErrorMsg" class="alert alert-danger hidden">PIN 碼錯誤，請重新確認！</div>
@@ -314,7 +314,7 @@
         <div class="dashboard-header card">
           <div class="dashboard-tabs">
             <button class="tab-btn active" data-tab="tabQuestions" onclick="switchExaminerTab('tabQuestions')">
-              📂 考題管理與匯入
+              📚 考題管理與匯入
             </button>
             <button class="tab-btn" data-tab="tabExamLink" onclick="switchExaminerTab('tabExamLink')">
               🔗 測驗連結
@@ -323,10 +323,10 @@
               🏆 成績總表 (<span id="tabScoreCount">0</span>)
             </button>
             <button class="tab-btn" data-tab="tabAnalytics" onclick="switchExaminerTab('tabAnalytics')">
-              📈 測驗結果分析
+              📈 測驗結果
             </button>
             <button class="tab-btn" data-tab="tabHistory" onclick="switchExaminerTab('tabHistory')">
-              🗂️ 歷次測驗紀錄 (<span id="tabHistoryCount">0</span>)
+              🗂️ 歷史紀錄 (<span id="tabHistoryCount">0</span>)
             </button>
             <button class="tab-btn" data-tab="tabSettings" onclick="switchExaminerTab('tabSettings')">
               ⚙️ 系統設定
@@ -781,34 +781,36 @@
             <div class="card">
               <h3>🔐 考官登入 PIN 碼設定</h3>
               <p class="text-muted text-sm" style="margin-bottom:16px;">
-                變更考官登入 PIN 碼或恢復預設 PIN 碼，必須先輸入<strong>管理員金鑰</strong>驗證身分才可變更。PIN 碼僅能使用 <strong>4 至 12 碼半形數字</strong>。
+                變更考官登入 PIN 碼或恢復預設 PIN 碼，必須先輸入<strong>系統管理員金鑰</strong>驗證身分才可變更。
               </p>
 
               <form id="updatePinForm" onsubmit="handleUpdateExaminerPin(event)">
                 <div class="form-group">
                   <label for="adminSecretKeyInput">
-                    🔑 管理員金鑰驗證 <span class="required">*</span>
+                    🔑 系統管理員金鑰驗證 <span class="required">*</span>
                   </label>
-                  <input type="password" id="adminSecretKeyInput" placeholder="請輸入管理員金鑰以取得變更權限" required
+                  <input type="password" id="adminSecretKeyInput" placeholder="請輸入系統管理員金鑰以取得變更權限" required
                     autocomplete="off">
                 </div>
 
                 <div class="form-row">
                   <div class="form-group">
-                    <label for="newExaminerPinInput">新 PIN 碼 (4~12 位半形數字) <span class="required">*</span></label>
-                    <input type="password" id="newExaminerPinInput" placeholder="請輸入 4~12 碼半形數字" required
-                      autocomplete="new-password" inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="僅能使用 4 至 12 碼半形數字">
+                    <label for="newExaminerPinInput">新 PIN 碼 (限用 4~12 碼半形數字) <span class="required">*</span></label>
+                    <input type="password" id="newExaminerPinInput" placeholder="請輸入新 PIN 碼" required
+                      autocomplete="new-password" inputmode="numeric" pattern="\d{4,12}" maxlength="12"
+                      title="僅能使用 4~12 碼半形數字">
                   </div>
                   <div class="form-group">
                     <label for="confirmExaminerPinInput">確認新 PIN 碼 <span class="required">*</span></label>
                     <input type="password" id="confirmExaminerPinInput" placeholder="請再次輸入新 PIN 碼" required
-                      autocomplete="new-password" inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="僅能使用 4 至 12 碼半形數字">
+                      autocomplete="new-password" inputmode="numeric" pattern="\d{4,12}" maxlength="12"
+                      title="僅能使用 4~12 碼半形數字">
                   </div>
                 </div>
 
                 <div class="action-btn-group" style="margin-top: 14px; flex-wrap: wrap;">
                   <button type="submit" class="btn btn-primary">
-                    🔒 確認變更 PIN 碼
+                    ✅ 確認變更 PIN 碼
                   </button>
                   <button type="button" class="btn btn-outline" onclick="handleResetExaminerPin()">
                     🔄 恢復預設 PIN 碼

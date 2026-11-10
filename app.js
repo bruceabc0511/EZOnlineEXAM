@@ -1288,7 +1288,7 @@ async function finalizeExamSubmission(statusReason) {
 
   if (statusReason.includes('強制終止')) {
     iconWrap.classList.add('forced');
-    titleEl.textContent = '⚠️ 測驗已遭系統強制終止並自動交卷';
+    titleEl.textContent = '測驗已遭系統強制終止並自動交卷';
     subEl.textContent = '因系統偵測到您離開作答畫面達 3 次，已依防作弊規定立即終止測驗並鎖定目前已填寫之答案。考試結束後將寄送成績單至您的信箱。';
   } else {
     iconWrap.classList.remove('forced');
@@ -1439,7 +1439,6 @@ async function hashAdminKey(key) {
 
 function getStoredExaminerPinHash() {
   const customHash = localStorage.getItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
-  // 若本機儲存的是舊版預設 PIN (54321 或 0000119) 之雜湊，自動清除回歸最新預設 9999
   if (customHash && (
     customHash === 'f019306584afed3d66239ede39a4ff22f3157215af1df5a891e79c725620ade4' ||
     customHash === 'f77548413d6d3ced941815c06f4499b328e47f9893e15b6c2d4d3c8838efa166'
