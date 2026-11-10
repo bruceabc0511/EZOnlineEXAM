@@ -347,10 +347,17 @@ async function syncStateFromCloud(silent = true) {
         historySessions = json.historySessions;
         localStorage.setItem(STORAGE_KEYS.HISTORY_SESSIONS, JSON.stringify(historySessions));
       }
+      // 讀取試卷庫：雙軌相容讀取（優先讀取專屬 examLibrary 欄位，若無則讀取 examData.examLibrary 備援）
+      const cloudLibrary = (Array.isArray(json.examLibrary) && json.examLibrary.length > 0)
+        ? json.examLibrary
+        : (json.examData && Array.isArray(json.examData.examLibrary) && json.examData.examLibrary.length > 0
+            ? json.examData.examLibrary
+            : null);
+
       // 當考官已登入後台或剛異動過試卷庫時，背景靜默輪詢 (silent=true) 不覆蓋本機試卷庫，避免新匯入或手動編輯內容被雲端舊狀態覆蓋
       const shouldSyncExamLibrary = !silent || (!isExaminerAuthenticated && (Date.now() - lastExamLibrarySaveAt > 15000));
-      if (shouldSyncExamLibrary && Array.isArray(json.examLibrary) && json.examLibrary.length > 0) {
-        examLibrary = json.examLibrary;
+      if (shouldSyncExamLibrary && cloudLibrary) {
+        examLibrary = cloudLibrary;
         localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
         if (!currentSelectedExamId || !examLibrary.some(e => e.id === currentSelectedExamId)) {
           currentSelectedExamId = examLibrary[0].id;
@@ -452,7 +459,14 @@ async function testGasConnection() {
       localStorage.setItem(STORAGE_KEYS.GAS_URL, url);
       await saveGlobalBoundGasUrl(url);
       updateCloudStatusUI();
-      showToast('✅ 連線成功並已完成跨裝置綁定！' + (json.message || '雲端資料庫與寄信服務運作正常'));
+
+      if (json.hasExamLibrarySupport) {
+        showToast('✅ 連線成功！試算表雲端資料庫（支援獨立試卷庫工作表）運作正常！');
+      } else {
+        alert(
+          '✅ 連線成功！雲端資料庫運作正常。\n\n💡 系統偵測到試算表 Apps Script 目前處於舊版部署（已自動啟用狀態庫雙軌同步，試卷庫跨裝置切換不受影響）。\n若您希望在 Google 試算表中看到獨立的【試卷庫資料】工作表，請於 Apps Script「管理部署作業」編輯時選擇「建立新版本」重新部署。'
+        );
+      }
     } else {
       showToast('⚠️ 收到回應但狀態異常，請確認部署權限設為「所有人」');
     }
@@ -555,6 +569,9 @@ function loadExamData() {
 
 function saveExamDataToStorage(syncCloud = true) {
   lastExamDataSaveAt = Date.now();
+  if (examData && typeof examLibrary !== 'undefined') {
+    examData.examLibrary = examLibrary;
+  }
   localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
   renderStudentLoginMeta();
   if (isExaminerAuthenticated) {
@@ -563,7 +580,8 @@ function saveExamDataToStorage(syncCloud = true) {
   if (syncCloud && getActiveGasUrl()) {
     postToCloud({
       action: 'saveExamData',
-      examData: examData
+      examData: examData,
+      examLibrary: (typeof examLibrary !== 'undefined' ? examLibrary : [])
     });
   }
 }
@@ -577,6 +595,11 @@ function loadExamLibrary() {
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed;
       }
+    }
+    // 降級嘗試從 examData.examLibrary 讀取
+    if (typeof examData !== 'undefined' && examData && Array.isArray(examData.examLibrary) && examData.examLibrary.length > 0) {
+      localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examData.examLibrary));
+      return examData.examLibrary;
     }
   } catch (e) {
     console.error('載入試卷庫失敗:', e);
@@ -601,21 +624,29 @@ function loadExamLibrary() {
 function saveExamLibraryToStorage(syncCloud = true) {
   lastExamLibrarySaveAt = Date.now();
   localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
+
+  // 同步將試卷庫附加於 examData 中，確保在任何舊版 GAS 部署環境亦能 100% 透過系統狀態庫完成跨裝置同步
+  if (examData) {
+    examData.examLibrary = examLibrary;
+    localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
+  }
+
   if (syncCloud && getActiveGasUrl()) {
+    // 雙軌同步：先呼叫 saveExamData（保證跨裝置與跨分頁同步），再呼叫 saveExamLibrary（專屬試卷庫資料工作表）
+    postToCloud({
+      action: 'saveExamData',
+      examData: examData,
+      examLibrary: examLibrary
+    });
     postToCloud({
       action: 'saveExamLibrary',
       examLibrary: examLibrary
     }).then(res => {
       if (res && res.status === 'error' && String(res.message).includes('saveExamLibrary')) {
-        console.warn('雲端 Apps Script 尚未部署最新程式碼 (不支援 saveExamLibrary)，嘗試以 saveExamData 備援同步');
-        postToCloud({
-          action: 'saveExamData',
-          examData: examData,
-          examLibrary: examLibrary
-        });
+        console.warn('雲端 Apps Script 尚未部署最新 Code.gs (不支援 saveExamLibrary)，已透過 saveExamData 完成雙軌同步備援');
       }
     }).catch(err => {
-      console.error('儲存試卷庫至雲端失敗:', err);
+      console.error('儲存試卷庫專屬工作表失敗:', err);
     });
   }
 }

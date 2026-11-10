@@ -44,6 +44,8 @@ function doGet(e) {
       return jsonResponse({
         status: 'success',
         message: 'Google 試算表雲端測驗資料庫與自動寄信服務運作正常！',
+        hasExamLibrarySupport: true,
+        version: '2026-11-10-v2-exam-library',
         timestamp: new Date().toISOString()
       });
     }
