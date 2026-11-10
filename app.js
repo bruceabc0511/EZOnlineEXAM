@@ -253,7 +253,7 @@ function updateCloudStatusUI() {
     if (qrImg && qrHint) {
       qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(shareUrl)}`;
       qrImg.classList.remove('hidden');
-      qrHint.innerHTML = '考生可使用手機相機掃描上方 QR Code 直接進入本次測驗<br><span style="color:var(--primary); font-weight:600; cursor:pointer;" onclick="openStandaloneQrPage()">🔍 點選 QR Code 可開啟獨立頁面單獨顯示</span>';
+      qrHint.innerHTML = '<span style="color:var(--primary); font-weight:600; cursor:pointer;" onclick="openStandaloneQrPage()">🔍 點選 QR Code 可開啟獨立頁面單獨顯示</span>';
     }
   } else {
     if (dot) dot.classList.add('offline');

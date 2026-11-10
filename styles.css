@@ -1051,9 +1051,12 @@ input:disabled {
 }
 
 @keyframes examinerTimerPulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.025);
     box-shadow: 0 4px 18px rgba(225, 29, 72, 0.55);
@@ -1775,7 +1778,14 @@ body.examiner-mode .btn-primary:hover {
   body.exam-mode .main-container {
     margin-top: 14px;
   }
+
+  .Powered {
+    font-size: 2px;
+    align-items: center;
+  }
 }
+
+
 
 @media (max-width: 360px) {
   body.exam-mode .badge-live {
