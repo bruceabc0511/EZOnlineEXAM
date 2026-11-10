@@ -636,6 +636,19 @@ function saveExamLibraryToStorage(syncCloud = true) {
     }).then(res => {
       if (res && res.status === 'success') {
         console.log('試卷庫已成功同步至「試卷庫資料」工作表');
+      } else if (res && res.status === 'error' && String(res.message || '').includes('saveExamLibrary')) {
+        // 雲端 Apps Script 網址仍在執行舊版程式碼，無法寫入「試卷庫資料」工作表
+        if (!window.__examLibraryOldGasWarned) {
+          window.__examLibraryOldGasWarned = true;
+          alert(
+            '⚠️ 試卷庫未能寫入 Google 試算表！\n\n' +
+            '原因：目前綁定的 Apps Script 網址仍在執行「舊版」程式碼（不支援 saveExamLibrary）。\n\n' +
+            '請至 Apps Script：部署 > 管理部署作業 > 編輯（鉛筆）> 版本選「建立新版本」> 部署。\n' +
+            '（請勿使用「新增部署作業」，那會產生新網址，系統仍會連到舊網址）'
+          );
+        }
+      } else if (!res) {
+        console.warn('試卷庫同步至雲端失敗（無回應或網路錯誤）');
       }
     }).catch(err => {
       console.error('儲存試卷庫專屬工作表失敗:', err);
@@ -1808,7 +1821,7 @@ function saveExamMetadata(event) {
 
   saveExamLibraryToStorage(true);
   refreshExaminerAllViews();
-  showImportAlert(`已成功儲存試卷【${currentExam.title}】的設定並同步至試題資料庫！`, 'success');
+  showImportAlert(`已成功儲存試卷【${currentExam.title}】的設定並同步至試卷資料庫！`, 'success');
 }
 
 function deleteQuestion(qId) {
