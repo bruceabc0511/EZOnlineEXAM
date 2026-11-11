@@ -48,6 +48,11 @@ let currentSelectedExamId = (examData && examData.id && examLibrary.some(e => e.
 let submissions = loadSubmissions();
 let historySessions = loadHistorySessions();
 let isExaminerAuthenticated = false;
+let currentExaminerAuthToken = '';
+let lastCloudUpdatedAt = '';
+let lastCloudSyncExaminer = false;
+let currentActiveExaminerTab = 'tabQuestions';
+let cloudPollIntervalMs = 10000;
 let currentViewingHistoryId = null;
 let cloudPollTimer = null;
 let examinerLiveTimerInterval = null;
@@ -306,17 +311,35 @@ function handleCloudPillClick() {
   }
 }
 
+function adjustCloudPollInterval(intervalMs) {
+  if (cloudPollIntervalMs === intervalMs && cloudPollTimer) return;
+  cloudPollIntervalMs = intervalMs;
+  startCloudPolling();
+}
+
 function startCloudPolling() {
   if (cloudPollTimer) clearInterval(cloudPollTimer);
   cloudPollTimer = setInterval(() => {
-    // 僅在非作答進行中且已設定雲端時背景靜默同步 (每 10 秒同步試卷開放狀態與最新成績)
+    // 僅在非作答進行中且已設定雲端時背景靜默同步
     if (!activeSession.isActive && getActiveGasUrl()) {
       syncStateFromCloud(true);
     }
-  }, 10000);
+  }, cloudPollIntervalMs);
 }
 
-async function syncStateFromCloud(silent = true) {
+// 效能優化：分頁隱藏時降頻至 30 秒，切回前台時立即檢查並恢復 10 秒
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    adjustCloudPollInterval(30000);
+  } else {
+    adjustCloudPollInterval(10000);
+    if (!activeSession.isActive && getActiveGasUrl()) {
+      syncStateFromCloud(true);
+    }
+  }
+});
+
+async function syncStateFromCloud(silent = true, force = false) {
   const gasUrl = getActiveGasUrl();
   if (!gasUrl) {
     if (!silent) {
@@ -330,31 +353,23 @@ async function syncStateFromCloud(silent = true) {
   }
 
   try {
-    const res = await fetch(`${gasUrl}?action=getExamState&_t=${Date.now()}`);
+    const tokenParam = (isExaminerAuthenticated && currentExaminerAuthToken)
+      ? `&token=${encodeURIComponent(currentExaminerAuthToken)}`
+      : '';
+    const res = await fetch(`${gasUrl}?action=getExamState${tokenParam}&_t=${Date.now()}`);
     const json = await res.json();
     if (json && json.status === 'success') {
-      // 當考官已登入後台或剛修改過試卷設定時，背景輪詢 (silent=true) 不覆蓋本機 examData，避免手動修改的「當前試卷資訊」跳回舊範本內容
-      const shouldSyncExamData = !silent || (!isExaminerAuthenticated && (Date.now() - lastExamDataSaveAt > 15000));
-      if (shouldSyncExamData && json.examData && Array.isArray(json.examData.questions)) {
-        examData = {
-          id: json.examData.id || 'exam_default',
-          title: json.examData.title ?? '',
-          durationMinutes: json.examData.durationMinutes === '' ? '' : (Number(json.examData.durationMinutes) || 60),
-          examDate: normalizeDateForInput(json.examData.examDate ?? ''),
-          isExamOpen: Boolean(json.examData.isExamOpen),
-          openedAt: json.examData.openedAt ? Number(json.examData.openedAt) : (json.examData.isExamOpen ? (examData.openedAt || Date.now()) : null),
-          questions: json.examData.questions
-        };
-        localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
+      // 效能優化：若背景靜默輪詢時雲端 updatedAt 毫無變更且考官授權身分未切換，直接跳過重繪以節省 CPU
+      if (silent && !force && json.updatedAt && json.updatedAt === lastCloudUpdatedAt && lastCloudSyncExaminer === isExaminerAuthenticated) {
+        updateCloudStatusUI();
+        return true;
       }
-      if (Array.isArray(json.submissions)) {
-        submissions = json.submissions;
-        localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+      if (json.updatedAt) {
+        lastCloudUpdatedAt = json.updatedAt;
       }
-      if (Array.isArray(json.historySessions)) {
-        historySessions = json.historySessions;
-        localStorage.setItem(STORAGE_KEYS.HISTORY_SESSIONS, JSON.stringify(historySessions));
-      }
+      const roleJustUpgraded = isExaminerAuthenticated && !lastCloudSyncExaminer;
+      lastCloudSyncExaminer = isExaminerAuthenticated;
+
       // 讀取試卷庫：雙軌相容讀取（優先讀取專屬 examLibrary 欄位，若無則讀取 examData.examLibrary 備援）
       const cloudLibrary = (Array.isArray(json.examLibrary) && json.examLibrary.length > 0)
         ? json.examLibrary
@@ -363,13 +378,63 @@ async function syncStateFromCloud(silent = true) {
           : null);
 
       // 當考官已登入後台或剛異動過試卷庫時，背景靜默輪詢 (silent=true) 不覆蓋本機試卷庫，避免新匯入或手動編輯內容被雲端舊狀態覆蓋
-      const shouldSyncExamLibrary = !silent || (!isExaminerAuthenticated && (Date.now() - lastExamLibrarySaveAt > 15000));
+      const shouldSyncExamLibrary = !silent || force || roleJustUpgraded || (!isExaminerAuthenticated && (Date.now() - lastExamLibrarySaveAt > 15000));
       if (shouldSyncExamLibrary && cloudLibrary) {
         examLibrary = cloudLibrary;
         localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
         if (!currentSelectedExamId || !examLibrary.some(e => e.id === currentSelectedExamId)) {
           currentSelectedExamId = examLibrary[0].id;
         }
+      }
+
+      // 當考官已登入後台或剛修改過試卷設定時，背景輪詢 (silent=true) 不覆蓋本機 examData，避免手動修改的「當前試卷資訊」跳回舊範本內容
+      const shouldSyncExamData = !silent || force || roleJustUpgraded || (!isExaminerAuthenticated && (Date.now() - lastExamDataSaveAt > 15000));
+      if (shouldSyncExamData && json.examData && Array.isArray(json.examData.questions)) {
+        const localAnswerMap = {};
+        if (examData && Array.isArray(examData.questions)) {
+          examData.questions.forEach(q => {
+            if (q && q.id && q.answer !== undefined) localAnswerMap[q.id] = q.answer;
+          });
+        }
+        const matchedLibExam = Array.isArray(examLibrary)
+          ? examLibrary.find(e => e && e.id === (json.examData.id || 'exam_default'))
+          : null;
+        if (matchedLibExam && Array.isArray(matchedLibExam.questions)) {
+          matchedLibExam.questions.forEach(q => {
+            if (q && q.id && q.answer !== undefined && localAnswerMap[q.id] === undefined) {
+              localAnswerMap[q.id] = q.answer;
+            }
+          });
+        }
+
+        const mergedQuestions = json.examData.questions.map(q => {
+          if (q && q.answer === undefined && localAnswerMap[q.id] !== undefined) {
+            return Object.assign({}, q, { answer: localAnswerMap[q.id] });
+          }
+          return q;
+        });
+
+        examData = {
+          id: json.examData.id || 'exam_default',
+          title: json.examData.title ?? '',
+          durationMinutes: json.examData.durationMinutes === '' ? '' : (Number(json.examData.durationMinutes) || 60),
+          examDate: normalizeDateForInput(json.examData.examDate ?? ''),
+          isExamOpen: Boolean(json.examData.isExamOpen),
+          openedAt: json.examData.openedAt ? Number(json.examData.openedAt) : (json.examData.isExamOpen ? (examData.openedAt || Date.now()) : null),
+          questions: mergedQuestions
+        };
+        // 若為考官授權同步，或題目含有完整答案，才寫入本機儲存，避免考生模式無答案資料覆蓋單機版題庫
+        if (json.isExaminer !== false || mergedQuestions.every(q => q && q.answer !== undefined)) {
+          localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(examData));
+        }
+      }
+      if (json.isExaminer !== false && Array.isArray(json.submissions)) {
+        submissions = json.submissions;
+        localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+      }
+      if (json.isExaminer !== false && Array.isArray(json.historySessions)) {
+        historySessions = json.historySessions;
+        localStorage.setItem(STORAGE_KEYS.HISTORY_SESSIONS, JSON.stringify(historySessions));
       }
 
       if (!activeSession.isActive) {
@@ -395,24 +460,41 @@ async function syncStateFromCloud(silent = true) {
   return false;
 }
 
-async function postToCloud(payload) {
+async function postToCloud(payload, maxRetries = 2) {
   const gasUrl = getActiveGasUrl();
   if (!gasUrl) return null;
 
-  try {
-    // 使用 text/plain 避免觸發 CORS OPTIONS preflight，確保 Google Apps Script Web App 100% 正常接收
-    const res = await fetch(gasUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=utf-8'
-      },
-      body: JSON.stringify(payload)
-    });
-    return await res.json();
-  } catch (err) {
-    console.error('Post to cloud error:', err);
-    return null;
+  // 自動附加考官身分驗證 Token，確保後端管理操作通過身分審查
+  if (isExaminerAuthenticated && currentExaminerAuthToken && !payload.authPinHash) {
+    payload.authPinHash = currentExaminerAuthToken;
   }
+
+  // 併發退避重試機制：當後端鎖服務繁忙 (status: 'busy') 時自動延遲重試，防止交卷遺漏
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(gasUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data && data.status === 'busy' && attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
+        continue;
+      }
+      return data;
+    } catch (err) {
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
+        continue;
+      }
+      console.error('Post to cloud error:', err);
+      return null;
+    }
+  }
+  return null;
 }
 
 async function saveGasUrlConfig() {
@@ -973,16 +1055,30 @@ async function handleStartExam(event) {
     return;
   }
 
-  // 若已連線雲端，開考前先向雲端拉取最新題庫、開放狀態與已交卷名單
-  if (getActiveGasUrl()) {
+  // 若已連線雲端，開考前先向雲端拉取最新題庫、開放狀態並驗證 Email 是否已作答
+  const gasUrl = getActiveGasUrl();
+  if (gasUrl) {
     if (startBtn) {
       startBtn.disabled = true;
       startBtn.textContent = '正在同步雲端最新試卷...';
     }
     await syncStateFromCloud(true);
+    let cloudEmailDuplicate = null;
+    try {
+      const checkRes = await fetch(`${gasUrl}?action=checkEmail&email=${encodeURIComponent(emailInput)}&_t=${Date.now()}`);
+      const checkJson = await checkRes.json();
+      if (checkJson && checkJson.status === 'success' && checkJson.exists) {
+        cloudEmailDuplicate = checkJson;
+      }
+    } catch (e) {}
     if (startBtn) {
       startBtn.disabled = false;
       startBtn.innerHTML = `進入全螢幕並開始作答 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
+    }
+    if (cloudEmailDuplicate) {
+      const timeNote = cloudEmailDuplicate.submittedAt ? ` (${cloudEmailDuplicate.submittedAt})` : '';
+      showLoginError(`電子郵件「${emailInput}」已於本場次${timeNote}完成交卷，同一組 Email 限作答一次！`);
+      return;
     }
   }
 
@@ -1319,19 +1415,20 @@ async function finalizeExamSubmission(statusReason) {
     }
   } catch (e) { }
 
-  // 計算成績 (滿分 100 分，依題數自動配分)
+  // 計算成績 (支援本機離線與伺服器雙重校驗)
   const totalQ = examData.questions.length;
   let correctCount = 0;
   const answerDetails = {};
 
   examData.questions.forEach(q => {
     const selected = activeSession.answers[q.id] || '';
-    const isCorrect = selected.toUpperCase() === q.answer.toUpperCase();
+    const hasAnswer = Boolean(q.answer);
+    const isCorrect = hasAnswer ? (selected.toUpperCase() === String(q.answer).toUpperCase()) : false;
     if (isCorrect) correctCount++;
     answerDetails[q.id] = {
       selected: selected || '未作答',
-      correctAnswer: q.answer,
-      isCorrect
+      correctAnswer: q.answer || '',
+      isCorrect: hasAnswer ? isCorrect : false
     };
   });
 
@@ -1346,7 +1443,7 @@ async function finalizeExamSubmission(statusReason) {
   const submittedAt = formatDateTime(new Date());
 
   const record = {
-    id: 'SUB_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+    id: (window.crypto && crypto.randomUUID) ? ('SUB_' + crypto.randomUUID().substring(0, 12)) : ('SUB_' + Date.now() + '_' + Math.floor(Math.random() * 1000)),
     examTitle: examData.title,
     examDate: examData.examDate,
     studentName: activeSession.studentName,
@@ -1362,6 +1459,7 @@ async function finalizeExamSubmission(statusReason) {
     timeSpentFormatted: formattedTimeSpent,
     submittedAt,
     emailSentAt: '',
+    answers: Object.assign({}, activeSession.answers),
     answerDetails
   };
 
@@ -1409,6 +1507,14 @@ async function finalizeExamSubmission(statusReason) {
     });
     if (cloudRes && (cloudRes.status === 'success' || cloudRes.status === 'duplicate')) {
       cloudStatusEl.innerHTML = '<span style="color:var(--primary);">✅ 已成功上傳</span>';
+      // 若後端完成客觀權威評分，同步更新本機端分數與作答明細
+      if (cloudRes.record) {
+        record.score = cloudRes.record.score;
+        record.correctCount = cloudRes.record.correctCount;
+        record.totalQuestions = cloudRes.record.totalQuestions;
+        record.answerDetails = cloudRes.record.answerDetails;
+        localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+      }
     } else {
       cloudStatusEl.innerHTML = '<span style="color:var(--accent-dark);">⚠️ 已儲存於本機 (雲端連線逾時)</span>';
     }
@@ -1579,17 +1685,41 @@ async function handlePinLogin(event) {
   const inputHash = await hashExaminerPin(pinInput);
   const targetHash = getStoredExaminerPinHash();
 
-  if (inputHash === targetHash) {
+  let isPinValid = (inputHash === targetHash);
+  let cloudLockedMsg = '';
+
+  // 若已連線雲端，優先向雲端驗證 PIN 雜湊（支援跨裝置變更 PIN 同步與雲端防暴力破解鎖定）
+  if (getActiveGasUrl()) {
+    const verifyRes = await postToCloud({
+      action: 'verifyExaminer',
+      authPinHash: inputHash
+    });
+    if (verifyRes && verifyRes.status === 'success') {
+      isPinValid = true;
+      localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, inputHash);
+    } else if (verifyRes && verifyRes.status === 'locked') {
+      isPinValid = false;
+      cloudLockedMsg = verifyRes.message || '❌ PIN 碼錯誤次數過多，雲端已暫時鎖定 5 分鐘！';
+    } else if (verifyRes && verifyRes.status === 'unauthorized') {
+      isPinValid = false;
+    }
+  }
+
+  if (isPinValid) {
     pinFailedAttempts = 0;
     isExaminerAuthenticated = true;
+    currentExaminerAuthToken = inputHash;
     errBox.classList.add('hidden');
     showExaminerDashboard();
     if (getActiveGasUrl()) {
-      syncStateFromCloud(true);
+      await syncStateFromCloud(true, true);
     }
   } else {
     pinFailedAttempts++;
-    if (pinFailedAttempts >= 5) {
+    if (cloudLockedMsg) {
+      startPinLockout(30);
+      errBox.textContent = cloudLockedMsg;
+    } else if (pinFailedAttempts >= 5) {
       startPinLockout(30);
       errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，系統已暫時鎖定 30 秒！';
     } else {
@@ -1637,6 +1767,7 @@ function startPinLockout(seconds) {
 
 function logoutExaminer() {
   isExaminerAuthenticated = false;
+  currentExaminerAuthToken = '';
   isGasUrlUnlockedBySecret = false;
   gasSecretClickCount = 0;
   updateCloudStatusUI();
@@ -1706,11 +1837,21 @@ async function handleUpdateExaminerPin(event) {
   // 3. 計算新 PIN 碼的 Salt + SHA-256 雜湊並保存至本機安全性儲存
   const newPinHash = await hashExaminerPin(newPin);
   localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, newPinHash);
+  currentExaminerAuthToken = newPinHash;
 
   // 清空輸入框
   if (adminKeyEl) adminKeyEl.value = '';
   if (newPinEl) newPinEl.value = '';
   if (confirmPinEl) confirmPinEl.value = '';
+
+  // 同步新 PIN 雜湊至雲端後端，確保雲端立即同步認證
+  if (getActiveGasUrl()) {
+    postToCloud({
+      action: 'updateExaminerPin',
+      adminKey: adminKey,
+      newPinHash: newPinHash
+    });
+  }
 
   showPinAlert('✅ 考官登入 PIN 碼已成功更新！日後登入請使用新設定的 PIN 碼。', 'success');
   showToast('✅ 考官 PIN 碼已成功變更！');
@@ -1732,6 +1873,16 @@ async function handleResetExaminerPin() {
   }
 
   localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+  currentExaminerAuthToken = DEFAULT_EXAMINER_PIN_HASH;
+
+  if (getActiveGasUrl()) {
+    postToCloud({
+      action: 'updateExaminerPin',
+      adminKey: trimmedKey,
+      newPinHash: DEFAULT_EXAMINER_PIN_HASH
+    });
+  }
+
   const alertBox = document.getElementById('updatePinAlertBox');
   if (alertBox) {
     alertBox.textContent = '🔄 考官 PIN 碼已成功恢復為系統初始預設值 (9999)！';
@@ -1744,10 +1895,11 @@ async function handleResetExaminerPin() {
 function showExaminerDashboard() {
   document.getElementById('examinerPinView').classList.add('hidden');
   document.getElementById('examinerDashboardView').classList.remove('hidden');
-  refreshExaminerAllViews();
+  refreshExaminerAllViews(true);
 }
 
 function switchExaminerTab(tabId) {
+  currentActiveExaminerTab = tabId;
   document.querySelectorAll('.dashboard-tabs .tab-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tabId);
   });
@@ -1760,13 +1912,29 @@ function switchExaminerTab(tabId) {
   refreshExaminerAllViews();
 }
 
-function refreshExaminerAllViews() {
+function refreshExaminerAllViews(forceAll = false) {
   renderExamControlBanner();
-  renderExaminerQuestionTab();
-  renderExaminerScoresTab();
-  renderExaminerAnalyticsTab();
-  renderExaminerHistoryTab();
   updateCloudStatusUI();
+
+  // 更新頁籤計數徽章
+  const scoreBadge = document.getElementById('tabScoreCount');
+  if (scoreBadge) scoreBadge.textContent = submissions.length;
+  const histBadge = document.getElementById('tabHistoryCount');
+  if (histBadge) histBadge.textContent = historySessions.length;
+
+  // 效能優化：僅渲染目前活動的分頁，避免每次輪詢全量重建所有 DOM
+  if (forceAll || currentActiveExaminerTab === 'tabQuestions') {
+    renderExaminerQuestionTab();
+  }
+  if (forceAll || currentActiveExaminerTab === 'tabScores') {
+    renderExaminerScoresTab();
+  }
+  if (forceAll || currentActiveExaminerTab === 'tabAnalytics') {
+    renderExaminerAnalyticsTab();
+  }
+  if (forceAll || currentActiveExaminerTab === 'tabHistory') {
+    renderExaminerHistoryTab();
+  }
 }
 
 // ==================== 考官端頁籤 1：試卷庫與考題管理 (支援多份試卷獨立保存) ====================
