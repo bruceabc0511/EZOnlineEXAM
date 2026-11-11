@@ -861,48 +861,66 @@ function hideTokenInvalidView() {
 
 async function validateCurrentExamToken(urlToken) {
   if (!urlToken) {
-    showTokenInvalidView('⚠️ 請使用考官提供之測驗連結進入作答！');
+    showTokenInvalidView('⚠️ 請使用考官提供之專屬測驗連結進入作答！');
     return false;
   }
 
-  // 1. 本地初步校驗
-  const localToken = examData.activeExamToken;
-  if (!localToken || !localToken.token) {
-    showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>目前無有效之測驗連結，請聯繫考官確認。');
-    return false;
-  }
-  if (localToken.token !== urlToken) {
-    showTokenInvalidView('⚠️ 此測驗連結已失效！考官已重新生成新連結，先前連結已立即作廢。<br>請向考官索取最新測驗連結！');
-    return false;
-  }
-  if (Date.now() > Number(localToken.expiresAt || 0)) {
-    showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
-    return false;
-  }
-
-  // 2. 雲端權威校驗 (由 Google 伺服器時間防竄改)
   const gasUrl = getActiveGasUrl();
+  let verifiedOnCloud = false;
+
+  // 1. 優先執行雲端權威校驗 (跨裝置/新設備進入時，直接由 Google 伺服器進行即時防竄改驗證)
   if (gasUrl) {
     try {
       const res = await fetch(`${gasUrl}?action=checkState&token=${encodeURIComponent(urlToken)}&_t=${Date.now()}`);
       const json = await res.json();
       if (json && json.status === 'success') {
+        verifiedOnCloud = true;
         if (json.activeExamToken) {
           examData.activeExamToken = json.activeExamToken;
+          try {
+            const raw = localStorage.getItem(STORAGE_KEYS.EXAM_DATA);
+            const parsed = raw ? JSON.parse(raw) : {};
+            parsed.activeExamToken = json.activeExamToken;
+            parsed.isExamOpen = Boolean(json.isExamOpen);
+            localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(parsed));
+          } catch (e) { }
         }
-        if (json.tokenStatus === 'invalid') {
+        examData.isExamOpen = Boolean(json.isExamOpen);
+
+        if (json.tokenStatus === 'valid') {
+          hideTokenInvalidView();
+          renderStudentLoginMeta();
+          return true;
+        } else if (json.tokenStatus === 'invalid') {
           showTokenInvalidView('⚠️ 此測驗連結已失效！考官已重新生成新連結，先前連結已立即作廢。<br>請向考官索取最新測驗連結！');
           return false;
         } else if (json.tokenStatus === 'expired') {
           showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
           return false;
         } else if (json.tokenStatus === 'not_generated') {
-          showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>請聯繫考官確認最新測驗連結。');
+          showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>目前無有效之測驗連結，請聯繫考官確認。');
           return false;
         }
       }
     } catch (e) {
-      console.warn('雲端校驗 Token 失敗，使用本機狀態繼續:', e);
+      console.warn('雲端校驗 Token 網路失敗，降級使用本機狀態比對:', e);
+    }
+  }
+
+  // 2. 僅在無雲端網址或離線網路異常時，才降級比對本機狀態
+  if (!verifiedOnCloud) {
+    const localToken = examData.activeExamToken;
+    if (!localToken || !localToken.token) {
+      showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>目前無有效之測驗連結，請聯繫考官確認。');
+      return false;
+    }
+    if (localToken.token !== urlToken) {
+      showTokenInvalidView('⚠️ 此測驗連結已失效！考官已重新生成新連結，先前連結已立即作廢。<br>請向考官索取最新測驗連結！');
+      return false;
+    }
+    if (Date.now() > Number(localToken.expiresAt || 0)) {
+      showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
+      return false;
     }
   }
 
