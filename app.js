@@ -937,7 +937,7 @@ function copyStudentShareUrl() {
   const url = buildStudentShareUrl();
   shareInput.value = url;
   navigator.clipboard.writeText(url).then(() => {
-    showToast('📋 已複製考生專屬測驗連結！可直接貼至 LINE 群組供多人連線應試。');
+    showToast('📋 已複製考生專屬測驗連結！');
   }).catch(() => {
     shareInput.select();
     document.execCommand('copy');
@@ -947,7 +947,7 @@ function copyStudentShareUrl() {
 
 function openStandaloneQrPage() {
   if (!examData.activeExamToken || !examData.activeExamToken.token) {
-    alert('⚠️ 尚未生成測驗連結！請先點擊上方按鈕生成隨機連結。');
+    alert('⚠️ 尚未生成測驗連結！請先點擊上方按鈕生成。');
     return;
   }
   const shareUrl = buildStudentShareUrl();
@@ -1358,7 +1358,7 @@ function setExamOpenStatus(isOpen) {
     if (activeSession && activeSession.isActive) {
       finalizeExamSubmission('測驗結束強制交卷');
     }
-    showToast('🔴 已結束測驗並關閉試卷！考生端目前已隱藏所有內容。');
+    showToast('🔴 已結束測驗並關閉試卷！');
   }
 }
 
@@ -1374,7 +1374,7 @@ function renderStudentLoginMeta() {
 
   // 若非考官且未持有隨機測驗連結，顯示失效提示並阻絕考生畫面
   if (!urlToken && !isExaminerAuthenticated) {
-    showTokenInvalidView('⚠️ 請使用考官提供之專屬隨機測驗連結進入作答！');
+    showTokenInvalidView('⚠️ 請使用考官提供之測驗連結進入作答！');
     return;
   }
 
@@ -1459,7 +1459,7 @@ async function handleStartExam(event) {
   if (gasUrl) {
     if (startBtn) {
       startBtn.disabled = true;
-      startBtn.textContent = '正在同步雲端最新試卷...';
+      startBtn.textContent = '正在同步載入試卷...';
     }
     await syncStateFromCloud(true);
     let cloudEmailDuplicate = null;
@@ -3852,7 +3852,7 @@ async function confirmArchiveCurrentSession(event) {
   const newHist = createAndSaveHistorySession(customTitle, clearCurrent, null);
   switchExaminerTab('tabHistory');
   viewHistorySessionDetail(newHist.id);
-  showToast(`🗂️ 已結束測驗並將「${customTitle}」獨立封存至歷次測驗紀錄！`);
+  showToast(`🗂️ 已結束測驗並將「${customTitle}」儲存至歷次測驗紀錄！`);
 }
 
 function createAndSaveHistorySession(sessionTitle, clearCurrent = true, newExamData = null) {
@@ -4644,7 +4644,7 @@ function showToast(message) {
   container.appendChild(toast);
   setTimeout(() => {
     toast.remove();
-  }, 4000);
+  }, 5000);
 }
 
 function formatDuration(totalSec) {
