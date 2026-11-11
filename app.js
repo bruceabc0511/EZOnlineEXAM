@@ -1215,15 +1215,15 @@ function renderExamControlBanner() {
   if (examData.isExamOpen) {
     banner.classList.add('is-open');
     badge.className = 'exam-status-indicator open';
-    badge.textContent = '測驗開放中';
-    desc.textContent = `目前試卷【${examData.title || '未命名測驗'}】已開放作答。`;
+    badge.textContent = '測驗中';
+    desc.textContent = `試卷【${examData.title || '未命名測驗'}】已開放作答！`;
     btnStart.classList.add('hidden');
     btnStop.classList.remove('hidden');
     startExaminerLiveTimer();
   } else {
     banner.classList.remove('is-open');
     badge.className = 'exam-status-indicator closed';
-    badge.textContent = '測驗已關閉';
+    badge.textContent = '無正在進行中的測驗';
     desc.textContent = '目前試卷為關閉狀態，考生端將不會看到任何內容。';
     btnStart.classList.remove('hidden');
     btnStop.classList.add('hidden');
@@ -1345,6 +1345,10 @@ function setExamOpenStatus(isOpen) {
     refreshExaminerAllViews();
     showToast(`🟢 已開始測驗！試卷【${examData.title || '未命名測驗'}】現已開放作答。`);
   } else {
+    // 防誤觸確認視窗：結束作答並收卷確認
+    const isConfirmed = confirm('是否確定要結束作答並收卷？\n\n（結束後試卷將關閉，所有尚未交卷的在線考生將一律立即強制交卷）');
+    if (!isConfirmed) return;
+
     examData.isExamOpen = false;
     examData.openedAt = null;
     stopExaminerLiveTimer();
