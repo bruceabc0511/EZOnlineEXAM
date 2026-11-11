@@ -82,6 +82,8 @@ let activeSession = {
   warningCount: 0,
   lastCheatTriggerAt: 0
 };
+let activeExamStatusTimer = null;
+let isCheckingExamStatus = false;
 
 // ==================== 初始化 ====================
 document.addEventListener('DOMContentLoaded', async () => {
@@ -91,6 +93,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupExamMetaAutoSync();
   setupDragAndDrop();
   setupAntiCheatListeners();
+
+  // 跨分頁即時同步考官試卷開關狀態 (當考官結束測驗時，作答中考生分頁毫秒級自動強制交卷)
+  window.addEventListener('storage', (e) => {
+    if (e.key === STORAGE_KEYS.EXAM_DATA && e.newValue) {
+      try {
+        const parsed = JSON.parse(e.newValue);
+        const isNowOpen = Boolean(parsed.isExamOpen);
+        examData.isExamOpen = isNowOpen;
+        if (!isNowOpen) {
+          if (activeSession && activeSession.isActive) {
+            finalizeExamSubmission('考官結束測驗強制交卷');
+          } else {
+            renderStudentLoginMeta();
+          }
+        } else {
+          if (!activeSession.isActive) {
+            renderStudentLoginMeta();
+          }
+        }
+      } catch (err) {}
+    }
+  });
 
   // 若已綁定雲端網址，啟動時自動從雲端拉取最新題庫、開放狀態與成績紀錄
   if (getActiveGasUrl()) {
@@ -335,6 +359,26 @@ document.addEventListener('visibilitychange', () => {
     adjustCloudPollInterval(10000);
     if (!activeSession.isActive && getActiveGasUrl()) {
       syncStateFromCloud(true);
+    } else if (activeSession.isActive) {
+      // 考生作答中切回前台時，立即檢查一次測驗是否已被考官結束作答
+      if (!examData.isExamOpen) {
+        finalizeExamSubmission('考官結束測驗強制交卷');
+      } else {
+        const gasUrl = getActiveGasUrl();
+        if (gasUrl) {
+          fetch(`${gasUrl}?action=checkState&_t=${Date.now()}`)
+            .then(res => res.json())
+            .then(json => {
+              if (json && json.status === 'success' && json.isExamOpen === false) {
+                examData.isExamOpen = false;
+                if (activeSession.isActive) {
+                  finalizeExamSubmission('考官結束測驗強制交卷');
+                }
+              }
+            })
+            .catch(() => {});
+        }
+      }
     }
   }
 });
@@ -993,6 +1037,10 @@ function setExamOpenStatus(isOpen) {
     stopExaminerLiveTimer();
     saveExamDataToStorage(true);
     refreshExaminerAllViews();
+    // 當考官將測驗設定為結束作答後，若當前有尚未交卷之考生，一律強制交卷
+    if (activeSession && activeSession.isActive) {
+      finalizeExamSubmission('考官結束測驗強制交卷');
+    }
     showToast('🔴 已結束測驗並關閉試卷！考生端目前已隱藏所有內容。');
   }
 }
@@ -1004,19 +1052,26 @@ function renderStudentLoginMeta() {
   const quizView = document.getElementById('studentQuizView');
   const resultView = document.getElementById('studentResultView');
 
+  // 若測驗卷已為關閉狀態
+  if (!examData.isExamOpen) {
+    // 若考生正在作答中，一律立即強制交卷
+    if (activeSession && activeSession.isActive) {
+      finalizeExamSubmission('考官結束測驗強制交卷');
+      return;
+    }
+    const isInResult = resultView && !resultView.classList.contains('hidden');
+    if (loginView) loginView.classList.add('hidden');
+    if (quizView) quizView.classList.add('hidden');
+    if (closedView) {
+      closedView.classList.toggle('hidden', isInResult);
+    }
+    return;
+  }
+
   const isInQuizOrResult =
     activeSession.isActive ||
     (quizView && !quizView.classList.contains('hidden')) ||
     (resultView && !resultView.classList.contains('hidden'));
-
-  // 若測驗卷為關閉狀態，且考生並非正在作答或剛交卷檢視憑證，顯示「目前非測驗時間」畫面
-  if (!examData.isExamOpen) {
-    if (loginView) loginView.classList.add('hidden');
-    if (closedView) {
-      closedView.classList.toggle('hidden', isInQuizOrResult);
-    }
-    return;
-  }
 
   // 當測驗卷為開放狀態，隱藏「目前非測驗時間」畫面，並在未作答/結果頁時顯示考生登入畫面
   if (closedView) closedView.classList.add('hidden');
@@ -1147,6 +1202,7 @@ async function handleStartExam(event) {
 
   renderQuizQuestions();
   startCountdownTimer();
+  startActiveExamStatusChecker();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1304,6 +1360,68 @@ function updateTimerDisplay() {
   document.getElementById('timerDisplay').textContent = formatted;
 }
 
+// ==================== 作答進行中測驗狀態即時監控 (考官結束測驗時強制交卷) ====================
+function startActiveExamStatusChecker() {
+  if (activeExamStatusTimer) {
+    clearInterval(activeExamStatusTimer);
+    activeExamStatusTimer = null;
+  }
+
+  // 立即檢查一次本機狀態
+  if (!examData.isExamOpen && activeSession.isActive) {
+    finalizeExamSubmission('考官結束測驗強制交卷');
+    return;
+  }
+
+  activeExamStatusTimer = setInterval(async () => {
+    if (!activeSession.isActive) {
+      clearInterval(activeExamStatusTimer);
+      activeExamStatusTimer = null;
+      return;
+    }
+
+    // 1. 本機狀態檢查 (例如同一視窗或同瀏覽器考官關閉了試卷)
+    if (!examData.isExamOpen) {
+      clearInterval(activeExamStatusTimer);
+      activeExamStatusTimer = null;
+      finalizeExamSubmission('考官結束測驗強制交卷');
+      return;
+    }
+
+    // 2. 雲端狀態輕量化快速檢查 (每 3 秒非同步查詢雲端 isExamOpen)
+    const gasUrl = getActiveGasUrl();
+    if (!gasUrl || isCheckingExamStatus) return;
+
+    isCheckingExamStatus = true;
+    try {
+      const res = await fetch(`${gasUrl}?action=checkState&_t=${Date.now()}`);
+      const json = await res.json();
+      if (json && json.status === 'success') {
+        if (json.isExamOpen === false) {
+          clearInterval(activeExamStatusTimer);
+          activeExamStatusTimer = null;
+          examData.isExamOpen = false;
+          try {
+            const raw = localStorage.getItem(STORAGE_KEYS.EXAM_DATA);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              parsed.isExamOpen = false;
+              localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(parsed));
+            }
+          } catch (e) {}
+          if (activeSession.isActive) {
+            finalizeExamSubmission('考官結束測驗強制交卷');
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('輪詢雲端測驗開放狀態失敗:', err);
+    } finally {
+      isCheckingExamStatus = false;
+    }
+  }, 3000);
+}
+
 // ==================== 防作弊監控機制 ====================
 function setupAntiCheatListeners() {
   // 1. 偵測分頁切換或最小化 (visibilitychange)
@@ -1404,6 +1522,14 @@ async function finalizeExamSubmission(statusReason) {
     clearInterval(activeSession.timerInterval);
     activeSession.timerInterval = null;
   }
+  if (activeExamStatusTimer) {
+    clearInterval(activeExamStatusTimer);
+    activeExamStatusTimer = null;
+  }
+
+  if (statusReason.includes('考官結束') || statusReason.includes('結束作答')) {
+    showToast('⚠️ 考官已結束本次測驗，系統已強制為您提交目前試卷！');
+  }
 
   document.getElementById('submitConfirmModal').classList.add('hidden');
   document.getElementById('antiCheatModal').classList.add('hidden');
@@ -1483,6 +1609,10 @@ async function finalizeExamSubmission(statusReason) {
     iconWrap.classList.add('forced');
     titleEl.textContent = '測驗已遭系統強制終止並自動交卷';
     subEl.textContent = '因系統偵測到您離開作答畫面達 3 次，已依防作弊規定立即終止測驗並鎖定目前已填寫之答案。考試結束後將寄送成績單至您的信箱。';
+  } else if (statusReason.includes('考官結束') || statusReason.includes('結束作答')) {
+    iconWrap.classList.add('forced');
+    titleEl.textContent = '考官已結束本次測驗並強制交卷';
+    subEl.textContent = '考官已結束本次測驗作答權限，系統已為您強制提交目前已作答之答案。考試成績將由考官另行寄送通知至您的電子信箱。';
   } else {
     iconWrap.classList.remove('forced');
     titleEl.textContent = '已完成測驗交卷';

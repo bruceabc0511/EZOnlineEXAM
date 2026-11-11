@@ -67,6 +67,9 @@ function isAdminKeyValid(adminKey) {
  * 僅更新 UPDATED_AT 時間戳 (以 Key 搜尋所在列，相容分塊儲存後列位置不固定)
  */
 function touchUpdatedAt(stateSheet) {
+  try {
+    CacheService.getScriptCache().remove('STATE_MAP_LIGHT');
+  } catch (e) {}
   const lastRow = stateSheet.getLastRow();
   const nowIso = new Date().toISOString();
   if (lastRow >= 2) {
@@ -82,9 +85,17 @@ function touchUpdatedAt(stateSheet) {
 }
 
 /**
- * 輕量讀取系統狀態工作表 (不讀取試卷庫、不做遷移)，供 checkState / checkEmail 快速回應
+ * 輕量讀取系統狀態工作表 (不讀取試卷庫、不做遷移)，支援短期記憶體快取以承受多人高頻輪詢
  */
 function readStateMapLight() {
+  const cache = CacheService.getScriptCache();
+  try {
+    const cached = cache.get('STATE_MAP_LIGHT');
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {}
+
   const { stateSheet } = ensureSheetsInitialized();
   const rawRows = stateSheet.getDataRange().getValues();
   const map = {};
@@ -93,6 +104,11 @@ function readStateMapLight() {
     const k = String(r[0] || '').trim();
     if (k) map[k] = r[1] !== undefined ? String(r[1]) : '';
   });
+
+  try {
+    cache.put('STATE_MAP_LIGHT', JSON.stringify(map), 4); // 4 秒快取，大幅減輕 Google Sheets API 負擔
+  } catch (e) {}
+
   return map;
 }
 
@@ -309,6 +325,19 @@ function doPost(e) {
           status: 'duplicate',
           message: '此電子郵件 (Email) 已於本場次完成交卷'
         });
+      }
+
+      // 測驗若已被考官結束作答，檢查交卷原因：僅接受考官結束測驗強制交卷、倒數結束交卷或防作弊強制交卷，阻絕過期的一般交卷
+      const isExamOpen = state.examData && Boolean(state.examData.isExamOpen);
+      if (!isExamOpen) {
+        const statusText = String(record.status || '');
+        const isForcedSubmission = statusText.includes('強制') || statusText.includes('考官結束') || statusText.includes('自動交卷');
+        if (!isForcedSubmission) {
+          return jsonResponse({
+            status: 'closed',
+            message: '考官已結束本次測驗作答，已停止接收交卷！'
+          });
+        }
       }
 
       // 後端依真實題庫客觀精準評分，徹底防範前端洩漏題目答案或遭竄改成績
@@ -928,6 +957,9 @@ function loadCloudState() {
 }
 
 function saveCloudState(state) {
+  try {
+    CacheService.getScriptCache().remove('STATE_MAP_LIGHT');
+  } catch (e) {}
   const { stateSheet, librarySheet } = ensureSheetsInitialized();
   const nowIso = new Date().toISOString();
   state.updatedAt = nowIso;
