@@ -42,23 +42,6 @@
         </div>
       </div>
 
-      <nav class="role-switcher" id="roleSwitcher">
-        <button class="role-btn" id="btnRoleStudent" onclick="switchRole('student')">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-          </svg>
-          考生端
-        </button>
-        <button class="role-btn active" id="btnRoleExaminer" onclick="switchRole('examiner')">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-          </svg>
-          考官端
-        </button>
-      </nav>
-
       <!-- 考試進行中狀態列 (僅在作答時顯示) -->
       <div class="exam-live-bar hidden" id="examLiveBar">
         <div class="live-student-info">
@@ -741,7 +724,6 @@
               <div>
                 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
                   <h3 style="margin: 0;">📲 考生測驗連結</h3>
-                  <span id="tokenStatusBadge" class="badge badge-secondary">⚪ 測驗連結尚未生成</span>
                 </div>
               </div>
             </div>
@@ -791,7 +773,7 @@
 
             <div class="share-box">
               <label style="font-weight: 600; font-size: 0.95rem; margin-bottom: 6px; display: block;">
-                🔗 考生專屬作答網址：
+                🔗 考生專屬作答網址　<span id="tokenStatusBadge" class="badge badge-secondary">⚪ 連結尚未生成</span>
               </label>
               <div class="share-url-row">
                 <input type="text" id="studentShareUrlInput" readonly placeholder="請先點擊上方按鈕生成隨機測驗連結...">

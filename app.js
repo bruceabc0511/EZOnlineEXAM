@@ -101,13 +101,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const urlParams = new URLSearchParams(window.location.search);
   const urlToken = (urlParams.get('token') || '').trim();
   const roleParam = (urlParams.get('role') || '').trim();
-  const roleSwitcher = document.getElementById('roleSwitcher');
 
   if (urlToken || roleParam === 'student') {
     // 透過隨機測驗連結或指定考生端進入：進入考生端
     switchRole('student');
     if (urlToken) {
-      if (roleSwitcher) roleSwitcher.classList.add('hidden');
       await validateCurrentExamToken(urlToken);
     }
   } else {
@@ -755,7 +753,7 @@ function updateExamLinkTabUI() {
   if (!hasToken) {
     if (statusBadge) {
       statusBadge.className = 'badge badge-secondary';
-      statusBadge.textContent = '⚪ 測驗連結尚未生成';
+      statusBadge.textContent = '⚪ 尚未生成';
     }
     if (tokenMetaBox) tokenMetaBox.classList.add('hidden');
     if (btnGenToken) {
@@ -796,7 +794,7 @@ function updateExamLinkTabUI() {
 
     if (statusBadge) {
       statusBadge.className = 'badge badge-teal';
-      statusBadge.textContent = `🟢 測驗連結已生成 (剩餘 ${h > 0 ? h + ' 小時 ' : ''}${m} 分鐘有效)`;
+      statusBadge.textContent = `🟢 連結已生成 (剩餘 ${h > 0 ? h + ' 小時 ' : ''}${m} 分鐘有效)`;
     }
     if (tokenMetaBox) tokenMetaBox.classList.remove('hidden');
     if (tokenTimeRemainingEl) tokenTimeRemainingEl.textContent = formatted;
@@ -1176,26 +1174,30 @@ function switchRole(role) {
 
   if (role === 'student') {
     document.body.classList.remove('examiner-mode');
-    btnStudent.classList.add('active');
-    btnExaminer.classList.remove('active');
-    studentSec.classList.remove('hidden');
-    examinerSec.classList.add('hidden');
+    if (btnStudent) btnStudent.classList.add('active');
+    if (btnExaminer) btnExaminer.classList.remove('active');
+    if (studentSec) studentSec.classList.remove('hidden');
+    if (examinerSec) examinerSec.classList.add('hidden');
     renderStudentLoginMeta();
   } else {
     document.body.classList.add('examiner-mode');
-    btnExaminer.classList.add('active');
-    btnStudent.classList.remove('active');
-    studentSec.classList.add('hidden');
-    examinerSec.classList.remove('hidden');
+    if (btnExaminer) btnExaminer.classList.add('active');
+    if (btnStudent) btnStudent.classList.remove('active');
+    if (studentSec) studentSec.classList.add('hidden');
+    if (examinerSec) examinerSec.classList.remove('hidden');
 
     if (isExaminerAuthenticated) {
       showExaminerDashboard();
     } else {
-      document.getElementById('examinerPinView').classList.remove('hidden');
-      document.getElementById('examinerDashboardView').classList.add('hidden');
-      document.getElementById('examinerPinInput').value = '';
-      document.getElementById('pinErrorMsg').classList.add('hidden');
-      setTimeout(() => document.getElementById('examinerPinInput').focus(), 100);
+      const pinView = document.getElementById('examinerPinView');
+      const dashView = document.getElementById('examinerDashboardView');
+      const pinInput = document.getElementById('examinerPinInput');
+      const pinErr = document.getElementById('pinErrorMsg');
+      if (pinView) pinView.classList.remove('hidden');
+      if (dashView) dashView.classList.add('hidden');
+      if (pinInput) pinInput.value = '';
+      if (pinErr) pinErr.classList.add('hidden');
+      if (pinInput) setTimeout(() => pinInput.focus(), 100);
     }
   }
 }
@@ -1525,7 +1527,8 @@ async function handleStartExam(event) {
   };
 
   // 切換頂部導覽列為考試監控模式
-  document.getElementById('roleSwitcher').classList.add('hidden');
+  const roleSwitcherEl = document.getElementById('roleSwitcher');
+  if (roleSwitcherEl) roleSwitcherEl.classList.add('hidden');
   document.getElementById('examLiveBar').classList.remove('hidden');
   document.body.classList.add('exam-mode'); // 手機版作答時精簡頂部列
   document.getElementById('liveStudentDisplay').textContent = idInput ? `${nameInput} (${idInput})` : nameInput;
@@ -1935,7 +1938,8 @@ async function finalizeExamSubmission(statusReason) {
 
   // 恢復頂部導覽列
   document.getElementById('examLiveBar').classList.add('hidden');
-  document.getElementById('roleSwitcher').classList.remove('hidden');
+  const roleSwitcherEl = document.getElementById('roleSwitcher');
+  if (roleSwitcherEl) roleSwitcherEl.classList.remove('hidden');
   document.body.classList.remove('exam-mode');
 
   // 顯示交卷完成憑證畫面 (不顯示分數與標準答案)
