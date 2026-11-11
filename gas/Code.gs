@@ -118,18 +118,18 @@ function doPost(e) {
     // 2. 考生提交試卷 (多人併發安全追加)
     if (action === 'submitExam') {
       const record = payload.record;
-      if (!record || !record.studentId) {
-        return jsonResponse({ status: 'error', message: '缺少考生作答資料' });
+      if (!record || !record.studentEmail) {
+        return jsonResponse({ status: 'error', message: '缺少考生作答資料或電子郵件' });
       }
 
-      // 檢查當前場次是否已有相同學號 (不區分大小寫)
+      // 檢查當前場次是否已有相同電子郵件 (Email) (不區分大小寫)
       const existsIdx = state.submissions.findIndex(
-        s => String(s.studentId).toLowerCase() === String(record.studentId).toLowerCase()
+        s => s.studentEmail && String(s.studentEmail).trim().toLowerCase() === String(record.studentEmail).trim().toLowerCase()
       );
       if (existsIdx !== -1) {
         return jsonResponse({
           status: 'duplicate',
-          message: '此學號已於本場次完成交卷',
+          message: '此電子郵件 (Email) 已於本場次完成交卷',
           existingRecord: state.submissions[existsIdx]
         });
       }
@@ -235,7 +235,7 @@ function doPost(e) {
           return;
         }
         try {
-          const subject = `【測驗成績通知】${sub.examTitle || examInfo.title || '線上筆試測驗'} - ${sub.studentName} (${sub.studentId})`;
+          const subject = `【測驗成績通知】${sub.examTitle || examInfo.title || '線上筆試測驗'} - ${sub.studentName}${sub.studentId ? ` (${sub.studentId})` : ''}`;
           const htmlBody = buildScoreEmailHtml(sub, examInfo, state);
 
           MailApp.sendEmail({
@@ -460,7 +460,7 @@ function buildScoreEmailHtml(sub, examInfo, state) {
       </div>
       <div style="padding:24px;">
         <p style="margin:0 0 16px;font-size:15px;color:#334155;">
-          <strong>${escapeHtmlStr(sub.studentName)}</strong>（學號／座號：<strong>${escapeHtmlStr(sub.studentId)}</strong>）您好，您的筆試測驗成績結果如下：
+          <strong>${escapeHtmlStr(sub.studentName)}</strong>${sub.studentId ? `（編號：<strong>${escapeHtmlStr(sub.studentId)}</strong>）` : ''} 您好，您的筆試測驗成績結果如下：
         </p>
 
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 22px;margin-bottom:16px;">
@@ -509,7 +509,7 @@ function ensureSheetsInitialized() {
   if (!scoreSheet) {
     scoreSheet = ss.insertSheet(SHEET_NAMES.CURRENT_SCORES);
     scoreSheet.getRange('A1:J1').setValues([[
-      '學號', '考生姓名', '電子郵件 (Email)', '總分', '答對題數', '總題數', '作答耗時', '防作弊警告', '交卷狀態', '交卷時間'
+      '編號', '考生姓名', '電子郵件 (Email)', '總分', '答對題數', '總題數', '作答耗時', '防作弊警告', '交卷狀態', '交卷時間'
     ]]);
   }
 
@@ -705,7 +705,7 @@ function syncCurrentScoresSheet(examData, submissions) {
   scoreSheet.clearContents();
 
   const headers = [
-    '學號', '考生姓名', '電子郵件 (Email)', '總分', '答對題數', '總題數', '作答耗時', '防作弊警告', '交卷狀態', '交卷時間', '成績信寄送時間'
+    '編號', '考生姓名', '電子郵件 (Email)', '總分', '答對題數', '總題數', '作答耗時', '防作弊警告', '交卷狀態', '交卷時間', '成績信寄送時間'
   ];
   const questions = (examData && Array.isArray(examData.questions)) ? examData.questions : [];
   questions.forEach((q, idx) => {

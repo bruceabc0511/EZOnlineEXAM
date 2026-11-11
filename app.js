@@ -2,7 +2,7 @@
  * 線上筆試測驗系統 - 核心邏輯 (app.js) — 雲端多人連線與歷史場次版 (方案 B)
  * 功能包含：
  * 1. 雲端多人同步 (Google Apps Script + GitHub Pages)：跨網路多人同時連線應試、QR Code 專屬應試連結、即時同步題庫與交卷紀錄
- * 2. 考生端 (#007979 主題)：僅在考官「開始測驗」開放試卷期間顯示內容（試卷關閉時完全不顯示任何內容）、姓名/學號/Email 登入、防重複應試、亂數題目、防作弊監控
+ * 2. 考生端 (#007979 主題)：僅在考官「開始測驗」開放試卷期間顯示內容（試卷關閉時完全不顯示任何內容）、姓名/編號/Email 登入、防重複應試、亂數題目、防作弊監控
  * 3. 考官端 (#750000 主題)：PIN 碼安全加密驗證、開始/結束測驗開關控制、Excel 範本匯入（支援空白題庫）、考後寄送考生成績單 Email、每次測驗獨立歸檔為歷史紀錄、錯題分析
  */
 
@@ -963,8 +963,8 @@ async function handleStartExam(event) {
 
   errorBox.classList.add('hidden');
 
-  if (!nameInput || !idInput || !emailInput) {
-    showLoginError('請完整填寫考生姓名、學號與電子郵件 (Email)！');
+  if (!nameInput || !emailInput) {
+    showLoginError('請完整填寫考生姓名與電子郵件 (Email)！');
     return;
   }
 
@@ -997,12 +997,12 @@ async function handleStartExam(event) {
     return;
   }
 
-  // 檢查當前場次同一學號是否已作答過 (不區分大小寫)
+  // 檢查當前場次同一電子郵件 (Email) 是否已作答過 (不區分大小寫)
   const duplicated = submissions.find(
-    s => String(s.studentId).toLowerCase() === idInput.toLowerCase()
+    s => s.studentEmail && String(s.studentEmail).trim().toLowerCase() === emailInput.toLowerCase()
   );
   if (duplicated) {
-    showLoginError(`學號「${idInput}」已於本場次 (${duplicated.submittedAt}) 完成交卷，每位考生限作答一次！`);
+    showLoginError(`電子郵件「${emailInput}」已於本場次 (${duplicated.submittedAt}) 完成交卷，同一組 Email 限作答一次！`);
     return;
   }
 
@@ -1039,7 +1039,7 @@ async function handleStartExam(event) {
   document.getElementById('roleSwitcher').classList.add('hidden');
   document.getElementById('examLiveBar').classList.remove('hidden');
   document.body.classList.add('exam-mode'); // 手機版作答時精簡頂部列
-  document.getElementById('liveStudentDisplay').textContent = `${nameInput} (${idInput})`;
+  document.getElementById('liveStudentDisplay').textContent = idInput ? `${nameInput} (${idInput})` : nameInput;
   document.getElementById('liveWarnCount').textContent = '0';
   document.getElementById('liveWarningBadge').classList.remove('warned');
   document.getElementById('liveTimerBox').classList.remove('timer-urgent');
@@ -1393,7 +1393,7 @@ async function finalizeExamSubmission(statusReason) {
 
   document.getElementById('receiptExamTitle').textContent = record.examTitle;
   document.getElementById('receiptName').textContent = record.studentName;
-  document.getElementById('receiptStudentId').textContent = record.studentId;
+  document.getElementById('receiptStudentId').textContent = record.studentId || '-';
   document.getElementById('receiptEmail').textContent = record.studentEmail || '-';
   document.getElementById('receiptAnswered').textContent = `${record.answeredCount} / ${record.totalQuestions} 題`;
   document.getElementById('receiptTimeSpent').textContent = record.timeSpentFormatted;
@@ -2720,7 +2720,7 @@ function buildSubmissionRowElement(sub, sessionId) {
     : `<span class="badge badge-amber">尚未寄送</span>`;
 
   tr.innerHTML = `
-    <td style="white-space: nowrap;"><strong>${escapeHtml(sub.studentId)}</strong></td>
+    <td style="white-space: nowrap;"><strong>${escapeHtml(sub.studentId || '-')}</strong></td>
     <td style="white-space: nowrap; min-width: 90px;">${escapeHtml(sub.studentName)}</td>
     <td class="cell-wrap-email">${emailDisplay}</td>
     <td style="white-space: nowrap;"><strong style="font-size:1.05rem; color:${scoreColor};">${sub.score} 分</strong></td>
@@ -2763,7 +2763,7 @@ function viewStudentDetail(sessionId, subId) {
   const sub = sessionObj.submissions.find(s => s.id === subId);
   if (!sub) return;
 
-  document.getElementById('detailModalTitle').textContent = `${sub.studentName} (${sub.studentId}) - 作答明細 (${sub.score} 分)`;
+  document.getElementById('detailModalTitle').textContent = `${sub.studentName}${sub.studentId ? ` (${sub.studentId})` : ''} - 作答明細 (${sub.score} 分)`;
   const body = document.getElementById('detailModalBody');
 
   let rowsHtml = '';
@@ -2813,7 +2813,7 @@ function closeStudentDetailModal() {
 }
 
 function deleteSingleSubmission(subId, sessionId = 'CURRENT') {
-  if (!confirm('確定要刪除此位考生的作答紀錄嗎？（刪除後該學號即可重新應試）')) return;
+  if (!confirm('確定要刪除此位考生的作答紀錄嗎？（刪除後該電子郵件即可重新應試）')) return;
   if (sessionId === 'CURRENT') {
     submissions = submissions.filter(s => s.id !== subId);
     saveSubmissionsToStorage(true);
@@ -2940,7 +2940,7 @@ function buildScoreEmailHtmlClient(sub, sessionObj, studentAnswers) {
       </div>
       <div style="padding:24px;">
         <p style="margin:0 0 16px;font-size:15px;color:#334155;">
-          <strong>${escapeHtml(sub.studentName)}</strong>（學號／座號：<strong>${escapeHtml(sub.studentId)}</strong>）您好，您的筆試測驗成績結果如下：
+          <strong>${escapeHtml(sub.studentName)}</strong>${sub.studentId ? `（編號：<strong>${escapeHtml(sub.studentId)}</strong>）` : ''} 您好，您的筆試測驗成績結果如下：
         </p>
 
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 22px;margin-bottom:16px;">
@@ -2976,12 +2976,12 @@ function buildPlainTextScoreEmail(sub, sessionObj) {
   );
 
   const lines = [
-    `${sub.studentName} (${sub.studentId}) 您好：`,
+    `${sub.studentName}${sub.studentId ? ` (${sub.studentId})` : ''} 您好：`,
     ``,
     `以下為您在【${sub.examTitle || sessionObj.title || '線上筆試測驗'}】的筆試測驗成績通知單：`,
     `----------------------------------------`,
     `• 考生姓名：${sub.studentName}`,
-    `• 學號/座號：${sub.studentId}`,
+    `• 編號：${sub.studentId || '-'}`,
     `• 考試日期：${examDateStr}`,
     `• 測驗總分：${sub.score} 分 (${passText})`,
     `• 答對題數：${sub.correctCount} / ${sub.totalQuestions} 題`,
@@ -3108,7 +3108,7 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
   // 模式 2：本機未綁定雲端時，使用 mailto: 喚起系統郵件客戶端寄發完整成績單
   if (recipients.length === 1) {
     const sub = recipients[0];
-    const subject = `【測驗成績通知】${sub.examTitle || sessionObj.title || '線上筆試測驗'} - ${sub.studentName} (${sub.studentId})`;
+    const subject = `【測驗成績通知】${sub.examTitle || sessionObj.title || '線上筆試測驗'} - ${sub.studentName}${sub.studentId ? ` (${sub.studentId})` : ''}`;
     const body = buildPlainTextScoreEmail(sub, sessionObj);
     sub.emailSentAt = nowStr;
 
@@ -3132,7 +3132,7 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
       `----------------------------------------`
     ];
     recipients.forEach(r => {
-      summaryLines.push(`• ${r.studentName} (${r.studentId})：${r.score} 分 (答對 ${r.correctCount}/${r.totalQuestions} 題)`);
+      summaryLines.push(`• ${r.studentName}${r.studentId ? ` (${r.studentId})` : ''}：${r.score} 分 (答對 ${r.correctCount}/${r.totalQuestions} 題)`);
       r.emailSentAt = nowStr;
     });
     summaryLines.push(
@@ -3399,7 +3399,7 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
   const targetQuestions = sessionObj.questions;
 
   const headers = [
-    '學號',
+    '編號',
     '考生姓名',
     '電子郵件 (Email)',
     '總分',
@@ -3418,7 +3418,7 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
   const scoreRows = [headers];
   targetSubs.forEach(sub => {
     const row = [
-      sub.studentId,
+      sub.studentId || '',
       sub.studentName,
       sub.studentEmail || '',
       sub.score,

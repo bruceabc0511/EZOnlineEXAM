@@ -117,7 +117,7 @@
             <h3>⚠️ 應試規則與防作弊聲明</h3>
             <ul>
               <li>本測驗採<strong>單選題、題目亂數排列</strong>，滿分為 100 分。</li>
-              <li>每位考生（同一學號）於本場次<strong>限作答一次</strong>，交卷後不得重複應試。</li>
+              <li>每位考生（同一電子郵件 Email）於本場次<strong>限作答一次</strong>，交卷後不得重複應試。</li>
               <li>請填寫正確的<strong>電子郵件 (Email)</strong>，考試結束後系統將寄送個人成績單至您的信箱。</li>
               <li><strong>防作弊機制已啟用</strong>：一旦點擊「開始作答」，<strong>嚴禁切換分頁、縮小視窗、開啟其他程式或離開作答畫面</strong>。</li>
               <li>第 <strong>1、2</strong> 次離開畫面將跳出嚴重警告並記錄；第 <strong>3</strong> 次離開畫面系統將<strong>立即強制終止測驗並自動交卷</strong>！
@@ -133,8 +133,8 @@
                 <input type="text" id="studentName" required placeholder="請輸入姓名 (例：王大明)" autocomplete="off">
               </div>
               <div class="form-group">
-                <label for="studentId">學號/座號 <span class="required">*</span></label>
-                <input type="text" id="studentId" required placeholder="請輸入學號或座號 (例：001)" autocomplete="off">
+                <label for="studentId">編號 <small class="text-muted" style="font-weight:400;">(非必填)</small></label>
+                <input type="text" id="studentId" placeholder="請輸入編號 (例：001，非必填)" autocomplete="off">
               </div>
             </div>
 
@@ -233,7 +233,7 @@
             <span class="receipt-val" id="receiptName">-</span>
           </div>
           <div class="receipt-row">
-            <span class="receipt-label">學號/座號</span>
+            <span class="receipt-label">編號</span>
             <span class="receipt-val" id="receiptStudentId">-</span>
           </div>
           <div class="receipt-row">
@@ -518,7 +518,7 @@
               <table class="data-table" id="scoresTable">
                 <thead>
                   <tr>
-                    <th>學號</th>
+                    <th>編號</th>
                     <th style="min-width: 90px; white-space: nowrap;">姓名</th>
                     <th>電子郵件 (Email)</th>
                     <th>總分</th>
@@ -697,7 +697,7 @@
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th>學號</th>
+                    <th>編號</th>
                     <th style="min-width: 90px; white-space: nowrap;">姓名</th>
                     <th>電子郵件 (Email)</th>
                     <th>總分</th>
