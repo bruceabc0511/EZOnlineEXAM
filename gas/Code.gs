@@ -127,17 +127,40 @@ function doGet(e) {
       });
     }
 
-    // 輕量化狀態輪詢 (只讀狀態工作表，不讀試卷庫，節省網路頻寬與 GAS 執行額度)
+    // 輕量化狀態輪詢 (只讀狀態工作表，不讀試卷庫，節省網路頻寬與 GAS 執行額度；支援隨機測驗 Token 權威校驗)
     if (action === 'checkState') {
       const map = readStateMapLight();
       let isOpen = false;
+      let activeExamToken = null;
       try {
         const examStr = safeChunkRead(map, 'EXAM_DATA', '');
-        if (examStr) isOpen = Boolean(JSON.parse(examStr).isExamOpen);
+        if (examStr) {
+          const parsed = JSON.parse(examStr);
+          isOpen = Boolean(parsed.isExamOpen);
+          activeExamToken = parsed.activeExamToken || null;
+        }
       } catch (err) {}
+
+      const reqToken = String((e && e.parameter && e.parameter.token) || '').trim();
+      let tokenStatus = 'none';
+      if (reqToken) {
+        if (!activeExamToken || !activeExamToken.token) {
+          tokenStatus = 'not_generated';
+        } else if (String(activeExamToken.token).trim() !== reqToken) {
+          tokenStatus = 'invalid'; // 已被考官重新生成覆蓋
+        } else if (Date.now() > Number(activeExamToken.expiresAt || 0)) {
+          tokenStatus = 'expired'; // 超過 180 分鐘有效期限
+        } else {
+          tokenStatus = 'valid';
+        }
+      }
+
       return jsonResponse({
         status: 'success',
         isExamOpen: isOpen,
+        tokenStatus: tokenStatus,
+        activeExamToken: activeExamToken,
+        serverTime: Date.now(),
         updatedAt: map.UPDATED_AT || ''
       });
     }

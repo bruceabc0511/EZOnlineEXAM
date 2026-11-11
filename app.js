@@ -36,6 +36,7 @@ const DEFAULT_EXAM_DATA = {
   examDate: '',
   isExamOpen: false,
   openedAt: null,
+  activeExamToken: null, // 模式 A：{ token: 'tk_xxx', createdAt: 0, expiresAt: 0, durationMinutes: 180 }
   questions: []
 };
 
@@ -62,6 +63,8 @@ let isGasUrlUnlockedBySecret = false;
 let gasSecretClickCount = 0;
 let gasSecretClickResetTimer = null;
 let editingQuestionId = null;
+let currentExamTokenStatus = 'unknown'; // 'valid' | 'expired' | 'invalid' | 'not_generated'
+let examTokenCountdownTimer = null;
 
 // 考官 PIN 碼登入防護狀態
 let pinFailedAttempts = 0;
@@ -89,10 +92,26 @@ let isCheckingExamStatus = false;
 document.addEventListener('DOMContentLoaded', async () => {
   await initCloudUrlFromQueryOrDefault();
   updateCloudStatusUI();
-  renderStudentLoginMeta();
   setupExamMetaAutoSync();
   setupDragAndDrop();
   setupAntiCheatListeners();
+  startExamTokenCountdown();
+
+  // 解析 URL 是否含有隨機測驗 Token 參數
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = (urlParams.get('token') || '').trim();
+  const roleSwitcher = document.getElementById('roleSwitcher');
+
+  if (!urlToken) {
+    // 1. 直連根網址 (無隨機測驗連結)：直接顯示考官端登入畫面，取消考生端空白畫面
+    switchRole('examiner');
+    if (roleSwitcher) roleSwitcher.classList.add('hidden');
+  } else {
+    // 2. 透過隨機測驗連結進入：進入考生端，隱藏身分切換按鈕，並執行 Token 權威校驗
+    switchRole('student');
+    if (roleSwitcher) roleSwitcher.classList.add('hidden');
+    await validateCurrentExamToken(urlToken);
+  }
 
   // 跨分頁即時同步考官試卷開關狀態 (當考官結束測驗時，作答中考生分頁毫秒級自動強制交卷)
   window.addEventListener('storage', (e) => {
@@ -101,6 +120,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const parsed = JSON.parse(e.newValue);
         const isNowOpen = Boolean(parsed.isExamOpen);
         examData.isExamOpen = isNowOpen;
+        if (parsed.activeExamToken) {
+          examData.activeExamToken = parsed.activeExamToken;
+          updateExamLinkTabUI();
+        }
         if (!isNowOpen) {
           if (activeSession && activeSession.isActive) {
             finalizeExamSubmission('測驗結束強制交卷');
@@ -230,11 +253,20 @@ function extractGasDeploymentId(url) {
 function buildStudentShareUrl() {
   const baseUrl = window.location.origin + window.location.pathname;
   const gasUrl = getActiveGasUrl();
-  if (!gasUrl) return baseUrl;
-  const depId = extractGasDeploymentId(gasUrl);
   const params = new URLSearchParams();
-  params.set('api', depId || gasUrl);
-  return `${baseUrl}?${params.toString()}`;
+
+  if (gasUrl) {
+    const depId = extractGasDeploymentId(gasUrl);
+    params.set('api', depId || gasUrl);
+  }
+
+  // 模式 A：將當前有效的隨機測驗 Token 帶入作答連結中
+  if (examData && examData.activeExamToken && examData.activeExamToken.token) {
+    params.set('token', examData.activeExamToken.token);
+  }
+
+  const query = params.toString();
+  return query ? `${baseUrl}?${query}` : baseUrl;
 }
 
 function updateCloudStatusUI() {
@@ -293,6 +325,7 @@ function updateCloudStatusUI() {
       qrHint.textContent = '請先於上方填入 Google Apps Script 網址並儲存，即可產生跨裝置多人連線 QR Code';
     }
   }
+  updateExamLinkTabUI();
 }
 
 function handleGasCloudIconClick() {
@@ -465,6 +498,7 @@ async function syncStateFromCloud(silent = true, force = false) {
           examDate: normalizeDateForInput(json.examData.examDate ?? ''),
           isExamOpen: Boolean(json.examData.isExamOpen),
           openedAt: json.examData.openedAt ? Number(json.examData.openedAt) : (json.examData.isExamOpen ? (examData.openedAt || Date.now()) : null),
+          activeExamToken: json.examData.activeExamToken || examData.activeExamToken || null,
           questions: mergedQuestions
         };
         // 若為考官授權同步，或題目含有完整答案，才寫入本機儲存，避免考生模式無答案資料覆蓋單機版題庫
@@ -627,21 +661,275 @@ async function pushAllLocalDataToCloud() {
   }
 }
 
+// ==================== 隨機測驗連結 (180分鐘有效，覆蓋即失效) ====================
+function generateRandomExamToken() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let rand = '';
+  if (window.crypto && window.crypto.getRandomValues) {
+    const bytes = new Uint8Array(12);
+    window.crypto.getRandomValues(bytes);
+    for (let i = 0; i < bytes.length; i++) {
+      rand += chars[bytes[i] % chars.length];
+    }
+  } else {
+    for (let i = 0; i < 16; i++) {
+      rand += chars[Math.floor(Math.random() * chars.length)];
+    }
+  }
+  return 'tk_' + rand;
+}
+
+function isExamTokenActive(tokenObj) {
+  if (!tokenObj || !tokenObj.token) return false;
+  return Date.now() < Number(tokenObj.expiresAt || 0);
+}
+
+async function handleGenerateExamToken() {
+  if (examData.activeExamToken && isExamTokenActive(examData.activeExamToken)) {
+    const confirmRegen = confirm(
+      '⚠️ 目前已有使用中的隨機測驗連結！\n\n' +
+      '若重新生成，先前發送給考生的舊連結將【立即失效作廢】。\n\n' +
+      '確定要重新生成新的測驗連結嗎？'
+    );
+    if (!confirmRegen) return;
+  }
+
+  const now = Date.now();
+  const token = generateRandomExamToken();
+  const durationMinutes = 180;
+  const durationMs = durationMinutes * 60 * 1000;
+
+  examData.activeExamToken = {
+    token: token,
+    createdAt: now,
+    expiresAt: now + durationMs,
+    durationMinutes: durationMinutes
+  };
+
+  saveExamDataToStorage(true);
+  updateExamLinkTabUI();
+  showToast('🎲 已成功生成隨機測驗連結！');
+}
+
+async function handleRevokeExamToken() {
+  if (!examData.activeExamToken || !examData.activeExamToken.token) {
+    alert('⚠️ 目前並無有效的測驗連結可停用！');
+    return;
+  }
+
+  const confirmRevoke = confirm(
+    '⚠️ 確定要立即停用當前的測驗連結嗎？\n\n' +
+    '停用後，當前所有的測驗連結將【立即失效】！\n' +
+    '考生將無法再透過該網址進入作答。\n\n' +
+    '確定要執行停用嗎？'
+  );
+  if (!confirmRevoke) return;
+
+  examData.activeExamToken = null;
+  saveExamDataToStorage(true);
+  updateExamLinkTabUI();
+  showToast('🛑 已停用所有測驗連結！');
+}
+
+function updateExamLinkTabUI() {
+  const tokenObj = examData.activeExamToken;
+  const statusBadge = document.getElementById('tokenStatusBadge');
+  const tokenMetaBox = document.getElementById('tokenMetaBox');
+  const tokenTimeRemainingEl = document.getElementById('tokenTimeRemaining');
+  const tokenCreatedAtEl = document.getElementById('tokenCreatedAt');
+  const tokenExpiresAtEl = document.getElementById('tokenExpiresAt');
+  const btnGenToken = document.getElementById('btnGenerateExamToken');
+  const btnRevokeToken = document.getElementById('btnRevokeExamToken');
+  const shareInput = document.getElementById('studentShareUrlInput');
+  const qrImg = document.getElementById('studentQrImage');
+  const qrHint = document.getElementById('qrCodeHint');
+
+  const now = Date.now();
+  const hasToken = tokenObj && tokenObj.token;
+  const isExpired = hasToken && (now > Number(tokenObj.expiresAt || 0));
+
+  if (!hasToken) {
+    if (statusBadge) {
+      statusBadge.className = 'badge badge-secondary';
+      statusBadge.textContent = '⚪ 測驗連結尚未生成';
+    }
+    if (tokenMetaBox) tokenMetaBox.classList.add('hidden');
+    if (btnGenToken) {
+      btnGenToken.innerHTML = `產生連結`;
+      btnGenToken.className = 'btn btn-token-primary';
+    }
+    if (btnRevokeToken) {
+      btnRevokeToken.className = 'btn btn-token-revoke hidden';
+      btnRevokeToken.classList.add('hidden');
+    }
+    if (shareInput) shareInput.value = '';
+    if (qrImg) qrImg.classList.add('hidden');
+    if (qrHint) qrHint.textContent = '請先點擊上方按鈕生成隨機測驗連結，系統將自動產生專屬作答網址與 QR Code';
+    return;
+  }
+
+  if (isExpired) {
+    if (statusBadge) {
+      statusBadge.className = 'badge badge-danger';
+      statusBadge.textContent = '🔴 測驗連結已逾期失效';
+    }
+    if (tokenMetaBox) tokenMetaBox.classList.remove('hidden');
+    if (tokenTimeRemainingEl) tokenTimeRemainingEl.innerHTML = '<span style="color:var(--danger); font-weight:700;">已逾期（已失效）</span>';
+    if (btnGenToken) {
+      btnGenToken.innerHTML = `重新生成測驗連結`;
+      btnGenToken.className = 'btn btn-token-primary';
+    }
+    if (btnRevokeToken) {
+      btnRevokeToken.className = 'btn btn-token-revoke hidden';
+      btnRevokeToken.classList.add('hidden');
+    }
+  } else {
+    const remSec = Math.max(0, Math.floor((tokenObj.expiresAt - now) / 1000));
+    const h = Math.floor(remSec / 3600);
+    const m = Math.floor((remSec % 3600) / 60);
+    const s = remSec % 60;
+    const formatted = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+
+    if (statusBadge) {
+      statusBadge.className = 'badge badge-teal';
+      statusBadge.textContent = `🟢 測驗連結已生成 (剩餘 ${h > 0 ? h + ' 小時 ' : ''}${m} 分鐘有效)`;
+    }
+    if (tokenMetaBox) tokenMetaBox.classList.remove('hidden');
+    if (tokenTimeRemainingEl) tokenTimeRemainingEl.textContent = formatted;
+    if (btnGenToken) {
+      btnGenToken.innerHTML = `重新生成測驗連結`;
+      btnGenToken.className = 'btn btn-token-primary';
+    }
+    if (btnRevokeToken) {
+      btnRevokeToken.className = 'btn btn-token-revoke';
+      btnRevokeToken.classList.remove('hidden');
+    }
+  }
+
+  if (tokenCreatedAtEl && tokenObj.createdAt) {
+    tokenCreatedAtEl.textContent = formatDateTime(new Date(tokenObj.createdAt));
+  }
+  if (tokenExpiresAtEl && tokenObj.expiresAt) {
+    tokenExpiresAtEl.textContent = formatDateTime(new Date(tokenObj.expiresAt));
+  }
+
+  const shareUrl = buildStudentShareUrl();
+  if (shareInput) shareInput.value = shareUrl;
+  if (qrImg && qrHint) {
+    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(shareUrl)}`;
+    qrImg.classList.remove('hidden');
+    qrHint.innerHTML = '<span style="color:var(--primary); font-weight:600; cursor:pointer;" onclick="openStandaloneQrPage()">🔍 點選 QR Code 可開啟獨立全螢幕頁面投放大螢幕</span>';
+  }
+}
+
+function startExamTokenCountdown() {
+  if (examTokenCountdownTimer) clearInterval(examTokenCountdownTimer);
+  examTokenCountdownTimer = setInterval(() => {
+    const tabEl = document.getElementById('tabExamLink');
+    if (tabEl && !tabEl.classList.contains('hidden')) {
+      updateExamLinkTabUI();
+    }
+  }, 1000);
+}
+
+function showTokenInvalidView(message) {
+  currentExamTokenStatus = 'invalid';
+  const invalidView = document.getElementById('studentTokenInvalidView');
+  const invalidDesc = document.getElementById('studentTokenInvalidDesc');
+  const loginView = document.getElementById('studentLoginView');
+  const closedView = document.getElementById('studentClosedView');
+  const quizView = document.getElementById('studentQuizView');
+
+  if (invalidDesc && message) {
+    invalidDesc.innerHTML = message;
+  }
+  if (invalidView) invalidView.classList.remove('hidden');
+  if (loginView) loginView.classList.add('hidden');
+  if (closedView) closedView.classList.add('hidden');
+  if (quizView) quizView.classList.add('hidden');
+}
+
+function hideTokenInvalidView() {
+  currentExamTokenStatus = 'valid';
+  const invalidView = document.getElementById('studentTokenInvalidView');
+  if (invalidView) invalidView.classList.add('hidden');
+}
+
+async function validateCurrentExamToken(urlToken) {
+  if (!urlToken) {
+    showTokenInvalidView('⚠️ 請使用考官提供之測驗連結進入作答！');
+    return false;
+  }
+
+  // 1. 本地初步校驗
+  const localToken = examData.activeExamToken;
+  if (!localToken || !localToken.token) {
+    showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>目前無有效之測驗連結，請聯繫考官確認。');
+    return false;
+  }
+  if (localToken.token !== urlToken) {
+    showTokenInvalidView('⚠️ 此測驗連結已失效！考官已重新生成新連結，先前連結已立即作廢。<br>請向考官索取最新測驗連結！');
+    return false;
+  }
+  if (Date.now() > Number(localToken.expiresAt || 0)) {
+    showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
+    return false;
+  }
+
+  // 2. 雲端權威校驗 (由 Google 伺服器時間防竄改)
+  const gasUrl = getActiveGasUrl();
+  if (gasUrl) {
+    try {
+      const res = await fetch(`${gasUrl}?action=checkState&token=${encodeURIComponent(urlToken)}&_t=${Date.now()}`);
+      const json = await res.json();
+      if (json && json.status === 'success') {
+        if (json.activeExamToken) {
+          examData.activeExamToken = json.activeExamToken;
+        }
+        if (json.tokenStatus === 'invalid') {
+          showTokenInvalidView('⚠️ 此測驗連結已失效！考官已重新生成新連結，先前連結已立即作廢。<br>請向考官索取最新測驗連結！');
+          return false;
+        } else if (json.tokenStatus === 'expired') {
+          showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
+          return false;
+        } else if (json.tokenStatus === 'not_generated') {
+          showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>請聯繫考官確認最新測驗連結。');
+          return false;
+        }
+      }
+    } catch (e) {
+      console.warn('雲端校驗 Token 失敗，使用本機狀態繼續:', e);
+    }
+  }
+
+  hideTokenInvalidView();
+  renderStudentLoginMeta();
+  return true;
+}
+
 function copyStudentShareUrl() {
   const shareInput = document.getElementById('studentShareUrlInput');
   if (!shareInput) return;
+  if (!examData.activeExamToken || !examData.activeExamToken.token) {
+    alert('⚠️ 尚未生成測驗連結！請先點擊上方【生成隨機測驗連結】按鈕產生連結。');
+    return;
+  }
   const url = buildStudentShareUrl();
   shareInput.value = url;
   navigator.clipboard.writeText(url).then(() => {
-    showToast('📋 已複製考生專屬應試連結！可直接貼至 LINE 群組供多人連線應試。');
+    showToast('📋 已複製考生專屬測驗連結！可直接貼至 LINE 群組供多人連線應試。');
   }).catch(() => {
     shareInput.select();
     document.execCommand('copy');
-    showToast('📋 已複製考生專屬應試連結！');
+    showToast('📋 已複製考生專屬測驗連結！');
   });
 }
 
 function openStandaloneQrPage() {
+  if (!examData.activeExamToken || !examData.activeExamToken.token) {
+    alert('⚠️ 尚未生成測驗連結！請先點擊上方按鈕生成隨機連結。');
+    return;
+  }
   const shareUrl = buildStudentShareUrl();
   const baseDir = window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '/');
   const qrPageUrl = `${baseDir}qr.html?data=${encodeURIComponent(shareUrl)}`;
@@ -691,6 +979,7 @@ function loadExamData() {
           examDate: normalizeDateForInput(parsed.examDate ?? ''),
           isExamOpen: Boolean(parsed.isExamOpen),
           openedAt: parsed.openedAt ? Number(parsed.openedAt) : (parsed.isExamOpen ? Date.now() : null),
+          activeExamToken: parsed.activeExamToken || null,
           questions: parsed.questions
         };
       }
@@ -1052,6 +1341,20 @@ function renderStudentLoginMeta() {
   const quizView = document.getElementById('studentQuizView');
   const resultView = document.getElementById('studentResultView');
 
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = (urlParams.get('token') || '').trim();
+
+  // 若非考官且未持有隨機測驗連結，顯示失效提示並阻絕考生畫面
+  if (!urlToken && !isExaminerAuthenticated) {
+    showTokenInvalidView('⚠️ 請使用考官提供之專屬隨機測驗連結進入作答！');
+    return;
+  }
+
+  // 若 Token 狀態已判定為無效且非考官，維持顯示失效畫面
+  if (currentExamTokenStatus === 'invalid' && !isExaminerAuthenticated) {
+    return;
+  }
+
   // 若測驗卷已為關閉狀態
   if (!examData.isExamOpen) {
     // 若考生正在作答中，一律立即強制交卷
@@ -1107,6 +1410,19 @@ async function handleStartExam(event) {
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput)) {
     showLoginError('請輸入格式正確的電子郵件 (Email) 信箱！');
+    return;
+  }
+
+  // 開考前校驗隨機測驗 Token 時效
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlToken = (urlParams.get('token') || '').trim();
+  if (!urlToken) {
+    showLoginError('缺少有效隨機測驗憑證，請透過考官提供的測驗連結開啟！');
+    return;
+  }
+  const isTokenValid = await validateCurrentExamToken(urlToken);
+  if (!isTokenValid) {
+    showLoginError('測驗連結已失效或已逾期，無法開始作答！');
     return;
   }
 
@@ -1394,10 +1710,13 @@ function startActiveExamStatusChecker() {
 
     isCheckingExamStatus = true;
     try {
-      const res = await fetch(`${gasUrl}?action=checkState&_t=${Date.now()}`);
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = (urlParams.get('token') || '').trim();
+      const tokenParam = urlToken ? `&token=${encodeURIComponent(urlToken)}` : '';
+      const res = await fetch(`${gasUrl}?action=checkState${tokenParam}&_t=${Date.now()}`);
       const json = await res.json();
       if (json && json.status === 'success') {
-        if (json.isExamOpen === false) {
+        if (json.isExamOpen === false || json.tokenStatus === 'invalid' || json.tokenStatus === 'expired' || json.tokenStatus === 'not_generated') {
           clearInterval(activeExamStatusTimer);
           activeExamStatusTimer = null;
           examData.isExamOpen = false;
@@ -2064,6 +2383,9 @@ function refreshExaminerAllViews(forceAll = false) {
   }
   if (forceAll || currentActiveExaminerTab === 'tabHistory') {
     renderExaminerHistoryTab();
+  }
+  if (forceAll || currentActiveExaminerTab === 'tabExamLink') {
+    updateExamLinkTabUI();
   }
 }
 

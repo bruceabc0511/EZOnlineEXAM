@@ -82,8 +82,25 @@
 
   <main class="main-container">
     <!-- ==================== 考生端 (Student Portal) ==================== -->
-    <section id="studentSection" class="portal-section">
-      <!-- 0. 試卷關閉時顯示之「目前非測驗時間」畫面 -->
+    <section id="studentSection" class="portal-section hidden">
+      <!-- 0-a. 測驗連結無效或已逾期畫面 (未帶Token、超過180分鐘或被考官重新生成失效) -->
+      <div id="studentTokenInvalidView" class="card closed-exam-card hidden">
+        <div class="closed-exam-icon" style="background: rgba(220, 53, 69, 0.1); color: var(--danger, #dc3545);">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+        </div>
+        <h2 id="studentTokenInvalidTitle" style="color: var(--danger, #dc3545);">測驗連結已失效或已逾期</h2>
+        <p class="text-muted" id="studentTokenInvalidDesc">
+          此測驗連結已超過 180 分鐘有效期限，或考官已重新生成新連結。<br>
+          請聯繫考官重新獲取最新測驗連結！
+        </p>
+      </div>
+
+      <!-- 0-b. 試卷關閉時顯示之「目前非測驗時間」畫面 -->
       <div id="studentClosedView" class="card closed-exam-card">
         <div class="closed-exam-icon">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -280,8 +297,8 @@
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
         </div>
-        <h2>考官端管理驗證</h2>
-        <p class="text-muted">請輸入 PIN 碼進入考試管理系統</p>
+        <h2>測驗管理系統登入驗證</h2>
+        <p class="text-muted">請輸入 PIN 碼進入本系統</p>
 
         <form id="pinForm" onsubmit="handlePinLogin(event)">
           <div class="pin-input-wrap">
@@ -289,7 +306,7 @@
               inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="請輸入 4 至 12 碼半形數字">
           </div>
           <div id="pinErrorMsg" class="alert alert-danger hidden">PIN 碼錯誤，請重新確認！</div>
-          <button type="submit" class="btn btn-primary btn-lg btn-block">驗證並進入後台</button>
+          <button type="submit" class="btn btn-primary btn-lg btn-block">登入</button>
         </form>
       </div>
 
@@ -720,18 +737,64 @@
         <!-- 頁籤 5：測驗連結 (考生作答連結 & QR Code) -->
         <div id="tabExamLink" class="tab-content hidden">
           <div class="card" style="max-width: 860px; margin: 0 auto;">
-            <div class="section-title-row" style="margin-bottom: 8px;">
+            <div class="section-title-row" style="margin-bottom: 12px;">
               <div>
-                <h3 style="margin: 0;">📲 考生作答連結 &amp; QR Code</h3>
-                <p class="text-muted text-sm" style="margin-top: 4px; margin-bottom: 0;">
-                  請將下方專屬作答連結或 QR Code 提供給全體考生。考生在各自的手機或電腦開啟即可載入考題作答並送出試卷！
-                </p>
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+                  <h3 style="margin: 0;">📲 考生測驗連結</h3>
+                  <span id="tokenStatusBadge" class="badge badge-secondary">⚪ 測驗連結尚未生成</span>
+                </div>
               </div>
             </div>
 
-            <div class="share-box" style="margin-top: 16px;">
+            <!-- 隨機連結生成控制卡 -->
+            <div
+              style="background: #fffced; border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+              <div
+                style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                <div>
+                  <div style="font-weight: 600; font-size: 1rem; color: var(--text-primary); margin-bottom: 4px;">
+                    🎲 生成測驗連結
+                  </div>
+                  <p class="text-muted text-sm" style="margin: 0;">
+                    每場測驗可生成一組獨立作答網址，<strong>有效時間 180 分鐘 (自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！
+                  </p>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                  <button type="button" id="btnGenerateExamToken" class="btn btn-token-primary"
+                    onclick="handleGenerateExamToken()">
+                    產生連結
+                  </button>
+                  <button type="button" id="btnRevokeExamToken" class="btn btn-token-revoke hidden"
+                    onclick="handleRevokeExamToken()" title="立刻中止目前所有有效的測驗連結">
+                    立即停用
+                  </button>
+                </div>
+              </div>
+
+              <!-- 倒數資訊卡 (生成後顯示) -->
+              <div id="tokenMetaBox" class="hidden"
+                style="margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border-color); display: flex; flex-wrap: wrap; gap: 20px; font-size: 0.9rem;">
+                <div>
+                  <span class="text-muted">生成時間：</span>
+                  <strong id="tokenCreatedAt" style="color: var(--text-primary);">-</strong>
+                </div>
+                <div>
+                  <span class="text-muted">失效時間：</span>
+                  <strong id="tokenExpiresAt" style="color: var(--text-primary);">-</strong>
+                </div>
+                <div>
+                  <span class="text-muted">⏱️ 剩餘有效時間：</span>
+                  <strong id="tokenTimeRemaining" style="color: var(--primary); font-size: 1.05rem;">-</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="share-box">
+              <label style="font-weight: 600; font-size: 0.95rem; margin-bottom: 6px; display: block;">
+                🔗 考生專屬作答網址：
+              </label>
               <div class="share-url-row">
-                <input type="text" id="studentShareUrlInput" readonly placeholder="設定雲端網址後自動產生專屬應試連結...">
+                <input type="text" id="studentShareUrlInput" readonly placeholder="請先點擊上方按鈕生成隨機測驗連結...">
                 <button type="button" class="btn btn-primary" onclick="copyStudentShareUrl()">
                   📋 複製作答連結
                 </button>
@@ -739,18 +802,8 @@
               <div class="qr-code-wrap" id="qrCodeWrap">
                 <img id="studentQrImage" alt="考生應試 QR Code" src="" class="hidden" onclick="openStandaloneQrPage()"
                   title="點擊開啟獨立頁面單獨顯示 QR Code">
-                <div id="qrCodeHint" class="text-muted text-sm">設定雲端網址後將自動顯示考生掃描應試 QR Code</div>
+                <div id="qrCodeHint" class="text-muted text-sm">生成隨機測驗連結後將自動顯示考生掃描應試 QR Code</div>
               </div>
-            </div>
-
-            <div
-              style="margin-top: 16px; padding: 12px 16px; background: #f8fafc; border-radius: 8px; border: 1px solid var(--border-color); font-size: 0.9rem; color: var(--text-secondary);">
-              <strong>💡 應試發送指南：</strong>
-              <ul style="margin: 6px 0 0 18px; padding: 0; line-height: 1.7;">
-                <li>可直接點擊「📋 複製作答連結」貼入通訊軟體群組 (LINE/Teams/Meet) 或發信通知考生。</li>
-                <li>點擊上方 QR Code 圖片可開啟全螢幕獨立投影畫面，便於在實體考場投放大螢幕供考生手機掃描。</li>
-                <li>考生進入測驗後，僅在考官點擊上方「開始測驗」開放期間才會顯示考題進行作答。</li>
-              </ul>
             </div>
           </div>
         </div>
