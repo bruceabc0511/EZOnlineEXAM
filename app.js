@@ -103,7 +103,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         examData.isExamOpen = isNowOpen;
         if (!isNowOpen) {
           if (activeSession && activeSession.isActive) {
-            finalizeExamSubmission('考官結束測驗強制交卷');
+            finalizeExamSubmission('測驗結束強制交卷');
           } else {
             renderStudentLoginMeta();
           }
@@ -112,7 +112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             renderStudentLoginMeta();
           }
         }
-      } catch (err) {}
+      } catch (err) { }
     }
   });
 
@@ -362,7 +362,7 @@ document.addEventListener('visibilitychange', () => {
     } else if (activeSession.isActive) {
       // 考生作答中切回前台時，立即檢查一次測驗是否已被考官結束作答
       if (!examData.isExamOpen) {
-        finalizeExamSubmission('考官結束測驗強制交卷');
+        finalizeExamSubmission('測驗結束強制交卷');
       } else {
         const gasUrl = getActiveGasUrl();
         if (gasUrl) {
@@ -372,11 +372,11 @@ document.addEventListener('visibilitychange', () => {
               if (json && json.status === 'success' && json.isExamOpen === false) {
                 examData.isExamOpen = false;
                 if (activeSession.isActive) {
-                  finalizeExamSubmission('考官結束測驗強制交卷');
+                  finalizeExamSubmission('測驗結束強制交卷');
                 }
               }
             })
-            .catch(() => {});
+            .catch(() => { });
         }
       }
     }
@@ -1039,7 +1039,7 @@ function setExamOpenStatus(isOpen) {
     refreshExaminerAllViews();
     // 當考官將測驗設定為結束作答後，若當前有尚未交卷之考生，一律強制交卷
     if (activeSession && activeSession.isActive) {
-      finalizeExamSubmission('考官結束測驗強制交卷');
+      finalizeExamSubmission('測驗結束強制交卷');
     }
     showToast('🔴 已結束測驗並關閉試卷！考生端目前已隱藏所有內容。');
   }
@@ -1056,7 +1056,7 @@ function renderStudentLoginMeta() {
   if (!examData.isExamOpen) {
     // 若考生正在作答中，一律立即強制交卷
     if (activeSession && activeSession.isActive) {
-      finalizeExamSubmission('考官結束測驗強制交卷');
+      finalizeExamSubmission('測驗結束強制交卷');
       return;
     }
     const isInResult = resultView && !resultView.classList.contains('hidden');
@@ -1125,7 +1125,7 @@ async function handleStartExam(event) {
       if (checkJson && checkJson.status === 'success' && checkJson.exists) {
         cloudEmailDuplicate = checkJson;
       }
-    } catch (e) {}
+    } catch (e) { }
     if (startBtn) {
       startBtn.disabled = false;
       startBtn.innerHTML = `進入全螢幕並開始作答 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
@@ -1369,7 +1369,7 @@ function startActiveExamStatusChecker() {
 
   // 立即檢查一次本機狀態
   if (!examData.isExamOpen && activeSession.isActive) {
-    finalizeExamSubmission('考官結束測驗強制交卷');
+    finalizeExamSubmission('測驗結束強制交卷');
     return;
   }
 
@@ -1384,7 +1384,7 @@ function startActiveExamStatusChecker() {
     if (!examData.isExamOpen) {
       clearInterval(activeExamStatusTimer);
       activeExamStatusTimer = null;
-      finalizeExamSubmission('考官結束測驗強制交卷');
+      finalizeExamSubmission('測驗結束強制交卷');
       return;
     }
 
@@ -1408,9 +1408,9 @@ function startActiveExamStatusChecker() {
               parsed.isExamOpen = false;
               localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(parsed));
             }
-          } catch (e) {}
+          } catch (e) { }
           if (activeSession.isActive) {
-            finalizeExamSubmission('考官結束測驗強制交卷');
+            finalizeExamSubmission('測驗結束強制交卷');
           }
         }
       }
