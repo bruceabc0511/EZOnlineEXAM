@@ -134,13 +134,13 @@
               </div>
               <div class="form-group">
                 <label for="studentId">編號 <small class="text-muted" style="font-weight:400;">(非必填)</small></label>
-                <input type="text" id="studentId" placeholder="請輸入編號 (例：001，非必填)" autocomplete="off">
+                <input type="text" id="studentId" placeholder="請輸入編號 (例：001)" autocomplete="off">
               </div>
             </div>
 
             <div class="form-group">
               <label for="studentEmail">電子郵件 (Email) <span class="required">*</span> <small class="text-muted"
-                  style="font-weight:400;">— 考試結束後寄送個人成績單</small></label>
+                  style="font-weight:400;">— 考試後寄送成績單用</small></label>
               <input type="email" id="studentEmail" required placeholder="請輸入常用 Email (例：example@gmail.com)"
                 autocomplete="email">
             </div>
@@ -380,10 +380,10 @@
               </div>
             </div>
             <p class="text-muted text-sm" style="margin-top: 8px; margin-bottom: 0;">
-              💡 您可在上方切換檢視與個別編輯試卷。 點選「📌設為當前測驗試卷」再點選上方「開放作答」即可指派給考生作答。
+              💡 您可在上方切換檢視與個別編輯試卷。 點選「<strong>設為當前測驗試卷</strong>」再點選上方「<strong>開放作答</strong>」即可指派給考生作答。
             </p>
             <p class="text-muted text-sm" style="margin-top: 8px; margin-bottom: 0;">
-              ⚠️ 測驗進行中時，可進行個別試卷編輯但無法執行「📌設為當前測驗試卷」功能。
+              ⚠️ 測驗進行中時，可進行個別試卷編輯但<strong>無法執行「設為當前測驗試卷功能」</strong>。
             </p>
           </div>
 
@@ -429,20 +429,20 @@
             <!-- 試卷基本設定區塊 -->
             <div class="card">
               <div class="section-title-row">
-                <h3>⚙️ 當前試卷資訊</h3>
+                <h3>⚙️ 試卷資訊設定</h3>
               </div>
               <form id="examMetaForm" onsubmit="saveExamMetadata(event)">
                 <div class="form-group">
-                  <label>試卷名稱</label>
+                  <label>📜 試卷名稱</label>
                   <input type="text" id="metaExamTitle" placeholder="請輸入試卷名稱">
                 </div>
                 <div class="form-row">
                   <div class="form-group">
-                    <label>考試日期</label>
+                    <label>📅 考試日期</label>
                     <input type="date" id="metaExamDate">
                   </div>
                   <div class="form-group">
-                    <label>作答時間 (分鐘)</label>
+                    <label>⌛ 作答時間 (分鐘)</label>
                     <input type="number" id="metaExamDuration" min="1" max="300" placeholder="請輸入分鐘數(例:60)">
                   </div>
                 </div>
@@ -451,8 +451,7 @@
                   <div>總分設定：<strong>100</strong> 分</div>
                   <div>每題自動配分：<strong id="metaPointsPerQ">0</strong> 分</div>
                 </div>
-                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 12px;">💾 儲存 &
-                  同步至試卷資料庫</button>
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 12px;">儲存 & 同步至試卷資料庫</button>
               </form>
               <div id="importAlertBox" class="alert hidden" style="margin-top: 12px;"></div>
             </div>
@@ -985,4 +984,5 @@
   <script src="app.js"></script>
   <p class="Powered" style="font-size: 9px; text-align: center;">Powered by Chin Wei Li 2026</p>
 </body>
+
 </html>
