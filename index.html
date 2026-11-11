@@ -15,7 +15,7 @@
     crossorigin="anonymous"></script>
 </head>
 
-<body>
+<body class="examiner-mode">
   <!-- 頂部導覽列 -->
   <header class="app-header" id="appHeader">
     <div class="header-container">
@@ -43,14 +43,14 @@
       </div>
 
       <nav class="role-switcher" id="roleSwitcher">
-        <button class="role-btn active" id="btnRoleStudent" onclick="switchRole('student')">
+        <button class="role-btn" id="btnRoleStudent" onclick="switchRole('student')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
             <circle cx="12" cy="7" r="4"></circle>
           </svg>
           考生端
         </button>
-        <button class="role-btn" id="btnRoleExaminer" onclick="switchRole('examiner')">
+        <button class="role-btn active" id="btnRoleExaminer" onclick="switchRole('examiner')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
@@ -288,7 +288,7 @@
     </section>
 
     <!-- ==================== 考官端 (Examiner Portal) ==================== -->
-    <section id="examinerSection" class="portal-section hidden">
+    <section id="examinerSection" class="portal-section">
       <!-- 1. 考官 PIN 碼驗證畫面 -->
       <div id="examinerPinView" class="card pin-card">
         <div class="pin-icon">

@@ -97,20 +97,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupAntiCheatListeners();
   startExamTokenCountdown();
 
-  // 解析 URL 是否含有隨機測驗 Token 參數
+  // 解析 URL 是否含有隨機測驗 Token 參數或指定考生角色
   const urlParams = new URLSearchParams(window.location.search);
   const urlToken = (urlParams.get('token') || '').trim();
+  const roleParam = (urlParams.get('role') || '').trim();
   const roleSwitcher = document.getElementById('roleSwitcher');
 
-  if (!urlToken) {
-    // 1. 直連根網址 (無隨機測驗連結)：直接顯示考官端登入畫面，取消考生端空白畫面
-    switchRole('examiner');
-    if (roleSwitcher) roleSwitcher.classList.add('hidden');
-  } else {
-    // 2. 透過隨機測驗連結進入：進入考生端，隱藏身分切換按鈕，並執行 Token 權威校驗
+  if (urlToken || roleParam === 'student') {
+    // 透過隨機測驗連結或指定考生端進入：進入考生端
     switchRole('student');
-    if (roleSwitcher) roleSwitcher.classList.add('hidden');
-    await validateCurrentExamToken(urlToken);
+    if (urlToken) {
+      if (roleSwitcher) roleSwitcher.classList.add('hidden');
+      await validateCurrentExamToken(urlToken);
+    }
+  } else {
+    // 直連根網址 (預設畫面)：直接顯示考官端登入畫面 (PIN 碼驗證卡片)
+    switchRole('examiner');
   }
 
   // 跨分頁即時同步考官試卷開關狀態 (當考官結束測驗時，作答中考生分頁毫秒級自動強制交卷)
@@ -260,9 +262,11 @@ function buildStudentShareUrl() {
     params.set('api', depId || gasUrl);
   }
 
-  // 模式 A：將當前有效的隨機測驗 Token 帶入作答連結中
+  // 模式 A：將當前有效的隨機測驗 Token 帶入作答連結中，若尚未生成則預設指定考生端
   if (examData && examData.activeExamToken && examData.activeExamToken.token) {
     params.set('token', examData.activeExamToken.token);
+  } else {
+    params.set('role', 'student');
   }
 
   const query = params.toString();
