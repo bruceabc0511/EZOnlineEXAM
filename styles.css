@@ -418,12 +418,13 @@ body {
 /* ==================== 表單與按鈕元件 ==================== */
 .form-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 18px;
 }
 
 .form-group {
   margin-bottom: 16px;
+  min-width: 0;
 }
 
 .form-group label {
@@ -446,6 +447,9 @@ input[type="number"],
 select,
 textarea {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 11px 14px;
   border: 1.5px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -454,6 +458,14 @@ textarea {
   color: var(--text-main);
   background: #ffffff;
   transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+/* 修正 iOS Safari 原生日期輸入框在行動裝置上超出容器寬度的問題 */
+input[type="date"] {
+  display: block;
+  min-height: 44px;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 input:focus,
@@ -1829,7 +1841,7 @@ body.examiner-mode .btn-primary:hover {
   }
 
   .grid-2col {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .stats-grid {
@@ -1839,7 +1851,7 @@ body.examiner-mode .btn-primary:hover {
 
 @media (max-width: 600px) {
   .form-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .stats-grid {
