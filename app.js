@@ -387,10 +387,10 @@ function startCloudPolling() {
   }, cloudPollIntervalMs);
 }
 
-// 效能優化：分頁隱藏時降頻至 30 秒，切回前台時立即檢查並恢復 10 秒
+// 效能優化：分頁隱藏時降頻至 3 分鐘，切回前台時立即檢查並恢復 10 秒
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    adjustCloudPollInterval(30000);
+    adjustCloudPollInterval(180000);
   } else {
     adjustCloudPollInterval(10000);
     if (!activeSession.isActive && getActiveGasUrl()) {
@@ -1741,7 +1741,7 @@ function startActiveExamStatusChecker() {
       return;
     }
 
-    // 2. 雲端狀態輕量化快速檢查 (每 3 秒非同步查詢雲端 isExamOpen)
+    // 2. 雲端狀態輕量化快速檢查 (每 6 秒非同步查詢雲端 isExamOpen)
     const gasUrl = getActiveGasUrl();
     if (!gasUrl || isCheckingExamStatus) return;
 
@@ -1775,7 +1775,7 @@ function startActiveExamStatusChecker() {
     } finally {
       isCheckingExamStatus = false;
     }
-  }, 3000);
+  }, 6000);
 }
 
 // ==================== 防作弊監控機制 ====================

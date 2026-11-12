@@ -32,7 +32,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.21)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.23)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -395,6 +395,35 @@
           </div>
 
           <div class="grid-2col">
+            <!-- 試卷基本設定區塊 -->
+            <div class="card">
+              <div class="section-title-row">
+                <h3>⚙️ 試卷資訊設定</h3>
+              </div>
+              <form id="examMetaForm" onsubmit="saveExamMetadata(event)">
+                <div class="form-group">
+                  <label>📜 試卷名稱</label>
+                  <input type="text" id="metaExamTitle" placeholder="請輸入試卷名稱">
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>📅 考試日期</label>
+                    <input type="date" id="metaExamDate">
+                  </div>
+                  <div class="form-group">
+                    <label>⌛ 作答時間 (分鐘)</label>
+                    <input type="number" id="metaExamDuration" min="1" max="300" placeholder="請輸入分鐘數(例:60)">
+                  </div>
+                </div>
+                <div class="meta-summary-strip">
+                  <div>有效題數：<strong id="metaValidQCount">0</strong> 題</div>
+                  <div>總分設定：<strong>100</strong> 分</div>
+                  <div>每題自動配分：<strong id="metaPointsPerQ">0</strong> 分</div>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 12px;">儲存 & 同步至試卷資料庫</button>
+              </form>
+              <div id="importAlertBox" class="alert hidden" style="margin-top: 12px;"></div>
+            </div>
             <!-- 匯入區塊 -->
             <div class="card">
               <div class="section-title-row">
@@ -430,36 +459,6 @@
                 <span class="dropzone-sub-text">匯入後將即時解析題目並同步更新至雲端試卷庫</span>
               </div>
 
-              <div id="importAlertBox" class="alert hidden" style="margin-top: 12px;"></div>
-            </div>
-
-            <!-- 試卷基本設定區塊 -->
-            <div class="card">
-              <div class="section-title-row">
-                <h3>⚙️ 試卷資訊設定</h3>
-              </div>
-              <form id="examMetaForm" onsubmit="saveExamMetadata(event)">
-                <div class="form-group">
-                  <label>📜 試卷名稱</label>
-                  <input type="text" id="metaExamTitle" placeholder="請輸入試卷名稱">
-                </div>
-                <div class="form-row">
-                  <div class="form-group">
-                    <label>📅 考試日期</label>
-                    <input type="date" id="metaExamDate">
-                  </div>
-                  <div class="form-group">
-                    <label>⌛ 作答時間 (分鐘)</label>
-                    <input type="number" id="metaExamDuration" min="1" max="300" placeholder="請輸入分鐘數(例:60)">
-                  </div>
-                </div>
-                <div class="meta-summary-strip">
-                  <div>有效題數：<strong id="metaValidQCount">0</strong> 題</div>
-                  <div>總分設定：<strong>100</strong> 分</div>
-                  <div>每題自動配分：<strong id="metaPointsPerQ">0</strong> 分</div>
-                </div>
-                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 12px;">儲存 & 同步至試卷資料庫</button>
-              </form>
               <div id="importAlertBox" class="alert hidden" style="margin-top: 12px;"></div>
             </div>
           </div>
