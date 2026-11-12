@@ -70,6 +70,7 @@ let examTokenCountdownTimer = null;
 let pinFailedAttempts = 0;
 let pinLockoutRemaining = 0;
 let pinLockoutTimer = null;
+let isPinLoggingIn = false;
 
 // 當前考試進行中狀態
 let activeSession = {
@@ -1193,11 +1194,18 @@ function switchRole(role) {
       const dashView = document.getElementById('examinerDashboardView');
       const pinInput = document.getElementById('examinerPinInput');
       const pinErr = document.getElementById('pinErrorMsg');
+      const pinLoading = document.getElementById('pinLoadingBar');
+      const pinBtn = document.getElementById('pinSubmitBtn');
       if (pinView) pinView.classList.remove('hidden');
       if (dashView) dashView.classList.add('hidden');
-      if (pinInput) pinInput.value = '';
+      if (pinInput) {
+        pinInput.value = '';
+        if (pinLockoutRemaining <= 0) pinInput.disabled = false;
+      }
       if (pinErr) pinErr.classList.add('hidden');
-      if (pinInput) setTimeout(() => pinInput.focus(), 100);
+      if (pinLoading) pinLoading.classList.add('hidden');
+      if (pinBtn && pinLockoutRemaining <= 0) pinBtn.disabled = false;
+      if (pinInput && pinLockoutRemaining <= 0) setTimeout(() => pinInput.focus(), 100);
     }
   }
 }
@@ -2134,9 +2142,13 @@ function getStoredExaminerPinHash() {
 
 async function handlePinLogin(event) {
   event.preventDefault();
+  if (isPinLoggingIn) return;
+
   const pinInputEl = document.getElementById('examinerPinInput');
   const pinInput = pinInputEl.value.trim();
   const errBox = document.getElementById('pinErrorMsg');
+  const loadingBar = document.getElementById('pinLoadingBar');
+  const pinBtn = document.getElementById('pinSubmitBtn') || document.querySelector('#pinForm button[type="submit"]');
 
   if (pinLockoutRemaining > 0) {
     errBox.textContent = `⚠️ 連續錯誤次數過多，目前系統鎖定中！請等待 ${pinLockoutRemaining} 秒後再試。`;
@@ -2161,52 +2173,73 @@ async function handlePinLogin(event) {
     return;
   }
 
-  const inputHash = await hashExaminerPin(pinInput);
-  const targetHash = getStoredExaminerPinHash();
+  isPinLoggingIn = true;
+  let isPinValid = false;
+  errBox.classList.add('hidden');
+  if (loadingBar) loadingBar.classList.remove('hidden');
+  if (pinBtn) pinBtn.disabled = true;
+  if (pinInputEl) pinInputEl.disabled = true;
 
-  let isPinValid = (inputHash === targetHash);
-  let cloudLockedMsg = '';
+  try {
+    const inputHash = await hashExaminerPin(pinInput);
+    const targetHash = getStoredExaminerPinHash();
 
-  // 若已連線雲端，優先向雲端驗證 PIN 雜湊（支援跨裝置變更 PIN 同步與雲端防暴力破解鎖定）
-  if (getActiveGasUrl()) {
-    const verifyRes = await postToCloud({
-      action: 'verifyExaminer',
-      authPinHash: inputHash
-    });
-    if (verifyRes && verifyRes.status === 'success') {
-      isPinValid = true;
-      localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, inputHash);
-    } else if (verifyRes && verifyRes.status === 'locked') {
-      isPinValid = false;
-      cloudLockedMsg = verifyRes.message || '❌ PIN 碼錯誤次數過多，雲端已暫時鎖定 5 分鐘！';
-    } else if (verifyRes && verifyRes.status === 'unauthorized') {
-      isPinValid = false;
-    }
-  }
+    isPinValid = (inputHash === targetHash);
+    let cloudLockedMsg = '';
 
-  if (isPinValid) {
-    pinFailedAttempts = 0;
-    isExaminerAuthenticated = true;
-    currentExaminerAuthToken = inputHash;
-    errBox.classList.add('hidden');
-    showExaminerDashboard();
+    // 若已連線雲端，優先向雲端驗證 PIN 雜湊（支援跨裝置變更 PIN 同步與雲端防暴力破解鎖定）
     if (getActiveGasUrl()) {
-      await syncStateFromCloud(true, true);
+      const verifyRes = await postToCloud({
+        action: 'verifyExaminer',
+        authPinHash: inputHash
+      });
+      if (verifyRes && verifyRes.status === 'success') {
+        isPinValid = true;
+        localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, inputHash);
+      } else if (verifyRes && verifyRes.status === 'locked') {
+        isPinValid = false;
+        cloudLockedMsg = verifyRes.message || '❌ PIN 碼錯誤次數過多，雲端已暫時鎖定 5 分鐘！';
+      } else if (verifyRes && verifyRes.status === 'unauthorized') {
+        isPinValid = false;
+      }
     }
-  } else {
-    pinFailedAttempts++;
-    if (cloudLockedMsg) {
-      startPinLockout(30);
-      errBox.textContent = cloudLockedMsg;
-    } else if (pinFailedAttempts >= 5) {
-      startPinLockout(30);
-      errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，系統已暫時鎖定 30 秒！';
+
+    if (isPinValid) {
+      pinFailedAttempts = 0;
+      isExaminerAuthenticated = true;
+      currentExaminerAuthToken = inputHash;
+      errBox.classList.add('hidden');
+      if (getActiveGasUrl()) {
+        await syncStateFromCloud(true, true);
+      }
+      showExaminerDashboard();
     } else {
-      errBox.textContent = `❌ PIN 碼錯誤，請重新確認！（剩餘 ${5 - pinFailedAttempts} 次嘗試機會）`;
+      pinFailedAttempts++;
+      if (cloudLockedMsg) {
+        startPinLockout(30);
+        errBox.textContent = cloudLockedMsg;
+      } else if (pinFailedAttempts >= 5) {
+        startPinLockout(30);
+        errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，系統已暫時鎖定 30 秒！';
+      } else {
+        errBox.textContent = `❌ PIN 碼錯誤，請重新確認！（剩餘 ${5 - pinFailedAttempts} 次嘗試機會）`;
+      }
+      errBox.className = 'alert alert-danger';
+      errBox.classList.remove('hidden');
     }
-    errBox.className = 'alert alert-danger';
-    errBox.classList.remove('hidden');
-    pinInputEl.select();
+  } finally {
+    isPinLoggingIn = false;
+    if (loadingBar) loadingBar.classList.add('hidden');
+    if (pinLockoutRemaining <= 0) {
+      if (pinBtn) pinBtn.disabled = false;
+      if (pinInputEl) {
+        pinInputEl.disabled = false;
+        if (!isPinValid) {
+          pinInputEl.focus();
+          pinInputEl.select();
+        }
+      }
+    }
   }
 }
 
@@ -2253,6 +2286,8 @@ function logoutExaminer() {
   document.getElementById('examinerDashboardView').classList.add('hidden');
   document.getElementById('examinerPinView').classList.remove('hidden');
   document.getElementById('examinerPinInput').value = '';
+  const pinLoading = document.getElementById('pinLoadingBar');
+  if (pinLoading) pinLoading.classList.add('hidden');
 }
 
 async function handleUpdateExaminerPin(event) {

@@ -289,7 +289,12 @@
               inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="請輸入 4 至 12 碼半形數字">
           </div>
           <div id="pinErrorMsg" class="alert alert-danger hidden">PIN 碼錯誤，請重新確認！</div>
-          <button type="submit" class="btn btn-primary btn-lg btn-block">登入</button>
+          <div id="pinLoadingBar" class="pin-loading-wrap hidden" role="progressbar" aria-label="登入驗證進度">
+            <div class="pin-loading-track">
+              <div class="pin-loading-fill"></div>
+            </div>
+          </div>
+          <button type="submit" id="pinSubmitBtn" class="btn btn-primary btn-lg btn-block">登入</button>
         </form>
       </div>
 
@@ -353,7 +358,7 @@
         <!-- 頁籤 1：考題管理與 Excel 匯入 -->
         <div id="tabQuestions" class="tab-content">
           <!-- 試卷庫切換與管理控制列 -->
-          <div class="card" style="margin-bottom: 20px;">
+          <div class="card exam-library-card" style="margin-bottom: 20px;">
             <div class="section-title-row" style="flex-wrap: wrap; gap: 12px; align-items: center;">
               <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 280px;">
                 <h3 style="margin: 0; white-space: nowrap;">📚 試卷庫</h3>

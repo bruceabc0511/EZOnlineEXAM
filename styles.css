@@ -511,6 +511,13 @@ input:disabled {
   transition: all 0.2s ease;
 }
 
+.btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
 .btn-lg {
   padding: 13px 26px;
   font-size: 1.05rem;
@@ -933,6 +940,39 @@ input:disabled {
   font-weight: 700;
 }
 
+.pin-loading-wrap {
+  margin: 0 0 16px;
+}
+
+.pin-loading-track {
+  width: 100%;
+  height: 8px;
+  background: var(--primary-tint);
+  border-radius: 99px;
+  overflow: hidden;
+  position: relative;
+}
+
+.pin-loading-fill {
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary) 0%, var(--primary-light) 100%);
+  border-radius: 99px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: pinProgressSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes pinProgressSlide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
 /* 考官後台測驗開始/結束控制橫幅與頂部頁籤 */
 .exam-control-banner {
   display: flex;
@@ -1155,6 +1195,11 @@ body.examiner-mode .btn-primary:hover {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.exam-library-card {
+  border: 3px solid var(--primary);
+  box-shadow: 0 6px 18px rgba(117, 0, 0, 0.12);
 }
 
 .upload-dropzone {
