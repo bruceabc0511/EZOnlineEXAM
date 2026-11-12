@@ -97,6 +97,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDragAndDrop();
   setupAntiCheatListeners();
   startExamTokenCountdown();
+  setupExaminerIdleDetector();
 
   // 解析 URL 是否含有隨機測驗 Token 參數或指定考生角色
   const urlParams = new URLSearchParams(window.location.search);
@@ -392,6 +393,8 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     adjustCloudPollInterval(180000);
   } else {
+    // 若為考官已登入狀態，檢查是否已閒置超過 30 分鐘 (特別針對行動裝置喚醒/切換 App)
+    checkExaminerIdleTimeout();
     adjustCloudPollInterval(10000);
     if (!activeSession.isActive && getActiveGasUrl()) {
       syncStateFromCloud(true);
@@ -1202,7 +1205,7 @@ function switchRole(role) {
         pinInput.value = '';
         if (pinLockoutRemaining <= 0) pinInput.disabled = false;
       }
-      if (pinErr) pinErr.classList.add('hidden');
+      if (pinErr && !pinErr.classList.contains('alert-warning')) pinErr.classList.add('hidden');
       if (pinLoading) pinLoading.classList.add('hidden');
       if (pinBtn && pinLockoutRemaining <= 0) pinBtn.disabled = false;
       if (pinInput && pinLockoutRemaining <= 0) setTimeout(() => pinInput.focus(), 100);
@@ -2208,6 +2211,8 @@ async function handlePinLogin(event) {
       pinFailedAttempts = 0;
       isExaminerAuthenticated = true;
       currentExaminerAuthToken = inputHash;
+      lastExaminerActivityTime = Date.now();
+      lastExaminerActivityRecordAt = Date.now();
       errBox.classList.add('hidden');
       if (getActiveGasUrl()) {
         await syncStateFromCloud(true, true);
@@ -2277,17 +2282,99 @@ function startPinLockout(seconds) {
   }, 1000);
 }
 
-function logoutExaminer() {
+// ==================== 考官端閒置自動登出機制 (桌面與行動裝置全面適用) ====================
+const EXAMINER_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 閒置超過 30 分鐘 (1,800,000 毫秒) 自動登出
+let lastExaminerActivityTime = Date.now();
+let lastExaminerActivityRecordAt = 0;
+let examinerIdleCheckTimer = null;
+
+function recordExaminerActivity() {
+  if (!isExaminerAuthenticated) return;
+  const now = Date.now();
+  // 節流保護：每 2 秒最多記錄一次，避免高頻 touchmove/mousemove 消耗行動裝置 CPU 與電力
+  if (now - lastExaminerActivityRecordAt > 2000) {
+    lastExaminerActivityRecordAt = now;
+    lastExaminerActivityTime = now;
+  }
+}
+
+function checkExaminerIdleTimeout() {
+  if (!isExaminerAuthenticated) return;
+  const now = Date.now();
+  if (now < lastExaminerActivityTime) {
+    // 預防裝置系統時間異常回調
+    lastExaminerActivityTime = now;
+    return;
+  }
+  const elapsed = now - lastExaminerActivityTime;
+  if (elapsed >= EXAMINER_IDLE_TIMEOUT_MS) {
+    console.warn(`[考官端安全防護] 系統已閒置超過 30 分鐘 (累計 ${Math.round(elapsed / 1000)} 秒未動作)，執行自動安全登出。`);
+    logoutExaminer('idle');
+  }
+}
+
+function setupExaminerIdleDetector() {
+  // 監聽桌面與行動裝置的使用者互動事件
+  // 使用 passive: true 確保觸控滾動與畫面滑動維持最高流暢度
+  const activityEvents = [
+    'mousedown', 'mousemove', 'keydown', 'wheel', 'click', 'input', 'change',
+    'touchstart', 'touchmove', 'touchend', 'touchcancel',
+    'pointerdown', 'pointerup',
+    'scroll', 'dragover', 'drop'
+  ];
+
+  activityEvents.forEach(evt => {
+    window.addEventListener(evt, recordExaminerActivity, { passive: true });
+  });
+
+  // 定期檢查閒置時間 (每 15 秒檢查一次)
+  if (examinerIdleCheckTimer) clearInterval(examinerIdleCheckTimer);
+  examinerIdleCheckTimer = setInterval(checkExaminerIdleTimeout, 15000);
+
+  // 行動裝置喚醒、螢幕解鎖、切換應用程式或瀏覽器分頁切回時立即檢查
+  window.addEventListener('focus', checkExaminerIdleTimeout);
+  window.addEventListener('pageshow', checkExaminerIdleTimeout);
+}
+
+function logoutExaminer(reason) {
+  const isIdle = (reason === 'idle');
   isExaminerAuthenticated = false;
   currentExaminerAuthToken = '';
   isGasUrlUnlockedBySecret = false;
   gasSecretClickCount = 0;
+  stopExaminerLiveTimer();
   updateCloudStatusUI();
-  document.getElementById('examinerDashboardView').classList.add('hidden');
-  document.getElementById('examinerPinView').classList.remove('hidden');
-  document.getElementById('examinerPinInput').value = '';
+
+  // 關閉考官端可能開啟中的浮動視窗 (Modal)
+  const examinerModals = ['studentDetailModal', 'addQuestionModal', 'archiveSessionModal', 'imageLightboxModal'];
+  examinerModals.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  });
+
+  const dashView = document.getElementById('examinerDashboardView');
+  const pinView = document.getElementById('examinerPinView');
+  const pinInput = document.getElementById('examinerPinInput');
   const pinLoading = document.getElementById('pinLoadingBar');
+  const pinErr = document.getElementById('pinErrorMsg');
+
+  if (dashView) dashView.classList.add('hidden');
+  if (pinView) pinView.classList.remove('hidden');
+  if (pinInput) pinInput.value = '';
   if (pinLoading) pinLoading.classList.add('hidden');
+
+  if (isIdle) {
+    showToast('⚠️ 閒置已超過 30 分鐘，系統已自動安全登出。');
+    if (pinErr) {
+      pinErr.textContent = '⚠️ 因閒置超過 30 分鐘未動作，系統已自動安全登出。請重新輸入 PIN 碼登入。';
+      pinErr.className = 'alert alert-warning';
+      pinErr.classList.remove('hidden');
+    }
+  } else {
+    if (pinErr) {
+      pinErr.classList.add('hidden');
+    }
+  }
 }
 
 async function handleUpdateExaminerPin(event) {

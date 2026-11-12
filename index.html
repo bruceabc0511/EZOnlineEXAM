@@ -32,7 +32,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.23)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.25)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -76,9 +76,9 @@
             <line x1="9" y1="9" x2="15" y2="15"></line>
           </svg>
         </div>
-        <h2 id="studentTokenInvalidTitle" style="color: var(--danger, #dc3545);">測驗連結已失效或已逾期</h2>
+        <h2 id="studentTokenInvalidTitle" style="color: var(--danger, #dc3545);">測驗連結已失效或已逾時</h2>
         <p class="text-muted" id="studentTokenInvalidDesc">
-          此測驗連結已超過 180 分鐘有效期限，或考官已重新生成新連結。<br>
+          此測驗連結已超過有效期限，或考官已重新生成新連結。<br>
           請聯繫考官重新獲取最新測驗連結！
         </p>
       </div>
@@ -390,7 +390,7 @@
               💡 您可在上方切換檢視與個別編輯試卷。 點選「<strong>設為當前測驗試卷</strong>」再點選上方「<strong>開放作答</strong>」即可指派給考生作答。
             </p>
             <p class="text-muted text-sm" style="margin-top: 8px; margin-bottom: 0;">
-              ⚠️ 測驗進行中時，可進行個別試卷編輯但<strong>無法執行「設為當前測驗試卷功能」</strong>。
+              ⚠️ 測驗進行中時，可進行個別試卷編輯但<strong>無法執行「設為當前測驗試卷功能」</strong>與<strong>編輯「正在測驗中的試卷」</strong>。
             </p>
           </div>
 
@@ -437,14 +437,15 @@
                 👉 請依範本格式填寫題目、選項與正確答案後再匯入。
               </p>
               <p class="text-muted text-sm">
-                👉 試卷名稱、考試日期、作答時間 請於右側手動輸入。
+                👉 <strong>題目如需附上圖片，請先匯入或手動輸入題目，再從【編輯】中插入圖片。</strong>
+              </p>
+              <p class="text-muted text-sm">
+                👉 試卷名稱、考試日期、作答時間 請於左側試卷資訊區域輸入。
               </p>
               <p class="text-muted text-sm">
                 👉 系統會自動濾除空白題目並依有效題數自動配分（滿分 100 分）。
               </p>
-              <p class="text-muted text-sm">
-                👉 <strong>題目如需附上圖片，請先匯入或手動輸入題目，再從【編輯】中插入圖片。</strong>
-              </p>
+
 
               <div class="upload-dropzone" id="excelDropzone"
                 onclick="document.getElementById('excelFileInput').click()">
@@ -469,7 +470,7 @@
               <h3>📋 當前題庫明細 (共 <span id="questionTableCount">0</span> 題)</h3>
               <div class="action-btn-group">
                 <button type="button" class="btn btn-secondary btn-sm" onclick="openAddQuestionModal()">
-                  ➕ 手動新增單選題
+                  ➕ 手動新增題目
                 </button>
                 <button type="button" class="btn btn-danger-outline btn-sm" onclick="clearAllQuestions()">
                   🗑️ 清空全部題目
