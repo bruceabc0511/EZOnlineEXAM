@@ -691,6 +691,11 @@ function isExamTokenActive(tokenObj) {
 }
 
 async function handleGenerateExamToken() {
+  if (examData.isExamOpen) {
+    alert('⚠️ 測驗正在進行中！\n\n' + '若要重新生成連結，請先【結束當前的測驗】。');
+    return;
+  }
+
   if (examData.activeExamToken && isExamTokenActive(examData.activeExamToken)) {
     const confirmRegen = confirm(
       '⚠️ 目前已有使用中的隨機測驗連結！\n\n' +
@@ -723,18 +728,35 @@ async function handleRevokeExamToken() {
     return;
   }
 
-  const confirmRevoke = confirm(
-    '⚠️ 確定要立即停用當前的測驗連結嗎？\n\n' +
-    '停用後，當前所有的測驗連結將【立即失效】！\n' +
+  const isExamRunning = Boolean(examData.isExamOpen);
+  const confirmMessage = isExamRunning
+    ? '⚠️ 測驗正在進行中！停用連結會【立即終止測驗】並強制收卷。\n\n' + '確定要停用測驗連結並結束作答嗎？'
+    : '⚠️ 確定要立即停用當前的測驗連結嗎？\n\n' +
+    '停用後，當前的測驗連結將【立即失效】！\n' +
     '考生將無法再透過該網址進入作答。\n\n' +
-    '確定要執行停用嗎？'
-  );
+    '確定要執行停用嗎？';
+
+  const confirmRevoke = confirm(confirmMessage);
   if (!confirmRevoke) return;
 
   examData.activeExamToken = null;
+  if (isExamRunning) {
+    examData.isExamOpen = false;
+    examData.openedAt = null;
+    stopExaminerLiveTimer();
+  }
+
   saveExamDataToStorage(true);
-  updateExamLinkTabUI();
-  showToast('🛑 已停用所有測驗連結！');
+  if (isExamRunning) {
+    refreshExaminerAllViews();
+    if (activeSession && activeSession.isActive) {
+      finalizeExamSubmission('測驗結束強制交卷');
+    }
+    showToast('🛑 已停用測驗連結並結束當前測驗！');
+  } else {
+    updateExamLinkTabUI();
+    showToast('🛑 已停用所有測驗連結！');
+  }
 }
 
 function updateExamLinkTabUI() {
