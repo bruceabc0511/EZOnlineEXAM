@@ -692,7 +692,7 @@ function isExamTokenActive(tokenObj) {
 
 async function handleGenerateExamToken() {
   if (examData.isExamOpen) {
-    alert('⚠️ 測驗正在進行中！\n\n' + '若要重新生成連結，請先【結束當前的測驗】。');
+    alert('⛔ 測驗正在進行中！\n\n' + '若要重新生成連結，請先【結束當前的測驗】。');
     return;
   }
 
@@ -730,7 +730,7 @@ async function handleRevokeExamToken() {
 
   const isExamRunning = Boolean(examData.isExamOpen);
   const confirmMessage = isExamRunning
-    ? '⚠️ 測驗正在進行中！停用連結會【立即終止測驗】並強制收卷。\n\n' + '確定要停用測驗連結並結束作答嗎？'
+    ? '⚠️ 測驗正在進行中！\n\n' + '停用連結會【立即終止測驗】並強制收卷。\n\n' + '確定要停用測驗連結並結束作答嗎？'
     : '⚠️ 確定要立即停用當前的測驗連結嗎？\n\n' +
     '停用後，當前的測驗連結將【立即失效】！\n' +
     '考生將無法再透過該網址進入作答。\n\n' +
@@ -1379,7 +1379,7 @@ function setExamOpenStatus(isOpen) {
     showToast(`🟢 已開始測驗！試卷【${examData.title || '未命名測驗'}】現已開放作答。`);
   } else {
     // 防誤觸確認視窗：結束作答並收卷確認
-    const isConfirmed = confirm('是否確定要結束作答並收卷？\n\n（結束後試卷將關閉，所有尚未交卷的在線考生將一律立即強制交卷）');
+    const isConfirmed = confirm('🔔 是否確定要結束作答並收卷？\n\n（結束後試卷將關閉，所有尚未交卷的考生將一律強制交卷）');
     if (!isConfirmed) return;
 
     examData.isExamOpen = false;
