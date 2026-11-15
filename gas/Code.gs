@@ -660,9 +660,9 @@ function buildStudentAnswerGridGasHtml(studentAnswers) {
     for (let j = 0; j < perRow; j++) {
       const item = chunk[j];
       if (item) {
-        qNumCells += `<td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:8px 6px;border:1px solid #003d3d;width:15%;font-size:15px;">${item.qNum}</td>`;
-        const bg = item.isCorrect ? '#ccfbf1' : '#fca5a5';
-        const fg = item.isCorrect ? '#0f172a' : '#7f1d1d';
+        qNumCells += `<td style="background: #005959;color: #ffffff;font-weight:700;text-align:center;padding:8px 6px;border:1px solid #003d3d;width:15%;font-size:15px;">${item.qNum}</td>`;
+        const bg = item.isCorrect ? '#ccfbf1' : '#ffc8c8ff';
+        const fg = item.isCorrect ? '#0f172a' : '#c40b0bff';
         ansCells += `<td style="background:${bg};color:${fg};font-weight:700;text-align:center;padding:10px 6px;border:1px solid #003d3d;width:15%;font-size:16px;">${escapeHtmlStr(item.selected)}</td>`;
       } else {
         qNumCells += `<td style="background:#005959;color:#ffffff;text-align:center;padding:8px 6px;border:1px solid #003d3d;width:15%;"></td>`;
@@ -672,11 +672,11 @@ function buildStudentAnswerGridGasHtml(studentAnswers) {
 
     rowsHtml += `
       <tr>
-        <td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:8px 10px;border:1px solid #003d3d;width:25%;white-space:nowrap;font-size:15px;">題號</td>
+        <td style="background:#005959;color: #ffffff;font-weight:700;text-align:center;padding:8px 10px;border:1px solid #003d3d;width:25%;white-space:nowrap;font-size:15px;">題號</td>
         ${qNumCells}
       </tr>
       <tr>
-        <td style="background:#005959;color:#ffffff;font-weight:700;text-align:center;padding:10px;border:1px solid #003d3d;width:25%;white-space:nowrap;font-size:15px;">考生答案</td>
+        <td style="background:#005959;color: #ffffff;font-weight:700;text-align:center;padding:10px;border:1px solid #003d3d;width:25%;white-space:nowrap;font-size:15px;">答案</td>
         ${ansCells}
       </tr>
     `;
@@ -688,7 +688,7 @@ function buildStudentAnswerGridGasHtml(studentAnswers) {
         <span style="font-size:15px;font-weight:700;color: #005959;">📋 考生作答明細</span>
         <span style="font-size:12.5px;color: #475569;margin-left:14px;">
           <span style="display:inline-block;width:12px;height:12px;background: #d1fdf4ff;border:1px solid #005959;vertical-align:middle;margin-right:4px;"></span>正確
-          <span style="display:inline-block;width:12px;height:12px;background: #fdbabaff;border:1px solid #dc2626;vertical-align:middle;margin-left:10px;margin-right:4px;"></span>錯誤
+          <span style="display:inline-block;width:12px;height:12px;background: #ffc8c8ff;border:1px solid #dc2626;vertical-align:middle;margin-left:10px;margin-right:4px;"></span>錯誤
         </span>
       </div>
       <table style="width:100%;border-collapse:collapse;border:2px solid #003d3d;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;">
