@@ -1590,6 +1590,18 @@ function showLoginError(msg) {
   errorBox.classList.remove('hidden');
 }
 
+function normalizeAnswerString(raw) {
+  const letters = String(raw || '').toUpperCase().match(/[A-Z]/g);
+  if (!letters || letters.length === 0) return '';
+  return Array.from(new Set(letters)).sort().join('');
+}
+
+function isMultipleChoiceQuestion(q) {
+  if (!q) return false;
+  if (q.answer) return normalizeAnswerString(q.answer).length >= 2;
+  return Boolean(q.isMultiple);
+}
+
 function renderQuizQuestions() {
   const container = document.getElementById('questionsContainer');
   const palette = document.getElementById('questionPalette');
@@ -1604,6 +1616,9 @@ function renderQuizQuestions() {
 
   activeSession.shuffledQuestions.forEach((q, idx) => {
     const displayNum = idx + 1;
+    const isMulti = isMultipleChoiceQuestion(q);
+    const inputType = isMulti ? 'checkbox' : 'radio';
+    const multiTagHtml = isMulti ? ' <span class="q-multi-tag">(*複選題)</span>' : '';
 
     // 建立題目卡片
     const card = document.createElement('div');
@@ -1613,8 +1628,8 @@ function renderQuizQuestions() {
     const optionsHtml = q.options
       .map(opt => {
         return `
-          <label class="option-item" id="opt-label-${q.id}-${opt.key}" onclick="selectAnswer(${q.id}, '${opt.key}')">
-            <input type="radio" class="option-radio" name="q_${q.id}" value="${opt.key}">
+          <label class="option-item" id="opt-label-${q.id}-${opt.key}">
+            <input type="${inputType}" class="option-radio" name="q_${q.id}" value="${opt.key}" onchange="handleOptionChange(${q.id}, '${opt.key}', this.checked)">
             <span class="option-key">${opt.key}</span>
             <span class="option-label-text">${escapeHtml(opt.text)}</span>
           </label>
@@ -1635,7 +1650,7 @@ function renderQuizQuestions() {
     card.innerHTML = `
       <div class="q-header">
         <span class="q-badge">第 ${displayNum} 題</span>
-        <div class="q-text">${escapeHtml(q.question)}</div>
+        <div class="q-text">${escapeHtml(q.question)}${multiTagHtml}</div>
       </div>
       ${imgHtml}
       <div class="options-grid">
@@ -1659,35 +1674,51 @@ function renderQuizQuestions() {
   updateQuizProgress();
 }
 
-function selectAnswer(questionId, optionKey) {
+function handleOptionChange(questionId, optionKey, isChecked) {
   if (!activeSession.isActive) return;
 
-  activeSession.answers[questionId] = optionKey;
+  const qObj = activeSession.shuffledQuestions.find(q => q.id === questionId);
+  const isMulti = isMultipleChoiceQuestion(qObj);
+
+  if (isMulti) {
+    const currentSet = new Set(normalizeAnswerString(activeSession.answers[questionId] || '').split('').filter(Boolean));
+    if (isChecked) {
+      currentSet.add(optionKey);
+    } else {
+      currentSet.delete(optionKey);
+    }
+    const nextAns = Array.from(currentSet).sort().join('');
+    if (nextAns) {
+      activeSession.answers[questionId] = nextAns;
+    } else {
+      delete activeSession.answers[questionId];
+    }
+  } else {
+    activeSession.answers[questionId] = optionKey;
+  }
+
+  const selectedSet = new Set(normalizeAnswerString(activeSession.answers[questionId] || '').split('').filter(Boolean));
+  const hasAnySelected = selectedSet.size > 0;
 
   // 更新該題選項樣式
-  const qObj = activeSession.shuffledQuestions.find(q => q.id === questionId);
   if (qObj) {
     qObj.options.forEach(opt => {
       const labelEl = document.getElementById(`opt-label-${questionId}-${opt.key}`);
       if (labelEl) {
-        const radio = labelEl.querySelector('input[type="radio"]');
-        if (opt.key === optionKey) {
-          labelEl.classList.add('selected');
-          if (radio) radio.checked = true;
-        } else {
-          labelEl.classList.remove('selected');
-          if (radio) radio.checked = false;
-        }
+        const inputEl = labelEl.querySelector('input');
+        const checked = selectedSet.has(opt.key);
+        labelEl.classList.toggle('selected', checked);
+        if (inputEl) inputEl.checked = checked;
       }
     });
   }
 
   // 更新卡片與導覽列狀態
   const cardEl = document.getElementById(`q-card-${questionId}`);
-  if (cardEl) cardEl.classList.add('answered');
+  if (cardEl) cardEl.classList.toggle('answered', hasAnySelected);
 
   const pBtn = document.getElementById(`palette-btn-${questionId}`);
-  if (pBtn) pBtn.classList.add('answered');
+  if (pBtn) pBtn.classList.toggle('answered', hasAnySelected);
 
   updateQuizProgress();
 }
@@ -1928,13 +1959,15 @@ async function finalizeExamSubmission(statusReason) {
   const answerDetails = {};
 
   examData.questions.forEach(q => {
-    const selected = activeSession.answers[q.id] || '';
-    const hasAnswer = Boolean(q.answer);
-    const isCorrect = hasAnswer ? (selected.toUpperCase() === String(q.answer).toUpperCase()) : false;
+    const rawSelected = activeSession.answers[q.id] || '';
+    const selected = normalizeAnswerString(rawSelected);
+    const correct = normalizeAnswerString(q.answer);
+    const hasAnswer = Boolean(correct);
+    const isCorrect = hasAnswer ? (selected === correct) : false;
     if (isCorrect) correctCount++;
     answerDetails[q.id] = {
       selected: selected || '未作答',
-      correctAnswer: q.answer || '',
+      correctAnswer: correct || q.answer || '',
       isCorrect: hasAnswer ? isCorrect : false
     };
   });
@@ -2830,7 +2863,7 @@ function renderExaminerQuestionTab() {
   tbody.innerHTML = '';
 
   if (qCount === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 24px;">目前試卷【${escapeHtml(currentExam.title)}】為空白（0 題），可從左側匯入 Excel 範本或點擊「➕ 手動新增單選題」</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 24px;">目前試卷【${escapeHtml(currentExam.title)}】為空白（0 題），可從上方匯入 Excel 範本或點擊「➕ 手動新增題目」</td></tr>`;
     return;
   }
 
@@ -2845,11 +2878,15 @@ function renderExaminerQuestionTab() {
       ? `<br><span class="table-img-badge" onclick="openImageLightbox('${escapeHtml(displayTableImg)}', '第 ${idx + 1} 題圖檔')">🖼️ 查看圖片</span>`
       : '';
 
+    const multiBadge = isMultipleChoiceQuestion(q)
+      ? '<br><span class="badge badge-teal" style="margin-top:4px;font-size:0.75rem;">複選題</span>'
+      : '';
+
     tr.innerHTML = `
       <td><strong>#${idx + 1}</strong></td>
       <td>${escapeHtml(q.question)}${imgBadge}</td>
       <td style="font-size: 0.86rem; line-height: 1.7;">${formattedOpts}</td>
-      <td><span class="badge badge-amber" style="font-size:0.9rem;">${escapeHtml(q.answer)}</span></td>
+      <td><span class="badge badge-amber" style="font-size:0.9rem;">${escapeHtml(q.answer)}</span>${multiBadge}</td>
       <td>${pts} 分</td>
       <td style="white-space: nowrap;">
         <div style="display:flex; gap:6px;">
@@ -2934,37 +2971,66 @@ function clearAllQuestions() {
   showImportAlert(`已清空試卷「${currentExam.title}」中的所有題目。`, 'success');
 }
 
+function updateAnswerTypeHint() {
+  const hintEl = document.getElementById('newQAnswerTypeHint');
+  if (!hintEl) return;
+  const checkedCount = document.querySelectorAll('#newQAnswerGroup input[type="checkbox"]:checked').length;
+  if (checkedCount >= 2) {
+    hintEl.innerHTML = `<span style="color: var(--danger); font-weight: 700;">（已選 ${checkedCount} 個答案 → 複選題）</span>`;
+  } else if (checkedCount === 1) {
+    hintEl.textContent = '（已選 1 個答案 → 單選題）';
+  } else {
+    hintEl.textContent = '（勾選 2 個以上自動設為複選題）';
+  }
+}
+
+function handleModalAnswerCheckboxChange(checkboxEl) {
+  const pill = checkboxEl ? checkboxEl.closest('.answer-checkbox-pill') : null;
+  if (pill) {
+    pill.classList.toggle('checked', checkboxEl.checked);
+  }
+  updateAnswerTypeHint();
+}
+
 function syncAnswerSelectWithOptions(preferredAnswer) {
   const optionsEl = document.getElementById('newQOptions');
-  const answerSelect = document.getElementById('newQAnswer');
-  if (!optionsEl || !answerSelect) return;
+  const answerGroup = document.getElementById('newQAnswerGroup');
+  if (!optionsEl || !answerGroup) return;
 
-  const currentVal = preferredAnswer !== undefined
-    ? String(preferredAnswer || '').toUpperCase()
-    : String(answerSelect.value || '').toUpperCase();
+  let selectedStr = '';
+  if (preferredAnswer !== undefined) {
+    selectedStr = normalizeAnswerString(preferredAnswer);
+  } else {
+    const checkedVals = Array.from(answerGroup.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+    selectedStr = normalizeAnswerString(checkedVals.join(''));
+  }
 
   const parsedOptions = parseOptionsString(optionsEl.value);
-  answerSelect.innerHTML = '';
+  answerGroup.innerHTML = '';
 
   if (parsedOptions.length === 0) {
-    const placeholderOpt = document.createElement('option');
-    placeholderOpt.value = '';
-    placeholderOpt.disabled = true;
-    placeholderOpt.selected = true;
-    placeholderOpt.textContent = '請先於上方輸入選項內容（每行一項）';
-    answerSelect.appendChild(placeholderOpt);
+    answerGroup.innerHTML = '<span class="text-muted text-sm">請先於上方輸入選項內容（每行一項）</span>';
+    updateAnswerTypeHint();
     return;
   }
 
+  let selectedSet = new Set(selectedStr.split('').filter(key => parsedOptions.some(o => o.key === key)));
+  if (selectedSet.size === 0 && preferredAnswer !== undefined && preferredAnswer !== '') {
+    selectedSet.add(parsedOptions[0].key);
+  }
+
   parsedOptions.forEach(opt => {
-    const optEl = document.createElement('option');
-    optEl.value = opt.key;
-    optEl.textContent = opt.key;
-    answerSelect.appendChild(optEl);
+    const isChecked = selectedSet.has(opt.key);
+    const label = document.createElement('label');
+    label.className = `answer-checkbox-pill${isChecked ? ' checked' : ''}`;
+    label.innerHTML = `
+      <input type="checkbox" value="${escapeHtml(opt.key)}" ${isChecked ? 'checked' : ''} onchange="handleModalAnswerCheckboxChange(this)">
+      <span>${escapeHtml(opt.key)}</span>
+    `;
+    answerGroup.appendChild(label);
   });
 
-  const hasCurrent = parsedOptions.some(o => o.key === currentVal);
-  answerSelect.value = hasCurrent ? currentVal : parsedOptions[0].key;
+  updateAnswerTypeHint();
 }
 
 function openAddQuestionModal() {
@@ -2974,10 +3040,10 @@ function openAddQuestionModal() {
   document.getElementById('addQuestionForm').reset();
   const titleEl = document.getElementById('questionModalTitle');
   const submitBtn = document.getElementById('questionModalSubmitBtn');
-  if (titleEl) titleEl.textContent = '新增單選題';
+  if (titleEl) titleEl.textContent = '新增題目';
   if (submitBtn) submitBtn.textContent = '新增題目';
   setQuestionModalImageState('');
-  syncAnswerSelectWithOptions('');
+  syncAnswerSelectWithOptions('A');
   document.getElementById('addQuestionModal').classList.remove('hidden');
 }
 
@@ -2998,7 +3064,7 @@ function openEditQuestionModal(qId) {
     ? targetQ.options.map(o => `(${o.key}) ${o.text}`).join('\n')
     : (targetQ.rawOptions || '');
   document.getElementById('newQOptions').value = formattedLines;
-  syncAnswerSelectWithOptions(String(targetQ.answer || 'A').toUpperCase());
+  syncAnswerSelectWithOptions(normalizeAnswerString(targetQ.answer || 'A'));
 
   setQuestionModalImageState(targetQ.imageUrl || '');
   document.getElementById('addQuestionModal').classList.remove('hidden');
@@ -3192,7 +3258,8 @@ function handleSaveNewQuestion(event) {
 
   const qText = document.getElementById('newQText').value.trim();
   const rawOpts = document.getElementById('newQOptions').value.trim();
-  const ans = document.getElementById('newQAnswer').value.trim().toUpperCase();
+  const checkedBoxes = Array.from(document.querySelectorAll('#newQAnswerGroup input[type="checkbox"]:checked'));
+  const ans = normalizeAnswerString(checkedBoxes.map(cb => cb.value).join(''));
   const rawImgUrl = (document.getElementById('newQImageUrl') ? document.getElementById('newQImageUrl').value.trim() : '');
   const imgUrl = formatGoogleDriveImageUrl(rawImgUrl);
 
@@ -3202,14 +3269,22 @@ function handleSaveNewQuestion(event) {
     return;
   }
 
+  if (!ans) {
+    alert('請至少勾選 1 個標準答案！');
+    return;
+  }
+
+  const isMultiple = ans.length >= 2;
+
   if (editingQuestionId !== null) {
     const targetQ = currentExam.questions.find(q => q.id === editingQuestionId);
     if (targetQ) {
-      const prevAns = String(targetQ.answer || '').toUpperCase();
+      const prevAns = normalizeAnswerString(targetQ.answer);
       targetQ.question = qText;
       targetQ.rawOptions = rawOpts;
       targetQ.options = parsedOptions;
       targetQ.answer = ans;
+      targetQ.isMultiple = isMultiple;
       targetQ.imageUrl = imgUrl;
 
       // 若目前選取的試卷恰為當前進行中的測驗且已有考生交卷，考官修改答案時同步重算考生成績
@@ -3219,7 +3294,7 @@ function handleSaveNewQuestion(event) {
           if (sub.answerDetails && sub.answerDetails[targetQ.id]) {
             const d = sub.answerDetails[targetQ.id];
             d.correctAnswer = ans;
-            d.isCorrect = String(d.selected || '').toUpperCase() === ans;
+            d.isCorrect = normalizeAnswerString(d.selected === '未作答' ? '' : d.selected) === ans;
           }
           let newCorrectCount = 0;
           examData.questions.forEach(q => {
@@ -3253,7 +3328,8 @@ function handleSaveNewQuestion(event) {
     imageUrl: imgUrl,
     rawOptions: rawOpts,
     options: parsedOptions,
-    answer: ans
+    answer: ans,
+    isMultiple: isMultiple
   });
   currentExam.updatedAt = new Date().toISOString();
 
@@ -3367,14 +3443,15 @@ function parseTemplateRows(rows, fileName) {
       const rawOptionsText = optionLines.join('\n');
       if (questionText && rawOptionsText) {
         const optionsArr = parseOptionsString(rawOptionsText);
-        const cleanAns = answerText.replace(/[^A-Za-z]/g, '').toUpperCase() || 'A';
+        const cleanAns = normalizeAnswerString(answerText) || 'A';
 
         parsedQuestions.push({
           id: parsedQuestions.length + 1,
           question: questionText,
           rawOptions: rawOptionsText,
           options: optionsArr,
-          answer: cleanAns
+          answer: cleanAns,
+          isMultiple: cleanAns.length >= 2
         });
       }
 
@@ -3412,7 +3489,7 @@ function parseTemplateRows(rows, fileName) {
 
       saveExamLibraryToStorage(true);
       refreshExaminerAllViews();
-      showImportAlert(`已成功覆蓋更新試卷「${fileBaseTitle}」！共讀取 ${parsedQuestions.length} 題有效單選題。`, 'success');
+      showImportAlert(`已成功覆蓋更新試卷「${fileBaseTitle}」！共讀取 ${parsedQuestions.length} 題有效題目。`, 'success');
       return;
     } else {
       // 另存為新試卷
@@ -3436,7 +3513,7 @@ function parseTemplateRows(rows, fileName) {
       currentSelectedExamId = newExam.id;
       saveExamLibraryToStorage(true);
       refreshExaminerAllViews();
-      showImportAlert(`已將題目另存為新試卷「${newTitle}」！共讀取 ${parsedQuestions.length} 題有效單選題。`, 'success');
+      showImportAlert(`已將題目另存為新試卷「${newTitle}」！共讀取 ${parsedQuestions.length} 題有效題目。`, 'success');
       return;
     }
   }
@@ -3456,7 +3533,7 @@ function parseTemplateRows(rows, fileName) {
   currentSelectedExamId = newExam.id;
   saveExamLibraryToStorage(true);
   refreshExaminerAllViews();
-  showImportAlert(`成功自「${fileName}」匯入新試卷「${fileBaseTitle}」至試卷庫！共讀取 ${parsedQuestions.length} 題有效單選題。`, 'success');
+  showImportAlert(`成功自「${fileName}」匯入新試卷「${fileBaseTitle}」至試卷庫！共讀取 ${parsedQuestions.length} 題有效題目。`, 'success');
 }
 
 function parseOptionsString(rawStr) {

@@ -207,6 +207,7 @@ function doGet(e) {
           if (Array.isArray(sanitizedExamData.questions)) {
             sanitizedExamData.questions = sanitizedExamData.questions.map(q => {
               const safeQ = Object.assign({}, q);
+              safeQ.isMultiple = Boolean(q.isMultiple) || normalizeAnswerStringGas(q.answer).length >= 2;
               delete safeQ.answer; // 刪除正解欄位，防範考生查看 Network/F12 窺探答案
               return safeQ;
             });
@@ -374,13 +375,13 @@ function doPost(e) {
         const selected = (studentAnswers[q.id] !== undefined)
           ? studentAnswers[q.id]
           : (record.answerDetails && record.answerDetails[q.id] ? record.answerDetails[q.id].selected : '');
-        const cleanSelected = (selected === '未作答' || !selected) ? '' : String(selected).trim().toUpperCase();
-        const cleanCorrect = String(q.answer || '').trim().toUpperCase();
+        const cleanSelected = (selected === '未作答' || !selected) ? '' : normalizeAnswerStringGas(selected);
+        const cleanCorrect = normalizeAnswerStringGas(q.answer);
         const isCorrect = cleanSelected !== '' && cleanCorrect !== '' && cleanSelected === cleanCorrect;
         if (isCorrect) correctCount++;
         gradedAnswerDetails[q.id] = {
-          selected: selected || '未作答',
-          correctAnswer: q.answer,
+          selected: cleanSelected || '未作答',
+          correctAnswer: cleanCorrect || q.answer,
           isCorrect: isCorrect
         };
       });
@@ -1117,6 +1118,12 @@ function syncHistoryLogSheet(historySessions) {
   });
 
   histSheet.getRange(1, 1, rows.length, headers.length).setValues(rows);
+}
+
+function normalizeAnswerStringGas(raw) {
+  const letters = String(raw || '').toUpperCase().match(/[A-Z]/g);
+  if (!letters || letters.length === 0) return '';
+  return Array.from(new Set(letters)).sort().join('');
 }
 
 function escapeHtmlStr(str) {

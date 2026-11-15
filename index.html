@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261115_1">
+  <link rel="stylesheet" href="styles.css?v=20261115_2">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
@@ -32,7 +32,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.27)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.28)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -109,7 +109,7 @@
           <div class="exam-meta-pills">
             <span class="meta-pill">📅 考試日期：<strong id="studentExamDate">-</strong></span>
             <span class="meta-pill">⏱️ 作答時間：<strong id="studentExamDuration">-</strong> 分鐘</span>
-            <span class="meta-pill">📝 試題總數：<strong id="studentExamQCount">-</strong> 題 (單選題)</span>
+            <span class="meta-pill">📝 試題總數：<strong id="studentExamQCount">-</strong> 題</span>
             <span class="meta-pill">💯 滿分標準：<strong>100</strong> 分 (每題 <span id="studentPointsPerQ">-</span> 分)</span>
           </div>
         </div>
@@ -118,7 +118,7 @@
           <div class="notice-box">
             <h3>⚠️ 應試規則與防作弊聲明</h3>
             <ul>
-              <li>本測驗採<strong>單選題、題目亂數排列</strong>，滿分為 100 分。</li>
+              <li>本測驗採<strong>單選／複選題、題目亂數排列</strong>，滿分為 100 分。</li>
               <li>每位考生（同一電子郵件 Email）於本場次<strong>限作答一次</strong>，交卷後不得重複應試。</li>
               <li>請填寫正確的<strong>電子郵件 (Email)</strong>，考試結束後系統將寄送個人成績單至您的信箱。</li>
               <li><strong>防作弊機制已啟用</strong>：一旦點擊「開始作答」，<strong>嚴禁切換分頁、縮小視窗、開啟其他程式或離開作答畫面</strong>。</li>
@@ -925,7 +925,7 @@
   <div id="addQuestionModal" class="modal-backdrop hidden">
     <div class="modal-box">
       <div class="modal-header-row">
-        <h3 id="questionModalTitle">新增單選題</h3>
+        <h3 id="questionModalTitle">新增題目</h3>
         <button type="button" class="btn-close" onclick="closeAddQuestionModal()">✕</button>
       </div>
       <form id="addQuestionForm" onsubmit="handleSaveNewQuestion(event)">
@@ -963,10 +963,11 @@
             oninput="syncAnswerSelectWithOptions()"></textarea>
         </div>
         <div class="form-group">
-          <label>標準答案 <span class="required">*</span></label>
-          <select id="newQAnswer" required>
-            <option value="" disabled selected>請先於上方輸入選項內容（每行一項）</option>
-          </select>
+          <label>標準答案 <span class="required">*</span> <span id="newQAnswerTypeHint" class="text-sm text-muted"
+              style="font-weight: 500;">(勾選 2 個以上自動設為複選題)</span></label>
+          <div id="newQAnswerGroup" class="answer-checkbox-group">
+            <span class="text-muted text-sm">請先於上方輸入選項內容（每行一項）</span>
+          </div>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-outline" onclick="closeAddQuestionModal()">取消</button>
@@ -1023,7 +1024,7 @@
   <!-- Toast 訊息通知容器 -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="app.js?v=20261115_1"></script>
+  <script src="app.js?v=20261115_2"></script>
   <p class="Powered" style="font-size: 9px; text-align: center;">Powered by Chin Wei Li 2026</p>
 </body>
 
