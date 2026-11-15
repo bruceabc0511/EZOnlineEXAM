@@ -685,10 +685,10 @@ function buildStudentAnswerGridGasHtml(studentAnswers) {
   return `
     <div style="margin-top:18px;">
       <div style="margin-bottom:8px;">
-        <span style="font-size:15px;font-weight:700;color:#005959;">📋 考生作答明細</span>
-        <span style="font-size:12.5px;color:#475569;margin-left:14px;">
-          <span style="display:inline-block;width:12px;height:12px;background:#ccfbf1;border:1px solid #005959;vertical-align:middle;margin-right:4px;"></span>答對
-          <span style="display:inline-block;width:12px;height:12px;background:#fca5a5;border:1px solid #dc2626;vertical-align:middle;margin-left:10px;margin-right:4px;"></span>答錯（紅底標記）
+        <span style="font-size:15px;font-weight:700;color: #005959;">📋 考生作答明細</span>
+        <span style="font-size:12.5px;color: #475569;margin-left:14px;">
+          <span style="display:inline-block;width:12px;height:12px;background: #d1fdf4ff;border:1px solid #005959;vertical-align:middle;margin-right:4px;"></span>正確
+          <span style="display:inline-block;width:12px;height:12px;background: #fdbabaff;border:1px solid #dc2626;vertical-align:middle;margin-left:10px;margin-right:4px;"></span>錯誤
         </span>
       </div>
       <table style="width:100%;border-collapse:collapse;border:2px solid #003d3d;font-family:'Noto Sans TC','Microsoft JhengHei',sans-serif;">

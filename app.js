@@ -2651,16 +2651,16 @@ function handleDeleteExamPaper() {
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
   if (examLibrary.length <= 1) {
-    alert('試卷庫中至少需保留一份試卷！若要清空考題，請使用「清空全部題目」按鈕。');
+    alert('⚠️ 試卷庫中至少需保留一份試卷！若要清空考題，請使用「清空全部題目」按鈕。');
     return;
   }
   if (examData.id === currentExam.id && examData.isExamOpen) {
-    alert(`試卷「${currentExam.title}」目前正處於「測驗開放中」狀態！\n\n請先於上方控制列點擊「結束作答」後再進行刪除。`);
+    alert(`⛔ 試卷「${currentExam.title}」目前正處於「測驗開放中」狀態！\n\n請先於上方控制列點擊「結束作答」後再進行刪除。`);
     return;
   }
 
   const qCount = (currentExam.questions || []).length;
-  if (!confirm(`確定要自試卷庫中刪除試卷「${currentExam.title}」嗎？\n\n（此試卷內含 ${qCount} 題考題將一併刪除，此操作無法復原）`)) {
+  if (!confirm(`⚠️ 確定要自試卷庫中刪除試卷「${currentExam.title}」嗎？\n\n（此試卷內含 ${qCount} 題考題將一併刪除，此操作無法復原）`)) {
     return;
   }
 
@@ -2691,14 +2691,14 @@ function handleApplyAsActiveExam() {
   // 當有測驗正在開放中，如欲套用的試卷與開放中的試卷不相同時，跳出提醒並不讓使用者覆蓋
   if (examData.isExamOpen) {
     alert(
-      `⚠️ 目前正在測驗中！\n\n試卷【${examData.title || '未命名測驗'}】目前正處於「測驗開放中」狀態。\n若將其他試卷設為當前會影響目前進行中的測驗與線上考生作答！\n\n如需切換為此試卷，請先於上方控制列點擊「結束作答」關閉測驗後再進行更換。`
+      `⛔ 目前正在測驗中！\n\n試卷【${examData.title || '未命名測驗'}】目前正處於「測驗開放中」狀態。\n若將其他試卷設為當前會影響目前進行中的測驗與線上考生作答！\n\n如需切換為此試卷，請先於上方控制列點擊「結束作答」關閉測驗後再進行更換。`
     );
     return;
   }
 
   if (submissions.length > 0) {
     const shouldArchive = confirm(
-      `切換測驗試卷前提醒：\n目前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
+      `⚠️ 切換測驗試卷前提醒：\n目前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
     );
     if (shouldArchive) {
       createAndSaveHistorySession(`${examData.title || '未命名測驗'} (${examData.examDate || '-'})`, true);
