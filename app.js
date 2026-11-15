@@ -3186,6 +3186,46 @@ async function handleQuestionImageSelected(event) {
   const file = event.target.files && event.target.files[0];
   event.target.value = '';
   if (!file) return;
+  await uploadQuestionImageFile(file);
+}
+
+async function handleQuestionImagePaste(event) {
+  const clipboardData = event.clipboardData || window.clipboardData;
+  if (!clipboardData) return;
+
+  let imageFile = null;
+  if (clipboardData.items) {
+    for (let i = 0; i < clipboardData.items.length; i++) {
+      const item = clipboardData.items[i];
+      if (item.type && item.type.startsWith('image/')) {
+        imageFile = item.getAsFile();
+        break;
+      }
+    }
+  }
+  if (!imageFile && clipboardData.files && clipboardData.files.length > 0) {
+    for (let i = 0; i < clipboardData.files.length; i++) {
+      const f = clipboardData.files[i];
+      if (f.type && f.type.startsWith('image/')) {
+        imageFile = f;
+        break;
+      }
+    }
+  }
+
+  // 若剪貼簿並非圖片（例如是一般圖片網址文字），放行預設貼上文字行為
+  if (!imageFile) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const ext = (imageFile.type && imageFile.type.split('/')[1]) ? imageFile.type.split('/')[1].replace(/[^a-z0-9]/gi, '') : 'png';
+  const customFileName = `paste_${Date.now()}.${ext || 'png'}`;
+  await uploadQuestionImageFile(imageFile, customFileName);
+}
+
+async function uploadQuestionImageFile(file, customFileName) {
+  if (!file) return;
 
   const gasUrl = getActiveGasUrl();
   const statusEl = document.getElementById('qImageUploadStatus');
@@ -3211,7 +3251,7 @@ async function handleQuestionImageSelected(event) {
         action: 'uploadQuestionImage',
         base64Data: base64Data,
         mimeType: file.type || 'image/png',
-        fileName: file.name || 'question.png'
+        fileName: customFileName || file.name || 'question.png'
       });
 
       if (btnUpload) btnUpload.disabled = false;

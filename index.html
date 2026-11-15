@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261115_2">
+  <link rel="stylesheet" href="styles.css?v=20261115_3">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
@@ -32,7 +32,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.28)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.29)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -922,7 +922,7 @@
   </div>
 
   <!-- 4. 手動新增 / 編輯題目 Modal -->
-  <div id="addQuestionModal" class="modal-backdrop hidden">
+  <div id="addQuestionModal" class="modal-backdrop hidden" onpaste="handleQuestionImagePaste(event)">
     <div class="modal-box">
       <div class="modal-header-row">
         <h3 id="questionModalTitle">新增題目</h3>
@@ -934,10 +934,11 @@
           <textarea id="newQText" rows="3" required placeholder="請輸入題目敘述..."></textarea>
         </div>
         <div class="form-group">
-          <label>題目圖片 (選填，支援上傳圖檔至雲端硬碟或直接輸入圖片網址)</label>
+          <label>題目圖片 (選填，支援 Ctrl+V 貼上圖片/截圖、輸入圖片網址 或 上傳圖檔)</label>
           <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
-            <input type="text" id="newQImageUrl" placeholder="可貼上圖片網址，或點右側按鈕上傳圖檔" style="flex:1;"
-              oninput="handleImageUrlInput()" onchange="handleImageUrlInput()">
+            <input type="text" id="newQImageUrl" placeholder="可直接 Ctrl+V 貼上圖片/截圖、貼上圖片網址，或點右側按鈕上傳圖檔" style="flex:1;"
+              onpaste="handleQuestionImagePaste(event)" oninput="handleImageUrlInput()"
+              onchange="handleImageUrlInput()">
             <input type="file" id="questionImageFileInput" accept="image/*" class="hidden"
               onchange="handleQuestionImageSelected(event)">
             <button type="button" class="btn btn-secondary btn-sm"
@@ -1024,7 +1025,7 @@
   <!-- Toast 訊息通知容器 -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="app.js?v=20261115_2"></script>
+  <script src="app.js?v=20261115_3"></script>
   <p class="Powered" style="font-size: 9px; text-align: center;">Powered by Chin Wei Li 2026</p>
 </body>
 
