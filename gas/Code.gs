@@ -377,7 +377,7 @@ function doPost(e) {
           : (record.answerDetails && record.answerDetails[q.id] ? record.answerDetails[q.id].selected : '');
         const cleanSelected = (selected === '未作答' || !selected) ? '' : normalizeAnswerStringGas(selected);
         const cleanCorrect = normalizeAnswerStringGas(q.answer);
-        const isCorrect = cleanSelected !== '' && cleanCorrect !== '' && cleanSelected === cleanCorrect;
+        const isCorrect = evaluateQuestionCorrectnessGas(q, cleanSelected);
         if (isCorrect) correctCount++;
         gradedAnswerDetails[q.id] = {
           selected: cleanSelected || '未作答',
@@ -1124,6 +1124,19 @@ function normalizeAnswerStringGas(raw) {
   const letters = String(raw || '').toUpperCase().match(/[A-Z]/g);
   if (!letters || letters.length === 0) return '';
   return Array.from(new Set(letters)).sort().join('');
+}
+
+function evaluateQuestionCorrectnessGas(q, rawSelected) {
+  if (!q) return false;
+  const selected = normalizeAnswerStringGas(rawSelected === '未作答' ? '' : rawSelected);
+  const correct = normalizeAnswerStringGas(q.answer);
+  if (!selected || !correct) return false;
+  const isMulti = Boolean(q.isMultiple) || correct.length >= 2;
+  if (isMulti && q.multiScoreRule === 'any') {
+    const correctChars = correct.split('');
+    return selected.split('').some(function(ch) { return correctChars.indexOf(ch) !== -1; });
+  }
+  return selected === correct;
 }
 
 function escapeHtmlStr(str) {

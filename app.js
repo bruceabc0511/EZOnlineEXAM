@@ -1602,6 +1602,18 @@ function isMultipleChoiceQuestion(q) {
   return Boolean(q.isMultiple);
 }
 
+function evaluateQuestionCorrectness(q, rawSelected) {
+  if (!q) return false;
+  const selected = normalizeAnswerString(rawSelected === '未作答' ? '' : rawSelected);
+  const correct = normalizeAnswerString(q.answer);
+  if (!selected || !correct) return false;
+  if (isMultipleChoiceQuestion(q) && q.multiScoreRule === 'any') {
+    const correctSet = new Set(correct.split(''));
+    return selected.split('').some(ch => correctSet.has(ch));
+  }
+  return selected === correct;
+}
+
 function renderQuizQuestions() {
   const container = document.getElementById('questionsContainer');
   const palette = document.getElementById('questionPalette');
@@ -1963,7 +1975,7 @@ async function finalizeExamSubmission(statusReason) {
     const selected = normalizeAnswerString(rawSelected);
     const correct = normalizeAnswerString(q.answer);
     const hasAnswer = Boolean(correct);
-    const isCorrect = hasAnswer ? (selected === correct) : false;
+    const isCorrect = hasAnswer ? evaluateQuestionCorrectness(q, selected) : false;
     if (isCorrect) correctCount++;
     answerDetails[q.id] = {
       selected: selected || '未作答',
@@ -2878,16 +2890,28 @@ function renderExaminerQuestionTab() {
       ? `<br><span class="table-img-badge" onclick="openImageLightbox('${escapeHtml(displayTableImg)}', '第 ${idx + 1} 題圖檔')">🖼️ 查看圖片</span>`
       : '';
 
-    const multiBadge = isMultipleChoiceQuestion(q)
+    const isMulti = isMultipleChoiceQuestion(q);
+    const multiBadge = isMulti
       ? '<br><span class="badge badge-teal" style="margin-top:4px;font-size:0.75rem;">複選題</span>'
       : '';
+
+    let scoreRuleHtml = '';
+    if (isMulti) {
+      if (q.multiScoreRule === 'all') {
+        scoreRuleHtml = '<br><span class="badge badge-teal" style="margin-top:4px;font-size:0.75rem;">全對得分</span>';
+      } else if (q.multiScoreRule === 'any') {
+        scoreRuleHtml = '<br><span class="badge badge-teal" style="margin-top:4px;font-size:0.75rem;">對一項即得分</span>';
+      } else {
+        scoreRuleHtml = `<br><span class="score-rule-warn-badge" onclick="openEditQuestionModal(${q.id})" title="此複選題尚未設定得分方式，點擊進入編輯設定">⚠️ 未設定得分方式</span>`;
+      }
+    }
 
     tr.innerHTML = `
       <td><strong>#${idx + 1}</strong></td>
       <td>${escapeHtml(q.question)}${imgBadge}</td>
       <td style="font-size: 0.86rem; line-height: 1.7;">${formattedOpts}</td>
       <td><span class="badge badge-amber" style="font-size:0.9rem;">${escapeHtml(q.answer)}</span>${multiBadge}</td>
-      <td>${pts} 分</td>
+      <td>${pts} 分${scoreRuleHtml}</td>
       <td style="white-space: nowrap;">
         <div style="display:flex; gap:6px;">
           <button type="button" class="btn btn-secondary btn-sm" onclick="openEditQuestionModal(${q.id})">編輯</button>
@@ -2971,16 +2995,42 @@ function clearAllQuestions() {
   showImportAlert(`已清空試卷「${currentExam.title}」中的所有題目。`, 'success');
 }
 
+function setModalMultiScoreRule(rule) {
+  const radios = document.querySelectorAll('input[name="newQMultiScoreRule"]');
+  radios.forEach(r => {
+    r.checked = (rule !== undefined && rule !== '' && r.value === rule);
+  });
+}
+
 function updateAnswerTypeHint() {
   const hintEl = document.getElementById('newQAnswerTypeHint');
-  if (!hintEl) return;
+  const ruleGroup = document.getElementById('multiScoreRuleGroup');
+  const radios = document.querySelectorAll('input[name="newQMultiScoreRule"]');
   const checkedCount = document.querySelectorAll('#newQAnswerGroup input[type="checkbox"]:checked').length;
-  if (checkedCount >= 2) {
-    hintEl.innerHTML = `<span style="color: var(--danger); font-weight: 700;">（已選 ${checkedCount} 個答案 → 複選題）</span>`;
+  const isMulti = checkedCount >= 2;
+
+  radios.forEach(r => {
+    r.disabled = !isMulti;
+  });
+
+  const hasRuleSelected = Array.from(radios).some(r => r.checked);
+
+  if (ruleGroup) {
+    ruleGroup.classList.toggle('disabled', !isMulti);
+    ruleGroup.classList.toggle('needs-selection', isMulti && !hasRuleSelected);
+  }
+
+  if (!hintEl) return;
+  if (isMulti) {
+    if (!hasRuleSelected) {
+      hintEl.innerHTML = `<span style="color: var(--danger); font-weight: 700;">（已選 ${checkedCount} 個答案 → 複選題，請選擇得分規則）</span>`;
+    } else {
+      hintEl.innerHTML = `<span style="color: var(--danger); font-weight: 700;">（已選 ${checkedCount} 個答案 → 複選題）</span>`;
+    }
   } else if (checkedCount === 1) {
-    hintEl.textContent = '（已選 1 個答案 → 單選題）';
+    hintEl.textContent = '（單選題）';
   } else {
-    hintEl.textContent = '（勾選 2 個以上自動設為複選題）';
+    hintEl.textContent = '（答案 2 個以上 → 複選題）';
   }
 }
 
@@ -3043,6 +3093,7 @@ function openAddQuestionModal() {
   if (titleEl) titleEl.textContent = '新增題目';
   if (submitBtn) submitBtn.textContent = '新增題目';
   setQuestionModalImageState('');
+  setModalMultiScoreRule('');
   syncAnswerSelectWithOptions('A');
   document.getElementById('addQuestionModal').classList.remove('hidden');
 }
@@ -3064,6 +3115,7 @@ function openEditQuestionModal(qId) {
     ? targetQ.options.map(o => `(${o.key}) ${o.text}`).join('\n')
     : (targetQ.rawOptions || '');
   document.getElementById('newQOptions').value = formattedLines;
+  setModalMultiScoreRule(targetQ.multiScoreRule || '');
   syncAnswerSelectWithOptions(normalizeAnswerString(targetQ.answer || 'A'));
 
   setQuestionModalImageState(targetQ.imageUrl || '');
@@ -3315,26 +3367,30 @@ function handleSaveNewQuestion(event) {
   }
 
   const isMultiple = ans.length >= 2;
+  const selectedRuleEl = document.querySelector('input[name="newQMultiScoreRule"]:checked');
+  const multiScoreRule = isMultiple ? (selectedRuleEl ? selectedRuleEl.value : '') : '';
 
   if (editingQuestionId !== null) {
     const targetQ = currentExam.questions.find(q => q.id === editingQuestionId);
     if (targetQ) {
       const prevAns = normalizeAnswerString(targetQ.answer);
+      const prevRule = targetQ.multiScoreRule || '';
       targetQ.question = qText;
       targetQ.rawOptions = rawOpts;
       targetQ.options = parsedOptions;
       targetQ.answer = ans;
       targetQ.isMultiple = isMultiple;
+      targetQ.multiScoreRule = multiScoreRule;
       targetQ.imageUrl = imgUrl;
 
-      // 若目前選取的試卷恰為當前進行中的測驗且已有考生交卷，考官修改答案時同步重算考生成績
-      if (examData.id === currentExam.id && prevAns !== ans && submissions.length > 0) {
+      // 若目前選取的試卷恰為當前進行中的測驗且已有考生交卷，考官修改答案或得分規則時同步重算考生成績
+      if (examData.id === currentExam.id && (prevAns !== ans || prevRule !== multiScoreRule) && submissions.length > 0) {
         const totalQ = examData.questions.length;
         submissions.forEach(sub => {
           if (sub.answerDetails && sub.answerDetails[targetQ.id]) {
             const d = sub.answerDetails[targetQ.id];
             d.correctAnswer = ans;
-            d.isCorrect = normalizeAnswerString(d.selected === '未作答' ? '' : d.selected) === ans;
+            d.isCorrect = evaluateQuestionCorrectness(targetQ, d.selected);
           }
           let newCorrectCount = 0;
           examData.questions.forEach(q => {
@@ -3369,7 +3425,8 @@ function handleSaveNewQuestion(event) {
     rawOptions: rawOpts,
     options: parsedOptions,
     answer: ans,
-    isMultiple: isMultiple
+    isMultiple: isMultiple,
+    multiScoreRule: multiScoreRule
   });
   currentExam.updatedAt = new Date().toISOString();
 
@@ -3491,7 +3548,8 @@ function parseTemplateRows(rows, fileName) {
           rawOptions: rawOptionsText,
           options: optionsArr,
           answer: cleanAns,
-          isMultiple: cleanAns.length >= 2
+          isMultiple: cleanAns.length >= 2,
+          multiScoreRule: ''
         });
       }
 
