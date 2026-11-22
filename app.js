@@ -6,11 +6,11 @@
  * 3. 考官端 (#750000 主題)：PIN 碼安全加密驗證、開始/結束測驗開關控制、Excel 範本匯入（支援空白題庫）、考後寄送考生成績單 Email、每次測驗獨立歸檔為歷史紀錄、錯題分析
  */
 
-// 若有固定部署的預設 Google Apps Script 網址可填於此處；系統亦支援填入一次後自動透過雲端 KV 跨裝置永久綁定
+// 若有固定部署的預設 Google Apps Script 網址（格式為 https://script.google.com/macros/s/.../exec），請設定於此處：
 const DEFAULT_GAS_URL = '';
-const CLOUD_BIND_KV_APP_KEY = 'i1y48rk0';
-const CLOUD_BIND_KV_FIELD = 'hd_exam_gas_id';
-const CLOUD_BIND_NTFY_TOPIC = 'hd_online_exam_gas_bind_bruceabc0511';
+
+// 嚴格驗證 Google Apps Script 網頁應用程式網址白名單格式 (防範惡意第三方後端劫持)
+const GAS_URL_REGEX = /^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec$/;
 
 const STORAGE_KEYS = {
   EXAM_DATA: 'online_exam_bank_v1',
@@ -21,12 +21,9 @@ const STORAGE_KEYS = {
   EXAMINER_PIN_HASH: 'online_exam_pin_hash_v1'
 };
 
-// 考官端 PIN 碼與管理員金鑰安全防護設定 (不在原始碼中儲存任何明文密碼，採用 Salt + SHA-256 加密雜湊)
+// 本機離線模式備援用 PIN 碼雜湊設定 (雲端模式下，PIN 雜湊與管理員金鑰均集中存放於後端 Script Properties 並簽發隨機 Session Token)
 const EXAMINER_PIN_SALT = 'HD_EXAM_SECURE_SALT_2026';
 const DEFAULT_EXAMINER_PIN_HASH = '391f59f4ca8480648b504098e96bffa16f970d261a5cacea40fe5e7789c3f961';
-
-const ADMIN_KEY_SALT = 'HD_EXAM_ADMIN_SALT_2026';
-const ADMIN_KEY_HASH = '4007531f25ed2a163a091d340f3fcb5d7bbabb98c22c65074d60152eec2c9b6a';
 
 // 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
@@ -149,120 +146,39 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ==================== 雲端多人連線與同步 ====================
+function isValidGasUrl(url) {
+  return GAS_URL_REGEX.test(String(url || '').trim());
+}
+
 function getActiveGasUrl() {
-  return (localStorage.getItem(STORAGE_KEYS.GAS_URL) || DEFAULT_GAS_URL || '').trim();
-}
-
-function buildFullGasUrl(depIdOrUrl) {
-  const clean = String(depIdOrUrl || '').trim();
-  if (!clean || clean === 'NONE') return '';
-  return clean.startsWith('http')
-    ? clean
-    : `https://script.google.com/macros/s/${clean}/exec`;
-}
-
-async function saveGlobalBoundGasUrl(gasUrl) {
-  const depId = extractGasDeploymentId(gasUrl) || 'NONE';
-  try {
-    await fetch(
-      `https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/${CLOUD_BIND_KV_APP_KEY}/${CLOUD_BIND_KV_FIELD}/${encodeURIComponent(depId)}`,
-      { method: 'POST' }
-    );
-  } catch (e) {
-    console.warn('Global KV bind update failed:', e);
-  }
-  try {
-    await fetch(`https://ntfy.sh/${CLOUD_BIND_NTFY_TOPIC}`, {
-      method: 'POST',
-      body: JSON.stringify({ depId })
-    });
-  } catch (e) { }
-}
-
-async function fetchGlobalBoundGasUrl() {
-  // 1. 優先向永久保存的 KeyValue 雲端設定庫讀取已綁定的 GAS 部署 ID
-  try {
-    const res = await fetch(
-      `https://keyvalue.immanuel.co/api/KeyVal/GetValue/${CLOUD_BIND_KV_APP_KEY}/${CLOUD_BIND_KV_FIELD}?_t=${Date.now()}`
-    );
-    if (res.ok) {
-      const val = await res.json();
-      if (val && val !== 'NONE') {
-        return buildFullGasUrl(val);
-      }
-      if (val === 'NONE') {
-        return '';
-      }
-    }
-  } catch (e) {
-    console.warn('Global KV bind fetch failed:', e);
-  }
-
-  // 2. 備援：向 ntfy 頻道讀取最近一次綁定紀錄
-  try {
-    const res2 = await fetch(`https://ntfy.sh/${CLOUD_BIND_NTFY_TOPIC}/json?poll=1&since=all`);
-    if (res2.ok) {
-      const text = await res2.text();
-      const lines = text.trim().split('\n').filter(Boolean);
-      if (lines.length > 0) {
-        const lastEvt = JSON.parse(lines[lines.length - 1]);
-        const payload = JSON.parse(lastEvt.message || '{}');
-        if (payload.depId && payload.depId !== 'NONE') {
-          return buildFullGasUrl(payload.depId);
-        }
-      }
-    }
-  } catch (e) { }
-
+  const stored = (localStorage.getItem(STORAGE_KEYS.GAS_URL) || '').trim();
+  if (isValidGasUrl(stored)) return stored;
+  const def = (DEFAULT_GAS_URL || '').trim();
+  if (isValidGasUrl(def)) return def;
   return '';
 }
 
 async function initCloudUrlFromQueryOrDefault() {
-  const params = new URLSearchParams(window.location.search);
-  const apiParam = params.get('api');
-  if (apiParam) {
-    const fullUrl = buildFullGasUrl(apiParam);
-    if (fullUrl) {
-      localStorage.setItem(STORAGE_KEYS.GAS_URL, fullUrl);
-      saveGlobalBoundGasUrl(fullUrl);
-      return;
-    }
+  // 僅允許套用程式碼中經過驗證的 DEFAULT_GAS_URL，不再接受 URL ?api= 參數或公開第三方 KV/ntfy 綁定，防範惡意後端劫持 (C2)
+  const stored = (localStorage.getItem(STORAGE_KEYS.GAS_URL) || '').trim();
+  if (stored && !isValidGasUrl(stored)) {
+    localStorage.removeItem(STORAGE_KEYS.GAS_URL);
   }
-
-  if (DEFAULT_GAS_URL && !localStorage.getItem(STORAGE_KEYS.GAS_URL)) {
-    localStorage.setItem(STORAGE_KEYS.GAS_URL, DEFAULT_GAS_URL);
-  }
-
-  const localUrl = getActiveGasUrl();
-  const remoteBoundUrl = await fetchGlobalBoundGasUrl();
-
-  if (remoteBoundUrl) {
-    // 若雲端已有綁定網址，所有新裝置開啟網頁時直接自動套用綁定
-    if (!localUrl || localUrl !== remoteBoundUrl) {
-      localStorage.setItem(STORAGE_KEYS.GAS_URL, remoteBoundUrl);
-    }
-  } else if (localUrl) {
-    // 若本機已填過網址但雲端尚未記錄，自動將本機網址上傳為跨裝置全域綁定
-    await saveGlobalBoundGasUrl(localUrl);
+  if (DEFAULT_GAS_URL && isValidGasUrl(DEFAULT_GAS_URL) && !localStorage.getItem(STORAGE_KEYS.GAS_URL)) {
+    localStorage.setItem(STORAGE_KEYS.GAS_URL, DEFAULT_GAS_URL.trim());
   }
 }
 
-function extractGasDeploymentId(url) {
-  const match = String(url || '').match(/\/macros\/s\/([^/]+)\/exec/);
-  return match ? match[1] : '';
+function getUrlExamToken() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return (urlParams.get('token') || '').trim();
 }
 
 function buildStudentShareUrl() {
   const baseUrl = window.location.origin + window.location.pathname;
-  const gasUrl = getActiveGasUrl();
   const params = new URLSearchParams();
 
-  if (gasUrl) {
-    const depId = extractGasDeploymentId(gasUrl);
-    params.set('api', depId || gasUrl);
-  }
-
-  // 模式 A：將當前有效的隨機測驗 Token 帶入作答連結中，若尚未生成則預設指定考生端
+  // 將當前有效的隨機測驗 Token 帶入作答連結中（不再附加 ?api= 參數）
   if (examData && examData.activeExamToken && examData.activeExamToken.token) {
     params.set('token', examData.activeExamToken.token);
   } else {
@@ -436,11 +352,23 @@ async function syncStateFromCloud(silent = true, force = false) {
   }
 
   try {
-    const tokenParam = (isExaminerAuthenticated && currentExaminerAuthToken)
-      ? `&token=${encodeURIComponent(currentExaminerAuthToken)}`
-      : '';
-    const res = await fetch(`${gasUrl}?action=getExamState${tokenParam}&_t=${Date.now()}`);
-    const json = await res.json();
+    let json = null;
+    if (isExaminerAuthenticated && currentExaminerAuthToken) {
+      // 考官模式：一律走 POST 傳遞 Session Token，絕不將憑證放進 GET URL Query String (C3)
+      json = await postToCloud({
+        action: 'getExamState'
+      });
+      if (json && json.status === 'unauthorized') {
+        logoutExaminer('session_expired');
+        return false;
+      }
+    } else {
+      // 考生模式：附帶 URL 上的隨機測驗 Token 向後端驗證並取得試卷
+      const urlToken = getUrlExamToken();
+      const examTokenParam = urlToken ? `&examToken=${encodeURIComponent(urlToken)}` : '';
+      const res = await fetch(`${gasUrl}?action=getExamState${examTokenParam}&_t=${Date.now()}`);
+      json = await res.json();
+    }
     if (json && json.status === 'success') {
       // 效能優化：若背景靜默輪詢時雲端 updatedAt 毫無變更且考官授權身分未切換，直接跳過重繪以節省 CPU
       if (silent && !force && json.updatedAt && json.updatedAt === lastCloudUpdatedAt && lastCloudSyncExaminer === isExaminerAuthenticated) {
@@ -548,9 +476,9 @@ async function postToCloud(payload, maxRetries = 2) {
   const gasUrl = getActiveGasUrl();
   if (!gasUrl) return null;
 
-  // 自動附加考官身分驗證 Token，確保後端管理操作通過身分審查
-  if (isExaminerAuthenticated && currentExaminerAuthToken && !payload.authPinHash) {
-    payload.authPinHash = currentExaminerAuthToken;
+  // 自動附加考官伺服器端 Session Token，確保後端管理操作通過身分審查
+  if (isExaminerAuthenticated && currentExaminerAuthToken && !payload.sessionToken) {
+    payload.sessionToken = currentExaminerAuthToken;
   }
 
   // 併發退避重試機制：當後端鎖服務繁忙 (status: 'busy') 時自動延遲重試，防止交卷遺漏
@@ -589,27 +517,25 @@ async function saveGasUrlConfig() {
     localStorage.removeItem(STORAGE_KEYS.GAS_URL);
     isGasUrlUnlockedBySecret = false;
     gasSecretClickCount = 0;
-    await saveGlobalBoundGasUrl('');
     updateCloudStatusUI();
     showToast('⚪ 已解除綁定並切換回本機儲存模式');
     return;
   }
 
-  if (!val.startsWith('https://script.google.com/macros/s/')) {
-    alert('請輸入正確的 Google Apps Script 網頁應用程式網址（格式為 https://script.google.com/macros/s/.../exec）！');
+  if (!isValidGasUrl(val)) {
+    alert('請輸入正確的 Google Apps Script 網頁應用程式網址（格式須符合 https://script.google.com/macros/s/<部署ID>/exec）！');
     return;
   }
 
   localStorage.setItem(STORAGE_KEYS.GAS_URL, val);
   isGasUrlUnlockedBySecret = false;
   gasSecretClickCount = 0;
-  await saveGlobalBoundGasUrl(val);
   updateCloudStatusUI();
   startCloudPolling();
 
-  showToast('🔌 正在驗證並跨裝置綁定雲端資料庫...');
+  showToast('🔌 正在驗證並綁定雲端資料庫...');
   const ok = await syncStateFromCloud(false);
-  if (ok) {
+  if (ok && isExaminerAuthenticated) {
     await postToCloud({
       action: 'saveExamData',
       examData: examData
@@ -624,6 +550,10 @@ async function testGasConnection() {
     alert('請先在輸入框貼上 Google Apps Script 網頁應用程式網址 (.../exec)！');
     return;
   }
+  if (!isValidGasUrl(url)) {
+    alert('網址格式不正確！僅允許標準 Google Apps Script 網址（https://script.google.com/macros/s/<部署ID>/exec）。');
+    return;
+  }
 
   showToast('🔌 正在測試連線至 Google Apps Script...');
   try {
@@ -631,7 +561,6 @@ async function testGasConnection() {
     const json = await res.json();
     if (json && json.status === 'success') {
       localStorage.setItem(STORAGE_KEYS.GAS_URL, url);
-      await saveGlobalBoundGasUrl(url);
       updateCloudStatusUI();
 
       if (json.hasExamLibrarySupport) {
@@ -669,18 +598,16 @@ async function pushAllLocalDataToCloud() {
 
 // ==================== 隨機測驗連結 (180分鐘有效，覆蓋即失效) ====================
 function generateRandomExamToken() {
+  if (!window.crypto || !window.crypto.getRandomValues) {
+    throw new Error('瀏覽器不支援密碼學安全亂數產生器 (Web Crypto API)，無法生成安全的測驗連結！');
+  }
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let rand = '';
-  if (window.crypto && window.crypto.getRandomValues) {
-    const bytes = new Uint8Array(12);
-    window.crypto.getRandomValues(bytes);
-    for (let i = 0; i < bytes.length; i++) {
-      rand += chars[bytes[i] % chars.length];
-    }
-  } else {
-    for (let i = 0; i < 16; i++) {
-      rand += chars[Math.floor(Math.random() * chars.length)];
-    }
+  // 產生 24 字元高熵密碼學隨機 Token (約 124 bits 熵值)
+  const bytes = new Uint8Array(24);
+  window.crypto.getRandomValues(bytes);
+  for (let i = 0; i < bytes.length; i++) {
+    rand += chars[bytes[i] % chars.length];
   }
   return 'tk_' + rand;
 }
@@ -890,25 +817,13 @@ async function validateCurrentExamToken(urlToken) {
   }
 
   const gasUrl = getActiveGasUrl();
-  let verifiedOnCloud = false;
 
-  // 1. 優先執行雲端權威校驗 (跨裝置/新設備進入時，直接由 Google 伺服器進行即時防竄改驗證)
+  // 1. 若已設定雲端網址，一律由 Google 伺服器進行權威校驗（Fail-Closed：雲端連線失敗時拒絕放行，且後端絕不回傳 Token 本體）
   if (gasUrl) {
     try {
       const res = await fetch(`${gasUrl}?action=checkState&token=${encodeURIComponent(urlToken)}&_t=${Date.now()}`);
       const json = await res.json();
       if (json && json.status === 'success') {
-        verifiedOnCloud = true;
-        if (json.activeExamToken) {
-          examData.activeExamToken = json.activeExamToken;
-          try {
-            const raw = localStorage.getItem(STORAGE_KEYS.EXAM_DATA);
-            const parsed = raw ? JSON.parse(raw) : {};
-            parsed.activeExamToken = json.activeExamToken;
-            parsed.isExamOpen = Boolean(json.isExamOpen);
-            localStorage.setItem(STORAGE_KEYS.EXAM_DATA, JSON.stringify(parsed));
-          } catch (e) { }
-        }
         examData.isExamOpen = Boolean(json.isExamOpen);
 
         if (json.tokenStatus === 'valid') {
@@ -921,31 +836,31 @@ async function validateCurrentExamToken(urlToken) {
         } else if (json.tokenStatus === 'expired') {
           showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
           return false;
-        } else if (json.tokenStatus === 'not_generated') {
+        } else {
           showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>目前無有效之測驗連結，請聯繫考官確認。');
           return false;
         }
       }
     } catch (e) {
-      console.warn('雲端校驗 Token 網路失敗，降級使用本機狀態比對:', e);
+      console.warn('雲端校驗 Token 網路失敗:', e);
     }
+    showTokenInvalidView('⚠️ 無法連線至雲端測驗伺服器驗證測驗連結，請檢查網路連線並重新整理頁面！');
+    return false;
   }
 
-  // 2. 僅在無雲端網址或離線網路異常時，才降級比對本機狀態
-  if (!verifiedOnCloud) {
-    const localToken = examData.activeExamToken;
-    if (!localToken || !localToken.token) {
-      showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>目前無有效之測驗連結，請聯繫考官確認。');
-      return false;
-    }
-    if (localToken.token !== urlToken) {
-      showTokenInvalidView('⚠️ 此測驗連結已失效！考官已重新生成新連結，先前連結已立即作廢。<br>請向考官索取最新測驗連結！');
-      return false;
-    }
-    if (Date.now() > Number(localToken.expiresAt || 0)) {
-      showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
-      return false;
-    }
+  // 2. 僅在純單機離線模式（未綁定任何 GAS 雲端網址）時，比對本機狀態
+  const localToken = examData.activeExamToken;
+  if (!localToken || !localToken.token) {
+    showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>目前無有效之測驗連結，請聯繫考官確認。');
+    return false;
+  }
+  if (localToken.token !== urlToken) {
+    showTokenInvalidView('⚠️ 此測驗連結已失效！考官已重新生成新連結，先前連結已立即作廢。<br>請向考官索取最新測驗連結！');
+    return false;
+  }
+  if (Date.now() > Number(localToken.expiresAt || 0)) {
+    showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
+    return false;
   }
 
   hideTokenInvalidView();
@@ -1497,8 +1412,17 @@ async function handleStartExam(event) {
     await syncStateFromCloud(true);
     let cloudEmailDuplicate = null;
     try {
-      const checkRes = await fetch(`${gasUrl}?action=checkEmail&email=${encodeURIComponent(emailInput)}&_t=${Date.now()}`);
+      const tokenQuery = urlToken ? `&token=${encodeURIComponent(urlToken)}` : '';
+      const checkRes = await fetch(`${gasUrl}?action=checkEmail&email=${encodeURIComponent(emailInput)}${tokenQuery}&_t=${Date.now()}`);
       const checkJson = await checkRes.json();
+      if (checkJson && checkJson.status === 'token_invalid') {
+        if (startBtn) {
+          startBtn.disabled = false;
+          startBtn.innerHTML = `進入全螢幕並開始作答 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
+        }
+        showLoginError('測驗連結憑證無效或已逾期，無法開始作答！');
+        return;
+      }
       if (checkJson && checkJson.status === 'success' && checkJson.exists) {
         cloudEmailDuplicate = checkJson;
       }
@@ -1653,7 +1577,7 @@ function renderQuizQuestions() {
     const imgHtml = displayImgUrl
       ? `
         <div class="question-image-wrap">
-          <img src="${escapeHtml(displayImgUrl)}" alt="第 ${displayNum} 題圖檔" class="question-image-thumb" ${getImageOnErrorAttr(displayImgUrl)} onclick="openImageLightbox('${escapeHtml(displayImgUrl)}', '第 ${displayNum} 題附圖')">
+          <img src="${escapeHtml(displayImgUrl)}" alt="第 ${displayNum} 題圖檔" class="question-image-thumb js-lightbox-trigger" ${getImageOnErrorAttr(displayImgUrl)} data-img-url="${escapeHtml(displayImgUrl)}" data-caption="第 ${displayNum} 題附圖">
           <div class="question-image-hint">🔍 點擊圖片可放大檢視</div>
         </div>
       `
@@ -1669,6 +1593,12 @@ function renderQuizQuestions() {
         ${optionsHtml}
       </div>
     `;
+    const thumbImg = card.querySelector('.js-lightbox-trigger');
+    if (thumbImg) {
+      thumbImg.addEventListener('click', () => {
+        openImageLightbox(thumbImg.dataset.imgUrl, thumbImg.dataset.caption);
+      });
+    }
     container.appendChild(card);
 
     // 建立右側題號導覽按鈕
@@ -2060,18 +1990,29 @@ async function finalizeExamSubmission(statusReason) {
     cloudStatusEl.textContent = '🔄 正在同步上傳...';
     const cloudRes = await postToCloud({
       action: 'submitExam',
+      examToken: getUrlExamToken(),
       record: record
     });
     if (cloudRes && (cloudRes.status === 'success' || cloudRes.status === 'duplicate')) {
       cloudStatusEl.innerHTML = '<span style="color:var(--primary);">✅ 已成功上傳</span>';
+      // 同步後端生成的權威 submissionId 與交卷時間戳 (H1)
+      if (cloudRes.submissionId) {
+        record.id = cloudRes.submissionId;
+      }
+      if (cloudRes.submittedAt) {
+        record.submittedAt = cloudRes.submittedAt;
+        document.getElementById('receiptTimestamp').textContent = record.submittedAt;
+      }
       // 若後端完成客觀權威評分，同步更新本機端分數與作答明細
       if (cloudRes.record) {
         record.score = cloudRes.record.score;
         record.correctCount = cloudRes.record.correctCount;
         record.totalQuestions = cloudRes.record.totalQuestions;
         record.answerDetails = cloudRes.record.answerDetails;
-        localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
       }
+      localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+    } else if (cloudRes && (cloudRes.status === 'token_invalid' || cloudRes.status === 'token_expired')) {
+      cloudStatusEl.innerHTML = `<span style="color:var(--danger);">❌ ${escapeHtml(cloudRes.message || '測驗連結憑證無效或已逾期')}</span>`;
     } else {
       cloudStatusEl.innerHTML = '<span style="color:var(--accent-dark);">⚠️ 已儲存於本機 (雲端連線逾時)</span>';
     }
@@ -2191,10 +2132,6 @@ async function hashExaminerPin(pin) {
   return hashWithSalt(EXAMINER_PIN_SALT, pin);
 }
 
-async function hashAdminKey(key) {
-  return hashWithSalt(ADMIN_KEY_SALT, key);
-}
-
 function getStoredExaminerPinHash() {
   const customHash = localStorage.getItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
   if (customHash && (
@@ -2245,43 +2182,52 @@ async function handlePinLogin(event) {
 
   isPinLoggingIn = true;
   let isPinValid = false;
+  let issuedSessionToken = '';
   errBox.classList.add('hidden');
   if (loadingBar) loadingBar.classList.remove('hidden');
   if (pinBtn) pinBtn.disabled = true;
   if (pinInputEl) pinInputEl.disabled = true;
 
   try {
-    const inputHash = await hashExaminerPin(pinInput);
-    const targetHash = getStoredExaminerPinHash();
-
-    isPinValid = (inputHash === targetHash);
+    const gasUrl = getActiveGasUrl();
     let cloudLockedMsg = '';
 
-    // 若已連線雲端，優先向雲端驗證 PIN 雜湊（支援跨裝置變更 PIN 同步與雲端防暴力破解鎖定）
-    if (getActiveGasUrl()) {
+    // 若已連線雲端，一律交由雲端後端驗證 PIN 碼並簽發隨機 Session Token（防範 Pass-the-Hash 與離線破解）
+    if (gasUrl) {
       const verifyRes = await postToCloud({
         action: 'verifyExaminer',
-        authPinHash: inputHash
+        pin: pinInput
       });
       if (verifyRes && verifyRes.status === 'success') {
         isPinValid = true;
-        localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, inputHash);
+        issuedSessionToken = verifyRes.sessionToken || '';
+        // 清除本機殘留的靜態 PIN 雜湊，避免洩漏於 localStorage
+        localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
       } else if (verifyRes && verifyRes.status === 'locked') {
         isPinValid = false;
         cloudLockedMsg = verifyRes.message || '❌ PIN 碼錯誤次數過多，雲端已暫時鎖定 5 分鐘！';
       } else if (verifyRes && verifyRes.status === 'unauthorized') {
         isPinValid = false;
+      } else {
+        isPinValid = false;
+        cloudLockedMsg = '⚠️ 無法連線至雲端伺服器進行考官身分驗證，請檢查網路狀態！';
       }
+    } else {
+      // 純單機離線模式備援（未綁定 GAS 網址時）
+      const inputHash = await hashExaminerPin(pinInput);
+      const targetHash = getStoredExaminerPinHash();
+      isPinValid = (inputHash === targetHash);
+      issuedSessionToken = 'local_offline_session';
     }
 
     if (isPinValid) {
       pinFailedAttempts = 0;
       isExaminerAuthenticated = true;
-      currentExaminerAuthToken = inputHash;
+      currentExaminerAuthToken = issuedSessionToken;
       lastExaminerActivityTime = Date.now();
       lastExaminerActivityRecordAt = Date.now();
       errBox.classList.add('hidden');
-      if (getActiveGasUrl()) {
+      if (gasUrl) {
         await syncStateFromCloud(true, true);
       }
       showExaminerDashboard();
@@ -2405,12 +2351,21 @@ function setupExaminerIdleDetector() {
 
 function logoutExaminer(reason) {
   const isIdle = (reason === 'idle');
+  const isSessionExpired = (reason === 'session_expired');
+  const tokenToRevoke = currentExaminerAuthToken;
   isExaminerAuthenticated = false;
   currentExaminerAuthToken = '';
   isGasUrlUnlockedBySecret = false;
   gasSecretClickCount = 0;
   stopExaminerLiveTimer();
   updateCloudStatusUI();
+
+  if (tokenToRevoke && tokenToRevoke.startsWith('exs_') && getActiveGasUrl()) {
+    postToCloud({
+      action: 'logoutExaminer',
+      sessionToken: tokenToRevoke
+    });
+  }
 
   // 關閉考官端可能開啟中的浮動視窗 (Modal)
   const examinerModals = ['studentDetailModal', 'addQuestionModal', 'archiveSessionModal', 'imageLightboxModal'];
@@ -2430,10 +2385,13 @@ function logoutExaminer(reason) {
   if (pinInput) pinInput.value = '';
   if (pinLoading) pinLoading.classList.add('hidden');
 
-  if (isIdle) {
-    showToast('⚠️ 閒置已超過 30 分鐘，系統已自動安全登出。');
+  if (isIdle || isSessionExpired) {
+    const msg = isSessionExpired
+      ? '⚠️ 雲端考官登入工作階段已逾時，請重新輸入 PIN 碼登入。'
+      : '⚠️ 閒置已超過 30 分鐘，系統已自動安全登出。';
+    showToast(msg);
     if (pinErr) {
-      pinErr.textContent = '⚠️ 因閒置超過 30 分鐘未動作，系統已自動安全登出。請重新輸入 PIN 碼登入。';
+      pinErr.textContent = msg;
       pinErr.className = 'alert alert-warning';
       pinErr.classList.remove('hidden');
     }
@@ -2472,15 +2430,7 @@ async function handleUpdateExaminerPin(event) {
     return;
   }
 
-  // 1. 驗證管理員金鑰 (採用 Salt + SHA-256 雜湊對比)
-  const inputAdminHash = await hashAdminKey(adminKey);
-  if (inputAdminHash !== ADMIN_KEY_HASH) {
-    showPinAlert('❌ 管理員金鑰驗證失敗！無法變更考官 PIN 碼。', 'danger');
-    if (adminKeyEl) adminKeyEl.select();
-    return;
-  }
-
-  // 2. 驗證新 PIN 碼格式 (僅限半形數字，至少4碼，至多12碼)
+  // 驗證新 PIN 碼格式 (僅限半形數字，至少4碼，至多12碼)
   if (!newPin) {
     showPinAlert('⚠️ 請輸入新考官 PIN 碼！', 'danger');
     if (newPinEl) newPinEl.focus();
@@ -2502,30 +2452,47 @@ async function handleUpdateExaminerPin(event) {
     return;
   }
 
-  // 3. 計算新 PIN 碼的 Salt + SHA-256 雜湊並保存至本機安全性儲存
-  const newPinHash = await hashExaminerPin(newPin);
-  localStorage.setItem(STORAGE_KEYS.EXAMINER_PIN_HASH, newPinHash);
-  currentExaminerAuthToken = newPinHash;
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) {
+    showPinAlert('⚠️ 為確保金鑰安全，變更考官 PIN 碼必須先綁定並連線至 Google Apps Script 雲端後端！', 'danger');
+    return;
+  }
+
+  // 統一交由雲端後端 Script Properties 驗證管理員金鑰並更新 PIN 雜湊 (C4：前端不再保存管理員金鑰雜湊)
+  const res = await postToCloud({
+    action: 'updateExaminerPin',
+    adminKey: adminKey,
+    newPin: newPin
+  });
+
+  if (!res || res.status !== 'success') {
+    const errMsg = (res && res.message) ? `❌ ${res.message}` : '❌ 管理員金鑰驗證失敗或雲端連線異常！無法變更考官 PIN 碼。';
+    showPinAlert(errMsg, 'danger');
+    if (adminKeyEl) adminKeyEl.select();
+    return;
+  }
+
+  if (res.sessionToken) {
+    currentExaminerAuthToken = res.sessionToken;
+  }
+  localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
 
   // 清空輸入框
   if (adminKeyEl) adminKeyEl.value = '';
   if (newPinEl) newPinEl.value = '';
   if (confirmPinEl) confirmPinEl.value = '';
 
-  // 同步新 PIN 雜湊至雲端後端，確保雲端立即同步認證
-  if (getActiveGasUrl()) {
-    postToCloud({
-      action: 'updateExaminerPin',
-      adminKey: adminKey,
-      newPinHash: newPinHash
-    });
-  }
-
-  showPinAlert('✅ 考官登入 PIN 碼已成功更新！日後登入請使用新設定的 PIN 碼。', 'success');
+  showPinAlert('✅ 考官登入 PIN 碼已安全更新至雲端 Script Properties！日後登入請使用新設定的 PIN 碼。', 'success');
   showToast('✅ 考官 PIN 碼已成功變更！');
 }
 
 async function handleResetExaminerPin() {
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) {
+    alert('⚠️ 為確保金鑰安全，重設考官 PIN 碼必須先綁定並連線至 Google Apps Script 雲端後端！');
+    return;
+  }
+
   const adminKey = prompt('請輸入管理員金鑰以恢復預設 PIN 碼：');
   if (adminKey === null) return;
   const trimmedKey = adminKey.trim();
@@ -2534,21 +2501,20 @@ async function handleResetExaminerPin() {
     return;
   }
 
-  const inputAdminHash = await hashAdminKey(trimmedKey);
-  if (inputAdminHash !== ADMIN_KEY_HASH) {
-    alert('❌ 管理員金鑰驗證失敗！無法恢復預設 PIN 碼。');
+  const res = await postToCloud({
+    action: 'updateExaminerPin',
+    adminKey: trimmedKey,
+    resetToDefault: true
+  });
+
+  if (!res || res.status !== 'success') {
+    alert((res && res.message) ? `❌ ${res.message}` : '❌ 管理員金鑰驗證失敗或雲端連線異常！無法恢復預設 PIN 碼。');
     return;
   }
 
   localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
-  currentExaminerAuthToken = DEFAULT_EXAMINER_PIN_HASH;
-
-  if (getActiveGasUrl()) {
-    postToCloud({
-      action: 'updateExaminerPin',
-      adminKey: trimmedKey,
-      newPinHash: DEFAULT_EXAMINER_PIN_HASH
-    });
+  if (res.sessionToken) {
+    currentExaminerAuthToken = res.sessionToken;
   }
 
   const alertBox = document.getElementById('updatePinAlertBox');
@@ -2887,7 +2853,7 @@ function renderExaminerQuestionTab() {
 
     const displayTableImg = formatGoogleDriveImageUrl(q.imageUrl);
     const imgBadge = displayTableImg
-      ? `<br><span class="table-img-badge" onclick="openImageLightbox('${escapeHtml(displayTableImg)}', '第 ${idx + 1} 題圖檔')">🖼️ 查看圖片</span>`
+      ? `<br><span class="table-img-badge js-table-lightbox" data-img-url="${escapeHtml(displayTableImg)}" data-caption="第 ${idx + 1} 題圖檔">🖼️ 查看圖片</span>`
       : '';
 
     const isMulti = isMultipleChoiceQuestion(q);
@@ -2902,7 +2868,7 @@ function renderExaminerQuestionTab() {
       } else if (q.multiScoreRule === 'any') {
         scoreRuleHtml = '<br><span class="badge badge-teal" style="margin-top:4px;font-size:0.75rem;">對一項即得分</span>';
       } else {
-        scoreRuleHtml = `<br><span class="score-rule-warn-badge" onclick="openEditQuestionModal(${q.id})" title="此複選題尚未設定得分方式，點擊進入編輯設定">⚠️ 未設定得分方式</span>`;
+        scoreRuleHtml = `<br><span class="score-rule-warn-badge js-edit-q-btn" title="此複選題尚未設定得分方式，點擊進入編輯設定">⚠️ 未設定得分方式</span>`;
       }
     }
 
@@ -2914,11 +2880,24 @@ function renderExaminerQuestionTab() {
       <td>${pts} 分${scoreRuleHtml}</td>
       <td style="white-space: nowrap;">
         <div style="display:flex; gap:6px;">
-          <button type="button" class="btn btn-secondary btn-sm" onclick="openEditQuestionModal(${q.id})">編輯</button>
-          <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteQuestion(${q.id})">刪除</button>
+          <button type="button" class="btn btn-secondary btn-sm js-edit-q-btn">編輯</button>
+          <button type="button" class="btn btn-danger-outline btn-sm js-del-q-btn">刪除</button>
         </div>
       </td>
     `;
+    const lbBtn = tr.querySelector('.js-table-lightbox');
+    if (lbBtn) {
+      lbBtn.addEventListener('click', () => {
+        openImageLightbox(lbBtn.dataset.imgUrl, lbBtn.dataset.caption);
+      });
+    }
+    tr.querySelectorAll('.js-edit-q-btn').forEach(btn => {
+      btn.addEventListener('click', () => openEditQuestionModal(q.id));
+    });
+    const delBtn = tr.querySelector('.js-del-q-btn');
+    if (delBtn) {
+      delBtn.addEventListener('click', () => deleteQuestion(q.id));
+    }
     tbody.appendChild(tr);
   });
 }
@@ -3278,6 +3257,14 @@ async function handleQuestionImagePaste(event) {
 
 async function uploadQuestionImageFile(file, customFileName) {
   if (!file) return;
+
+  // M1 安全加固：前端限制僅允許上傳安全點陣圖格式 (PNG, JPEG, GIF, WEBP)，禁止 SVG/HTML 等可能夾帶腳本之檔案
+  const ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+  const fileMime = String(file.type || '').trim().toLowerCase();
+  if (!ALLOWED_MIMES.includes(fileMime)) {
+    alert('⚠️ 不支援的圖片格式！僅允許上傳 PNG、JPG、GIF 或 WEBP 圖片檔案。');
+    return;
+  }
 
   const gasUrl = getActiveGasUrl();
   const statusEl = document.getElementById('qImageUploadStatus');
@@ -3743,9 +3730,13 @@ function buildSubmissionRowElement(sub, sessionId) {
     <td class="cell-wrap-time">${escapeHtml(sub.submittedAt)}</td>
     <td style="white-space: nowrap;">${emailStatusBadge}</td>
     <td style="white-space: nowrap;">
-      <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteSingleSubmission('${sub.id}', '${sessionId}')">刪除</button>
+      <button type="button" class="btn btn-danger-outline btn-sm js-del-sub-btn">刪除</button>
     </td>
   `;
+  const delSubBtn = tr.querySelector('.js-del-sub-btn');
+  if (delSubBtn) {
+    delSubBtn.addEventListener('click', () => deleteSingleSubmission(sub.id, sessionId));
+  }
   return tr;
 }
 
@@ -3801,7 +3792,7 @@ function viewStudentDetail(sessionId, subId) {
   body.innerHTML = `
     <div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
       <span class="text-muted text-sm">電子信箱：<strong>${escapeHtml(sub.studentEmail || '未填寫')}</strong>｜交卷時間：${escapeHtml(sub.submittedAt)}</span>
-      <button type="button" class="btn btn-primary btn-sm" onclick="sendSingleScoreEmail('${sessionId}', '${sub.id}')">📧 寄送此考生成績單 Email</button>
+      <button type="button" class="btn btn-primary btn-sm js-send-single-email-btn">📧 寄送此考生成績單 Email</button>
     </div>
     <table class="data-table">
       <thead>
@@ -3816,6 +3807,10 @@ function viewStudentDetail(sessionId, subId) {
       <tbody>${rowsHtml}</tbody>
     </table>
   `;
+  const sendEmailBtn = body.querySelector('.js-send-single-email-btn');
+  if (sendEmailBtn) {
+    sendEmailBtn.addEventListener('click', () => sendSingleScoreEmail(sessionId, sub.id));
+  }
 
   document.getElementById('studentDetailModal').classList.remove('hidden');
 }
@@ -4021,6 +4016,11 @@ async function sendSingleScoreEmail(sessionId, subId) {
     const manualEmail = prompt(`考生「${sub.studentName}」尚未填寫有效的 Email，請輸入要寄送的電子郵件信箱：`, '');
     if (!manualEmail || !manualEmail.includes('@')) return;
     sub.studentEmail = manualEmail.trim();
+    if (sessionId === 'CURRENT') {
+      saveSubmissionsToStorage(true);
+    } else {
+      saveHistorySessionsToStorage(true);
+    }
   }
 
   await dispatchScoreEmails(sessionId, [sub], sessionObj);
@@ -4052,26 +4052,10 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
   const gasUrl = getActiveGasUrl();
   const nowStr = formatDateTime(new Date());
 
-  // 寄信資料傳遞成績摘要與考生每題作答選項及對錯 (studentAnswers)，不包含題目與標準答案
-  const sanitizedRecipients = recipients.map(r => {
-    const studentAnswers = extractStudentAnswersForEmail(r, sessionObj);
-    return {
-      id: r.id,
-      examTitle: r.examTitle,
-      examDate: r.examDate,
-      studentName: r.studentName,
-      studentId: r.studentId,
-      studentEmail: r.studentEmail,
-      score: r.score,
-      correctCount: r.correctCount,
-      totalQuestions: r.totalQuestions,
-      timeSpentFormatted: r.timeSpentFormatted,
-      status: r.status,
-      submittedAt: r.submittedAt,
-      studentAnswers: studentAnswers,
-      customHtmlBody: buildScoreEmailHtmlClient(r, sessionObj, studentAnswers)
-    };
-  });
+  // H3 安全加固：僅傳遞收件人交卷紀錄 ID 清單，由伺服器端根據 state 中的真實考生紀錄與題庫獨立組建 HTML 成績信，不再傳送 customHtmlBody
+  const sanitizedRecipients = recipients.map(r => ({
+    id: r.id
+  }));
 
   // 模式 1：若已綁定 Google Apps Script 雲端後端，直接透過 Google MailApp 雲端背景自動發送 HTML 成績信
   if (gasUrl) {
@@ -4295,13 +4279,21 @@ function renderExaminerHistoryTab() {
       <td><span class="badge ${st.passRate >= 60 ? 'badge-teal' : 'badge-danger'}">${st.passRate}%</span></td>
       <td>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          <button type="button" class="btn btn-primary btn-sm" onclick="viewHistorySessionDetail('${hist.id}')">🔍 檢視本場次明細</button>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="exportScoresToExcel('${hist.id}')">📥 匯出報表</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="sendAllScoresEmail('${hist.id}')">📩 寄送成績單</button>
-          <button type="button" class="btn btn-danger-outline btn-sm" onclick="deleteHistorySession('${hist.id}')">刪除</button>
+          <button type="button" class="btn btn-primary btn-sm js-hist-view">🔍 檢視本場次明細</button>
+          <button type="button" class="btn btn-secondary btn-sm js-hist-export">📥 匯出報表</button>
+          <button type="button" class="btn btn-outline btn-sm js-hist-email">📩 寄送成績單</button>
+          <button type="button" class="btn btn-danger-outline btn-sm js-hist-del">刪除</button>
         </div>
       </td>
     `;
+    const viewBtn = tr.querySelector('.js-hist-view');
+    if (viewBtn) viewBtn.addEventListener('click', () => viewHistorySessionDetail(hist.id));
+    const expBtn = tr.querySelector('.js-hist-export');
+    if (expBtn) expBtn.addEventListener('click', () => exportScoresToExcel(hist.id));
+    const mailBtn = tr.querySelector('.js-hist-email');
+    if (mailBtn) mailBtn.addEventListener('click', () => sendAllScoresEmail(hist.id));
+    const delHistBtn = tr.querySelector('.js-hist-del');
+    if (delHistBtn) delHistBtn.addEventListener('click', () => deleteHistorySession(hist.id));
     tbody.appendChild(tr);
   });
 }
@@ -4400,6 +4392,17 @@ function autoFitWorksheetColumns(rows, worksheet, minWidth = 10, maxWidth = 90) 
   worksheet['!cols'] = cols;
 }
 
+// 試算表公式注入防護 (H2 CSV / Formula Injection Protection)：開頭為 =、+、-、@、Tab 或換行時加上單引號前綴
+function sanitizeExcelCell(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'number' || typeof val === 'boolean') return val;
+  const str = String(val);
+  if (/^[=+\-@\t\r\n]/.test(str)) {
+    return "'" + str;
+  }
+  return str;
+}
+
 function exportScoresToExcel(sessionId = 'CURRENT') {
   const sessionObj = getSessionDataById(sessionId);
   if (!sessionObj || sessionObj.submissions.length === 0) {
@@ -4424,27 +4427,27 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
     '成績信狀態'
   ];
   targetQuestions.forEach((q, idx) => {
-    headers.push(`第${idx + 1}題(正解:${q.answer})`);
+    headers.push(sanitizeExcelCell(`第${idx + 1}題(正解:${q.answer})`));
   });
 
   const scoreRows = [headers];
   targetSubs.forEach(sub => {
     const row = [
-      sub.studentId || '',
-      sub.studentName,
-      sub.studentEmail || '',
+      sanitizeExcelCell(sub.studentId || ''),
+      sanitizeExcelCell(sub.studentName),
+      sanitizeExcelCell(sub.studentEmail || ''),
       sub.score,
       sub.correctCount,
       sub.totalQuestions,
-      sub.timeSpentFormatted,
+      sanitizeExcelCell(sub.timeSpentFormatted),
       sub.warningCount,
-      sub.status,
-      sub.submittedAt,
-      sub.emailSentAt ? `已寄送 (${sub.emailSentAt})` : '尚未寄送'
+      sanitizeExcelCell(sub.status),
+      sanitizeExcelCell(sub.submittedAt),
+      sanitizeExcelCell(sub.emailSentAt ? `已寄送 (${sub.emailSentAt})` : '尚未寄送')
     ];
     targetQuestions.forEach(q => {
       const d = sub.answerDetails ? sub.answerDetails[q.id] : null;
-      row.push(d ? d.selected : '未作答');
+      row.push(sanitizeExcelCell(d ? d.selected : '未作答'));
     });
     scoreRows.push(row);
   });
@@ -4468,12 +4471,12 @@ function exportScoresToExcel(sessionId = 'CURRENT') {
   itemStats.forEach(item => {
     qAnalysisRows.push([
       `第 ${item.index} 題`,
-      item.question,
-      item.answerDisplay || item.answer,
+      sanitizeExcelCell(item.question),
+      sanitizeExcelCell(item.answerDisplay || item.answer),
       item.totalAttempts,
       item.wrongCount,
       `${item.errorRate}%`,
-      item.topWrongOption || '無'
+      sanitizeExcelCell(item.topWrongOption || '無')
     ]);
   });
 
@@ -4734,7 +4737,7 @@ function openErrorRankingWindow(sessionId = 'CURRENT') {
     const displayItemImg = formatGoogleDriveImageUrl(item.imageUrl);
     const itemImgHtml = displayItemImg
       ? `<div style="margin:10px 0 14px 0; text-align:center;">
-           <img src="${escapeHtml(displayItemImg)}" alt="第 ${item.index} 題圖檔" ${getImageOnErrorAttr(displayItemImg)} style="max-height:240px; max-width:100%; border-radius:6px; border:1px solid #cbd5e1; cursor:zoom-in;" onclick="window.open('${escapeHtml(displayItemImg)}', '_blank')">
+           <img src="${escapeHtml(displayItemImg)}" alt="第 ${item.index} 題圖檔" class="js-review-zoom-img" ${getImageOnErrorAttr(displayItemImg)} data-img-url="${escapeHtml(displayItemImg)}" style="max-height:240px; max-width:100%; border-radius:6px; border:1px solid #cbd5e1; cursor:zoom-in;">
          </div>`
       : '';
 
@@ -4938,6 +4941,14 @@ function openErrorRankingWindow(sessionId = 'CURRENT') {
       document.getElementById('btnSortErr').classList.toggle('active', mode === 'rank');
       document.getElementById('btnSortQNum').classList.toggle('active', mode === 'qindex');
     }
+    document.querySelectorAll('.js-review-zoom-img').forEach(img => {
+      img.addEventListener('click', () => {
+        const url = img.dataset.imgUrl;
+        if (url && (/^https?:\/\//i.test(url) || /^data:image\//i.test(url))) {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        }
+      });
+    });
   </script>
 </body>
 </html>`;

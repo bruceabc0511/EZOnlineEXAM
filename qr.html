@@ -49,14 +49,7 @@
 
       if (!targetUrl) {
         const baseUrl = window.location.origin + window.location.pathname.replace(/\/qr\.html$/i, '/index.html');
-        const gasUrl = (localStorage.getItem('online_exam_gas_url_v1') || '').trim();
-        if (gasUrl) {
-          const match = gasUrl.match(/\/macros\/s\/([^/]+)\/exec/);
-          const depId = match ? match[1] : gasUrl;
-          targetUrl = baseUrl + '?api=' + encodeURIComponent(depId);
-        } else {
-          targetUrl = baseUrl;
-        }
+        targetUrl = baseUrl + '?role=student';
       }
 
       const qrImg = document.getElementById('standaloneQrImg');

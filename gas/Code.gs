@@ -13,6 +13,10 @@
  * 3. 點選右上角「部署」>「新增部署作業」> 類型選擇「網頁應用程式 (Web App)」
  * 4. 執行身分：「我 (Me)」；誰可以存取：「所有人 (Anyone)」
  * 5. 部署並授權後，複製「網頁應用程式網址 (.../exec)」貼回考官端「雲端連線與寄信設定」即可！
+ *
+ * 安全設定說明 (Script Properties)：
+ * - 首次執行時，系統會自動將預設的 EXAMINER_PIN_HASH、EXAMINER_PIN_SALT、ADMIN_KEY_HASH、ADMIN_KEY_SALT 寫入指令碼屬性 (Script Properties)。
+ * - 強烈建議考官在部署後，至「專案設定 (齒輪)」>「指令碼屬性 (Script Properties)」修改金鑰或於考官後台變更 PIN 碼。
  * ============================================================================
  */
 
@@ -23,44 +27,178 @@ const SHEET_NAMES = {
   EXAM_LIBRARY: '試卷庫資料'
 };
 
-// 考題圖片專用 Google 雲端硬碟資料夾 ID
-const EXAM_IMAGE_FOLDER_ID = '11vY2bQE-3G_gwrcanjCeCJMYjPbnYYrl';
+// 考題圖片專用 Google 雲端硬碟資料夾 ID (可於 Script Properties 設定 EXAM_IMAGE_FOLDER_ID 覆蓋)
+const DEFAULT_EXAM_IMAGE_FOLDER_ID = '11vY2bQE-3G_gwrcanjCeCJMYjPbnYYrl';
+
+function getExamImageFolderId() {
+  try {
+    const propId = PropertiesService.getScriptProperties().getProperty('EXAM_IMAGE_FOLDER_ID');
+    if (propId && propId.trim()) return propId.trim();
+  } catch (e) {}
+  return DEFAULT_EXAM_IMAGE_FOLDER_ID;
+}
 
 /**
  * 首次使用考題圖片上傳時，請在 Apps Script 編輯器上方函式選單中選擇此「testDriveAuthorization」
  * 並點選「執行」，Google 會彈出授權視窗，點擊「核對權限」->「進階」->「前往... (不安全)」->「允許」即可完成雲端硬碟授權！
  */
 function testDriveAuthorization() {
-  const folder = DriveApp.getFolderById(EXAM_IMAGE_FOLDER_ID);
+  const folder = DriveApp.getFolderById(getExamImageFolderId());
   Logger.log('✅ Google Drive 雲端硬碟權限授權成功！目標資料夾名稱：' + folder.getName());
 }
-
-/**
- * 考官身份驗證輔助函式 (比對 Salt + SHA-256 雜湊值)
- */
-function isExaminerAuthorized(token, state) {
-  if (!token || typeof token !== 'string') return false;
-  const cleanToken = token.trim().toLowerCase();
-  const validHash = (state && state.examinerPinHash)
-    ? String(state.examinerPinHash).trim().toLowerCase()
-    : '391f59f4ca8480648b504098e96bffa16f970d261a5cacea40fe5e7789c3f961'; // 預設 PIN 9999 的雜湊
-  return cleanToken === validHash;
-}
-
-/**
- * 管理員金鑰後端驗證 (Salt + SHA-256，與前端 ADMIN_KEY_HASH 相同演算法)
- */
-const ADMIN_KEY_SALT_GAS = 'HD_EXAM_ADMIN_SALT_2026';
-const ADMIN_KEY_HASH_GAS = '4007531f25ed2a163a091d340f3fcb5d7bbabb98c22c65074d60152eec2c9b6a';
 
 function sha256Hex(text) {
   const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8);
   return bytes.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
 }
 
-function isAdminKeyValid(adminKey) {
+/**
+ * 讀取與自動初始化 Script Properties 中的安全憑證雜湊與鹽值
+ * (將機敏驗證參數存放於伺服器端 Script Properties，避免暴露於前端原始碼或試算表儲存格)
+ */
+function getSecurityConfig(state) {
+  const props = PropertiesService.getScriptProperties();
+  let all = props.getProperties();
+  const updates = {};
+
+  const pinSalt = all.EXAMINER_PIN_SALT || 'HD_EXAM_SECURE_SALT_2026';
+  if (!all.EXAMINER_PIN_SALT) updates.EXAMINER_PIN_SALT = pinSalt;
+
+  const adminSalt = all.ADMIN_KEY_SALT || 'HD_EXAM_ADMIN_SALT_2026';
+  if (!all.ADMIN_KEY_SALT) updates.ADMIN_KEY_SALT = adminSalt;
+
+  // 若舊版試算表 state 中曾儲存自訂 examinerPinHash，優先無痛遷移至 Script Properties
+  const defaultPinHash = '391f59f4ca8480648b504098e96bffa16f970d261a5cacea40fe5e7789c3f961';
+  const legacyStateHash = (state && state.examinerPinHash) ? String(state.examinerPinHash).trim().toLowerCase() : '';
+  const pinHash = (all.EXAMINER_PIN_HASH || legacyStateHash || defaultPinHash).trim().toLowerCase();
+  if (!all.EXAMINER_PIN_HASH) updates.EXAMINER_PIN_HASH = pinHash;
+
+  const defaultAdminHash = '4007531f25ed2a163a091d340f3fcb5d7bbabb98c22c65074d60152eec2c9b6a';
+  const adminHash = (all.ADMIN_KEY_HASH || defaultAdminHash).trim().toLowerCase();
+  if (!all.ADMIN_KEY_HASH) updates.ADMIN_KEY_HASH = adminHash;
+
+  if (Object.keys(updates).length > 0) {
+    try {
+      props.setProperties(updates, false);
+    } catch (e) {}
+  }
+
+  return { pinSalt, pinHash, adminSalt, adminHash };
+}
+
+/**
+ * 統一失敗次數限流防護 (防範針對 PIN 或管理員金鑰之線上暴力破解)
+ */
+const AUTH_RATE_LIMIT_KEY = 'EXAMINER_AUTH_FAIL_COUNT';
+const AUTH_MAX_FAILS = 10;
+const AUTH_LOCK_SECONDS = 300; // 鎖定 5 分鐘
+
+function isAuthRateLimited() {
+  const cache = CacheService.getScriptCache();
+  return Number(cache.get(AUTH_RATE_LIMIT_KEY) || 0) >= AUTH_MAX_FAILS;
+}
+
+function recordAuthFailure() {
+  const cache = CacheService.getScriptCache();
+  const count = Number(cache.get(AUTH_RATE_LIMIT_KEY) || 0) + 1;
+  cache.put(AUTH_RATE_LIMIT_KEY, String(count), AUTH_LOCK_SECONDS);
+  return count;
+}
+
+function clearAuthFailures() {
+  try {
+    CacheService.getScriptCache().remove(AUTH_RATE_LIMIT_KEY);
+  } catch (e) {}
+}
+
+/**
+ * 考官伺服器端 Session Token 管理 (隨機高熵 UUID，30 分鐘滑動有效期限)
+ */
+const EXAMINER_SESSION_TTL_SEC = 1800;
+
+function createExaminerSession() {
+  const token = 'exs_' + Utilities.getUuid().replace(/-/g, '') + '_' + Utilities.getUuid().replace(/-/g, '');
+  const cache = CacheService.getScriptCache();
+  cache.put('EXAMINER_SESS_' + token, String(Date.now()), EXAMINER_SESSION_TTL_SEC);
+  return token;
+}
+
+function isExaminerSessionValid(sessionToken) {
+  if (!sessionToken || typeof sessionToken !== 'string') return false;
+  const clean = sessionToken.trim();
+  if (!clean.startsWith('exs_')) return false;
+  const cache = CacheService.getScriptCache();
+  const val = cache.get('EXAMINER_SESS_' + clean);
+  if (!val) return false;
+  // 滑動延長 Session 有效期限
+  try {
+    cache.put('EXAMINER_SESS_' + clean, String(Date.now()), EXAMINER_SESSION_TTL_SEC);
+  } catch (e) {}
+  return true;
+}
+
+function revokeExaminerSession(sessionToken) {
+  if (!sessionToken || typeof sessionToken !== 'string') return;
+  try {
+    CacheService.getScriptCache().remove('EXAMINER_SESS_' + sessionToken.trim());
+  } catch (e) {}
+}
+
+/**
+ * 驗證考官 PIN (支援明文 PIN 由後端計算雜湊，或向下相容比對雜湊)
+ */
+function verifyExaminerPinSecret(pinOrHash, state) {
+  if (!pinOrHash || typeof pinOrHash !== 'string') return false;
+  const cfg = getSecurityConfig(state);
+  const clean = pinOrHash.trim();
+  if (/^[0-9a-fA-F]{64}$/.test(clean)) {
+    return clean.toLowerCase() === cfg.pinHash;
+  }
+  const computed = sha256Hex(`${cfg.pinSalt}:${clean}`).toLowerCase();
+  return computed === cfg.pinHash;
+}
+
+/**
+ * 驗證考官操作授權 (優先驗證伺服器端 Session Token；若為舊版傳入 PIN 雜湊亦受統一限流保護)
+ */
+function isExaminerRequestAuthorized(payload, state) {
+  if (!payload) return false;
+  if (payload.sessionToken && isExaminerSessionValid(payload.sessionToken)) {
+    return true;
+  }
+  // 相容備援：若帶有 authPin 或 authPinHash，必須先通過限流檢查
+  const secret = payload.authPin || payload.authPinHash;
+  if (secret) {
+    if (isAuthRateLimited()) return false;
+    if (verifyExaminerPinSecret(secret, state)) {
+      clearAuthFailures();
+      return true;
+    }
+    recordAuthFailure();
+  }
+  return false;
+}
+
+/**
+ * 管理員金鑰後端驗證 (讀取 Script Properties，不再將雜湊暴露於前端)
+ */
+function isAdminKeyValid(adminKey, state) {
   if (!adminKey || typeof adminKey !== 'string') return false;
-  return sha256Hex(`${ADMIN_KEY_SALT_GAS}:${adminKey.trim()}`) === ADMIN_KEY_HASH_GAS;
+  const cfg = getSecurityConfig(state);
+  const clean = adminKey.trim();
+  return sha256Hex(`${cfg.adminSalt}:${clean}`).toLowerCase() === cfg.adminHash;
+}
+
+/**
+ * 考生隨機測驗連結 Token 後端權威驗證
+ */
+function evaluateExamTokenStatus(activeExamToken, reqToken) {
+  const cleanReq = String(reqToken || '').trim();
+  if (!cleanReq) return 'none';
+  if (!activeExamToken || !activeExamToken.token) return 'not_generated';
+  if (String(activeExamToken.token).trim() !== cleanReq) return 'invalid';
+  if (Date.now() > Number(activeExamToken.expiresAt || 0)) return 'expired';
+  return 'valid';
 }
 
 /**
@@ -117,17 +255,18 @@ function doGet(e) {
     const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getExamState';
 
     if (action === 'ping') {
-      ensureSheetsInitialized();
+      const state = loadCloudState();
+      getSecurityConfig(state); // 確保 Script Properties 已自動初始化
       return jsonResponse({
         status: 'success',
         message: 'Google 試算表雲端測驗資料庫與自動寄信服務運作正常！',
         hasExamLibrarySupport: true,
-        version: '2026-11-11-v3-security-perf',
+        version: '2026-11-22-v4-security-hardened',
         timestamp: new Date().toISOString()
       });
     }
 
-    // 輕量化狀態輪詢 (只讀狀態工作表，不讀試卷庫，節省網路頻寬與 GAS 執行額度；支援隨機測驗 Token 權威校驗)
+    // 輕量化狀態輪詢 (只讀狀態工作表，不讀試卷庫，節省網路頻寬與 GAS 執行額度；支援隨機測驗 Token 權威校驗，絕不外洩 Token 本體)
     if (action === 'checkState') {
       const map = readStateMapLight();
       let isOpen = false;
@@ -142,93 +281,115 @@ function doGet(e) {
       } catch (err) {}
 
       const reqToken = String((e && e.parameter && e.parameter.token) || '').trim();
-      let tokenStatus = 'none';
-      if (reqToken) {
-        if (!activeExamToken || !activeExamToken.token) {
-          tokenStatus = 'not_generated';
-        } else if (String(activeExamToken.token).trim() !== reqToken) {
-          tokenStatus = 'invalid'; // 已被考官重新生成覆蓋
-        } else if (Date.now() > Number(activeExamToken.expiresAt || 0)) {
-          tokenStatus = 'expired'; // 超過 180 分鐘有效期限
-        } else {
-          tokenStatus = 'valid';
-        }
-      }
+      const tokenStatus = evaluateExamTokenStatus(activeExamToken, reqToken);
 
       return jsonResponse({
         status: 'success',
         isExamOpen: isOpen,
         tokenStatus: tokenStatus,
-        activeExamToken: activeExamToken,
+        tokenExpiresAt: (tokenStatus === 'valid' && activeExamToken) ? Number(activeExamToken.expiresAt || 0) : null,
         serverTime: Date.now(),
         updatedAt: map.UPDATED_AT || ''
       });
     }
 
-    // 開考前檢查 Email 是否已於本場次交卷 (僅回傳是否存在與交卷時間，不回傳任何成績內容)
+    // 開考前檢查 Email 是否已於本場次交卷 (M2 防枚舉與個資保護：必須持有有效之隨機測驗 Token 且試卷為開放狀態，並僅回傳布林值 exists，不外洩交卷時間)
     if (action === 'checkEmail') {
       const email = String((e.parameter && e.parameter.email) || '').trim().toLowerCase();
+      const reqToken = String((e.parameter && e.parameter.token) || '').trim();
       const map = readStateMapLight();
-      let found = null;
+      let isOpen = false;
+      let activeExamToken = null;
+      try {
+        const examStr = safeChunkRead(map, 'EXAM_DATA', '');
+        if (examStr) {
+          const parsed = JSON.parse(examStr);
+          isOpen = Boolean(parsed.isExamOpen);
+          activeExamToken = parsed.activeExamToken || null;
+        }
+      } catch (err) {}
+
+      if (!isOpen) {
+        return jsonResponse({
+          status: 'closed',
+          exists: false,
+          message: '目前非測驗開放時間'
+        });
+      }
+
+      if (activeExamToken && activeExamToken.token) {
+        const tokenStatus = evaluateExamTokenStatus(activeExamToken, reqToken);
+        if (tokenStatus !== 'valid') {
+          return jsonResponse({
+            status: 'token_invalid',
+            tokenStatus: tokenStatus,
+            message: '測驗連結憑證無效或已逾期'
+          });
+        }
+      }
+
+      let found = false;
       try {
         const subs = JSON.parse(safeChunkRead(map, 'SUBMISSIONS', '[]') || '[]');
         if (email) {
-          found = subs.find(s => s.studentEmail && String(s.studentEmail).trim().toLowerCase() === email) || null;
+          found = subs.some(s => s.studentEmail && String(s.studentEmail).trim().toLowerCase() === email);
         }
       } catch (err) {}
       return jsonResponse({
         status: 'success',
-        exists: Boolean(found),
-        submittedAt: found ? (found.submittedAt || '') : ''
+        exists: Boolean(found)
       });
     }
 
     if (action === 'getExamState') {
       const state = loadCloudState();
-      const token = (e && e.parameter && e.parameter.token) ? e.parameter.token : '';
-      const isAuth = isExaminerAuthorized(token, state);
+      // 考生端透過 GET 取得試卷狀態 (考官端已全面改走 POST getExamState + Session Token，不於 URL 暴露憑證)
+      const reqExamToken = String((e && e.parameter && e.parameter.examToken) || (e && e.parameter && e.parameter.token) || '').trim();
+      const activeTokenObj = (state.examData && state.examData.activeExamToken) ? state.examData.activeExamToken : null;
+      const isExamOpen = Boolean(state.examData && state.examData.isExamOpen);
+      const tokenStatus = evaluateExamTokenStatus(activeTokenObj, reqExamToken);
 
-      if (isAuth) {
-        // 考官端授權檢視：回傳完整題庫（含標準答案）、所有考生成績與歷史紀錄
-        return jsonResponse({
-          status: 'success',
-          isExaminer: true,
-          examData: state.examData,
-          submissions: state.submissions,
-          historySessions: state.historySessions,
-          examLibrary: state.examLibrary,
-          updatedAt: state.updatedAt
-        });
-      } else {
-        // 考生端安全模式：剔除標準答案 (q.answer)，且不外洩其他考生之姓名、Email 與成績紀錄
-        let sanitizedExamData = null;
-        if (state.examData) {
-          sanitizedExamData = Object.assign({}, state.examData);
-          if (Array.isArray(sanitizedExamData.questions)) {
-            sanitizedExamData.questions = sanitizedExamData.questions.map(q => {
-              const safeQ = Object.assign({}, q);
-              safeQ.isMultiple = Boolean(q.isMultiple) || normalizeAnswerStringGas(q.answer).length >= 2;
-              delete safeQ.answer; // 刪除正解欄位，防範考生查看 Network/F12 窺探答案
-              return safeQ;
-            });
-          }
+      // 後端權威把關：考生必須持有有效之隨機測驗 Token，且試卷處於開放作答期間，才下發試卷題目
+      const canReceiveQuestions = isExamOpen && tokenStatus === 'valid';
+
+      let sanitizedExamData = null;
+      if (state.examData) {
+        sanitizedExamData = {
+          id: state.examData.id || 'exam_default',
+          title: state.examData.title || '',
+          durationMinutes: state.examData.durationMinutes,
+          examDate: state.examData.examDate || '',
+          isExamOpen: isExamOpen,
+          openedAt: state.examData.openedAt || null,
+          // 絕不向未授權之考生端暴露 activeExamToken.token 本體
+          questions: []
+        };
+        if (canReceiveQuestions && Array.isArray(state.examData.questions)) {
+          sanitizedExamData.questions = state.examData.questions.map(q => {
+            const safeQ = Object.assign({}, q);
+            safeQ.isMultiple = Boolean(q.isMultiple) || normalizeAnswerStringGas(q.answer).length >= 2;
+            delete safeQ.answer; // 刪除正解欄位，防範考生查看 Network/F12 窺探答案
+            return safeQ;
+          });
         }
-        return jsonResponse({
-          status: 'success',
-          isExaminer: false,
-          examData: sanitizedExamData,
-          submissionsCount: (state.submissions || []).length,
-          submissions: null, // 隱匿所有已交卷考生成績與個資 (設為 null 避免覆蓋本機快取)
-          historySessions: null,
-          examLibrary: null,
-          updatedAt: state.updatedAt
-        });
       }
+      return jsonResponse({
+        status: 'success',
+        isExaminer: false,
+        tokenStatus: tokenStatus,
+        examData: sanitizedExamData,
+        submissionsCount: (state.submissions || []).length,
+        submissions: null, // 隱匿所有已交卷考生成績與個資
+        historySessions: null,
+        examLibrary: null,
+        updatedAt: state.updatedAt
+      });
     }
 
-    return jsonResponse({ status: 'error', message: '未知的 GET action: ' + action });
+    return jsonResponse({ status: 'error', message: '未知的 GET action' });
   } catch (err) {
-    return jsonResponse({ status: 'error', message: err.toString() });
+    console.error('doGet Exception:', err);
+    return jsonResponse({ status: 'error', message: '雲端伺服器處理請求時發生錯誤，請稍後再試' });
   }
 }
 
@@ -250,48 +411,174 @@ function doPost(e) {
 
     const state = loadCloudState();
 
-    // 考官 PIN 驗證 (登入時向雲端核對，支援多裝置一致；含失敗次數限流防暴力破解)
+    // 考官 PIN 驗證：核對成功後簽發伺服器端隨機高熵 Session Token (含統一失敗次數限流防暴力破解)
     if (action === 'verifyExaminer') {
-      const cache = CacheService.getScriptCache();
-      const failCount = Number(cache.get('PIN_FAIL_COUNT') || 0);
-      if (failCount >= 10) {
+      if (isAuthRateLimited()) {
+        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+      }
+      const secret = payload.pin || payload.authPin || payload.authPinHash || '';
+      if (verifyExaminerPinSecret(secret, state)) {
+        clearAuthFailures();
+        const sessionToken = createExaminerSession();
+        return jsonResponse({
+          status: 'success',
+          sessionToken: sessionToken,
+          expiresInSeconds: EXAMINER_SESSION_TTL_SEC
+        });
+      }
+      const fails = recordAuthFailure();
+      if (fails >= AUTH_MAX_FAILS) {
         return jsonResponse({ status: 'locked', message: 'PIN 碼錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
       }
-      if (isExaminerAuthorized(payload.authPinHash, state)) {
-        cache.remove('PIN_FAIL_COUNT');
-        return jsonResponse({ status: 'success' });
-      }
-      cache.put('PIN_FAIL_COUNT', String(failCount + 1), 300);
       return jsonResponse({ status: 'unauthorized', message: 'PIN 碼錯誤' });
     }
 
-    // 變更 / 重設考官 PIN (需目前 PIN 雜湊或管理員金鑰其一驗證)
-    if (action === 'updateExaminerPin') {
-      const newHash = String(payload.newPinHash || '').trim().toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(newHash)) {
-        return jsonResponse({ status: 'error', message: '新 PIN 雜湊格式不正確' });
+    // 考官登出：立即銷毀伺服器端 Session Token
+    if (action === 'logoutExaminer') {
+      if (payload.sessionToken) {
+        revokeExaminerSession(payload.sessionToken);
       }
-      const byPin = isExaminerAuthorized(payload.authPinHash, state);
-      const byAdmin = isAdminKeyValid(payload.adminKey);
-      if (!byPin && !byAdmin) {
-        return jsonResponse({ status: 'unauthorized', message: '管理員金鑰或目前 PIN 驗證失敗' });
-      }
-      state.examinerPinHash = newHash;
-      saveCloudState(state);
-      return jsonResponse({ status: 'success', message: '雲端考官 PIN 已更新' });
+      return jsonResponse({ status: 'success', message: '已安全登出並撤銷雲端工作階段' });
     }
 
-    // 檢查考官權限 (除了考生交卷 submitExam 以外，所有後台管理操作均需驗證考官 PIN 雜湊)
+    // 變更 / 重設考官 PIN (統一於後端驗證管理員金鑰並寫入 Script Properties，含統一限流防暴力破解)
+    if (action === 'updateExaminerPin') {
+      if (isAuthRateLimited()) {
+        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+      }
+
+      const byAdmin = isAdminKeyValid(payload.adminKey, state);
+      if (!byAdmin) {
+        const fails = recordAuthFailure();
+        if (fails >= AUTH_MAX_FAILS) {
+          return jsonResponse({ status: 'locked', message: '管理員金鑰錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+        }
+        return jsonResponse({ status: 'unauthorized', message: '管理員金鑰驗證失敗！無法變更或重設考官 PIN 碼。' });
+      }
+
+      const cfg = getSecurityConfig(state);
+      let newHash = '';
+      if (payload.resetToDefault) {
+        newHash = sha256Hex(`${cfg.pinSalt}:9999`).toLowerCase();
+      } else if (payload.newPin) {
+        const cleanNewPin = String(payload.newPin).trim();
+        if (!/^\d{4,12}$/.test(cleanNewPin)) {
+          return jsonResponse({ status: 'error', message: '新 PIN 碼格式不符（須為 4 至 12 碼半形數字）' });
+        }
+        newHash = sha256Hex(`${cfg.pinSalt}:${cleanNewPin}`).toLowerCase();
+      } else if (payload.newPinHash) {
+        const candidateHash = String(payload.newPinHash).trim().toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(candidateHash)) {
+          return jsonResponse({ status: 'error', message: '新 PIN 雜湊格式不正確' });
+        }
+        newHash = candidateHash;
+      } else {
+        return jsonResponse({ status: 'error', message: '缺少新 PIN 碼資料' });
+      }
+
+      clearAuthFailures();
+      PropertiesService.getScriptProperties().setProperty('EXAMINER_PIN_HASH', newHash);
+      // 清除舊版殘留於試算表儲存格的雜湊，集中由 Script Properties 保管
+      if (state.examinerPinHash) {
+        state.examinerPinHash = '';
+        saveCloudState(state);
+      } else {
+        const { stateSheet } = ensureSheetsInitialized();
+        touchUpdatedAt(stateSheet);
+      }
+
+      const sessionToken = createExaminerSession();
+      return jsonResponse({
+        status: 'success',
+        message: '雲端考官 PIN 已安全更新至 Script Properties',
+        sessionToken: sessionToken
+      });
+    }
+
+    // 考官授權檢視或考生透過 POST 讀取試卷狀態 (憑證不暴露於 URL Query String)
+    if (action === 'getExamState') {
+      if (isAuthRateLimited() && (payload.authPin || payload.authPinHash)) {
+        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+      }
+      const isAuth = isExaminerRequestAuthorized(payload, state);
+      if (isAuth) {
+        return jsonResponse({
+          status: 'success',
+          isExaminer: true,
+          examData: state.examData,
+          submissions: state.submissions,
+          historySessions: state.historySessions,
+          examLibrary: state.examLibrary,
+          updatedAt: state.updatedAt
+        });
+      }
+
+      // 若原本嘗試以考官身分請求但 Session 已過期或無效，明確回傳 session_expired 供前端引導重新登入
+      if (payload.sessionToken || payload.authPin || payload.authPinHash) {
+        return jsonResponse({
+          status: 'unauthorized',
+          isExaminer: false,
+          message: '考官登入工作階段已逾時或失效，請重新輸入 PIN 碼登入'
+        });
+      }
+
+      // 考生端模式：必須驗證隨機測驗 Token 與試卷開放狀態
+      const reqExamToken = String(payload.examToken || '').trim();
+      const activeTokenObj = (state.examData && state.examData.activeExamToken) ? state.examData.activeExamToken : null;
+      const isExamOpen = Boolean(state.examData && state.examData.isExamOpen);
+      const tokenStatus = evaluateExamTokenStatus(activeTokenObj, reqExamToken);
+      const canReceiveQuestions = isExamOpen && tokenStatus === 'valid';
+
+      let sanitizedExamData = null;
+      if (state.examData) {
+        sanitizedExamData = {
+          id: state.examData.id || 'exam_default',
+          title: state.examData.title || '',
+          durationMinutes: state.examData.durationMinutes,
+          examDate: state.examData.examDate || '',
+          isExamOpen: isExamOpen,
+          openedAt: state.examData.openedAt || null,
+          questions: []
+        };
+        if (canReceiveQuestions && Array.isArray(state.examData.questions)) {
+          sanitizedExamData.questions = state.examData.questions.map(q => {
+            const safeQ = Object.assign({}, q);
+            safeQ.isMultiple = Boolean(q.isMultiple) || normalizeAnswerStringGas(q.answer).length >= 2;
+            delete safeQ.answer;
+            return safeQ;
+          });
+        }
+      }
+      return jsonResponse({
+        status: 'success',
+        isExaminer: false,
+        tokenStatus: tokenStatus,
+        examData: sanitizedExamData,
+        submissionsCount: (state.submissions || []).length,
+        submissions: null,
+        historySessions: null,
+        examLibrary: null,
+        updatedAt: state.updatedAt
+      });
+    }
+
+    // 檢查考官權限 (除了考生交卷 submitExam 以外，所有後台管理操作均需驗證考官 Session Token，並受統一限流保護)
     const examinerActions = [
       'saveExamData', 'saveExamLibrary', 'syncSubmissions',
       'archiveSession', 'syncHistory', 'sendScoreEmails', 'uploadQuestionImage'
     ];
 
     if (examinerActions.indexOf(action) !== -1) {
-      if (!isExaminerAuthorized(payload.authPinHash, state)) {
+      if (isAuthRateLimited()) {
+        return jsonResponse({
+          status: 'locked',
+          message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘'
+        });
+      }
+      if (!isExaminerRequestAuthorized(payload, state)) {
         return jsonResponse({
           status: 'unauthorized',
-          message: '未經授權的考官操作，請確認考官 PIN 碼！'
+          message: '未經授權的考官操作或登入工作階段已逾時，請重新登入考官端！'
         });
       }
     }
@@ -299,6 +586,16 @@ function doPost(e) {
     // 1. 考官儲存題庫與試卷設定
     if (action === 'saveExamData') {
       if (payload.examData) {
+        // 若試卷由開放切換為關閉狀態，由伺服器端記錄剛關閉之時間戳 closedAt，供 3 分鐘強制收卷寬限期判定 (H1)
+        const wasOpen = Boolean(state.examData && state.examData.isExamOpen);
+        const nowOpen = Boolean(payload.examData.isExamOpen);
+        if (!nowOpen && wasOpen) {
+          payload.examData.closedAt = Date.now();
+        } else if (!nowOpen && state.examData && state.examData.closedAt && !payload.examData.closedAt) {
+          payload.examData.closedAt = state.examData.closedAt;
+        } else if (nowOpen) {
+          payload.examData.closedAt = null;
+        }
         state.examData = payload.examData;
       }
       if (Array.isArray(payload.examLibrary)) {
@@ -332,16 +629,71 @@ function doPost(e) {
       });
     }
 
-    // 2. 考生提交試卷 (多人併發安全追加 + 後端客觀權威評分)
+    // 2. 考生提交試卷 (H1 安全加固：白名單欄位與長度限制、伺服器端生成 ID/時間戳、開考狀態與關閉寬限期權威校驗、後端客觀評分)
     if (action === 'submitExam') {
-      const record = payload.record;
-      if (!record || !record.studentEmail) {
-        return jsonResponse({ status: 'error', message: '缺少考生作答資料或電子郵件' });
+      const rawRecord = payload.record;
+      if (!rawRecord || typeof rawRecord !== 'object') {
+        return jsonResponse({ status: 'error', message: '缺少考生作答資料' });
+      }
+
+      const cleanEmail = String(rawRecord.studentEmail || '').trim().substring(0, 120);
+      const cleanName = String(rawRecord.studentName || '').trim().substring(0, 60);
+      const cleanStudentId = String(rawRecord.studentId || '').trim().substring(0, 40);
+
+      if (!cleanName || !cleanEmail) {
+        return jsonResponse({ status: 'error', message: '缺少考生姓名或電子郵件' });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return jsonResponse({ status: 'error', message: '電子郵件格式不正確' });
+      }
+
+      // 交卷狀態僅允許已知合法列舉值，不信任任意長字串
+      const ALLOWED_STATUSES = [
+        '正常交卷',
+        '時間到自動交卷',
+        '測驗結束強制交卷',
+        '防作弊強制終止 (離開畫面達3次)'
+      ];
+      const rawStatus = String(rawRecord.status || '正常交卷').trim();
+      const safeStatus = ALLOWED_STATUSES.indexOf(rawStatus) !== -1 ? rawStatus : '正常交卷';
+      const isForcedSubmission = safeStatus !== '正常交卷';
+
+      // 伺服器端權威判定試卷是否開放，或是否處於考官剛關閉試卷的 3 分鐘自動收卷寬限期內（不單純依賴客戶端傳來的 status 字串）
+      const isExamOpen = Boolean(state.examData && state.examData.isExamOpen);
+      const closedAt = Number((state.examData && state.examData.closedAt) || 0);
+      const withinCloseGracePeriod = !isExamOpen && closedAt > 0 && (Date.now() - closedAt <= 180000);
+
+      if (!isExamOpen && !(isForcedSubmission && withinCloseGracePeriod)) {
+        return jsonResponse({
+          status: 'closed',
+          message: '考官已結束本次測驗作答，已停止接收交卷！'
+        });
+      }
+
+      // 後端驗證考生隨機測驗連結 Token (若系統已啟用 activeExamToken，必須持有相符之 Token 始得交卷)
+      const activeTokenObj = (state.examData && state.examData.activeExamToken) ? state.examData.activeExamToken : null;
+      const reqExamToken = String(payload.examToken || rawRecord.examToken || '').trim();
+      if (activeTokenObj && activeTokenObj.token) {
+        const tokenStatus = evaluateExamTokenStatus(activeTokenObj, reqExamToken);
+        if (tokenStatus === 'none' || tokenStatus === 'invalid') {
+          return jsonResponse({
+            status: 'token_invalid',
+            message: '無效的測驗連結憑證，系統拒絕接收交卷！'
+          });
+        }
+        const tokenExpiredAt = Number(activeTokenObj.expiresAt || 0);
+        const withinTokenGrace = tokenStatus === 'expired' && isForcedSubmission && (Date.now() - tokenExpiredAt <= 180000);
+        if (tokenStatus === 'expired' && !withinTokenGrace) {
+          return jsonResponse({
+            status: 'token_expired',
+            message: '此測驗連結已超過有效期限，已停止接收交卷！'
+          });
+        }
       }
 
       // 檢查當前場次是否已有相同電子郵件 (Email) (不區分大小寫)
       const existsIdx = state.submissions.findIndex(
-        s => s.studentEmail && String(s.studentEmail).trim().toLowerCase() === String(record.studentEmail).trim().toLowerCase()
+        s => s.studentEmail && String(s.studentEmail).trim().toLowerCase() === cleanEmail.toLowerCase()
       );
       if (existsIdx !== -1) {
         // 不回傳既有紀錄內容，避免外洩他人作答與標準答案
@@ -351,31 +703,24 @@ function doPost(e) {
         });
       }
 
-      // 測驗若已被考官結束作答，檢查交卷原因：僅接受考官結束測驗強制交卷、倒數結束交卷或防作弊強制交卷，阻絕過期的一般交卷
-      const isExamOpen = state.examData && Boolean(state.examData.isExamOpen);
-      if (!isExamOpen) {
-        const statusText = String(record.status || '');
-        const isForcedSubmission = statusText.includes('強制') || statusText.includes('考官結束') || statusText.includes('自動交卷');
-        if (!isForcedSubmission) {
-          return jsonResponse({
-            status: 'closed',
-            message: '考官已結束本次測驗作答，已停止接收交卷！'
-          });
-        }
-      }
-
       // 後端依真實題庫客觀精準評分，徹底防範前端洩漏題目答案或遭竄改成績
       const examQuestions = (state.examData && Array.isArray(state.examData.questions)) ? state.examData.questions : [];
       const totalQ = examQuestions.length;
       let correctCount = 0;
+      let answeredCount = 0;
       const gradedAnswerDetails = {};
-      const studentAnswers = record.answers || {};
+      const cleanAnswersMap = {};
+      const studentAnswers = (rawRecord.answers && typeof rawRecord.answers === 'object') ? rawRecord.answers : {};
 
       examQuestions.forEach(q => {
         const selected = (studentAnswers[q.id] !== undefined)
           ? studentAnswers[q.id]
-          : (record.answerDetails && record.answerDetails[q.id] ? record.answerDetails[q.id].selected : '');
+          : (rawRecord.answerDetails && rawRecord.answerDetails[q.id] ? rawRecord.answerDetails[q.id].selected : '');
         const cleanSelected = (selected === '未作答' || !selected) ? '' : normalizeAnswerStringGas(selected);
+        if (cleanSelected) {
+          answeredCount++;
+          cleanAnswersMap[q.id] = cleanSelected;
+        }
         const cleanCorrect = normalizeAnswerStringGas(q.answer);
         const isCorrect = evaluateQuestionCorrectnessGas(q, cleanSelected);
         if (isCorrect) correctCount++;
@@ -386,21 +731,56 @@ function doPost(e) {
         };
       });
 
-      const rawScore = totalQ > 0 ? (correctCount / totalQ) * 100 : 0;
-      record.score = Number(rawScore.toFixed(1));
-      record.correctCount = correctCount;
-      record.totalQuestions = totalQ;
-      record.answerDetails = gradedAnswerDetails;
+      // 驗證與正規化作答耗時（限制於 1 秒至考卷時限 + 寬限時間內）
+      const maxAllowedSec = Math.max(60, (Number((state.examData && state.examData.durationMinutes) || 60) * 60) + 300);
+      let timeSpentSec = Math.round(Number(rawRecord.timeSpentSeconds) || 1);
+      if (timeSpentSec < 1) timeSpentSec = 1;
+      if (timeSpentSec > maxAllowedSec) timeSpentSec = maxAllowedSec;
+      const mins = Math.floor(timeSpentSec / 60);
+      const secs = timeSpentSec % 60;
+      const serverTimeSpentFormatted = `${mins} 分 ${secs} 秒`;
 
-      state.submissions.unshift(record);
+      let safeWarnCount = Math.floor(Number(rawRecord.warningCount) || 0);
+      if (safeWarnCount < 0) safeWarnCount = 0;
+      if (safeWarnCount > 99) safeWarnCount = 99;
+
+      const rawScore = totalQ > 0 ? (correctCount / totalQ) * 100 : 0;
+      const serverNowStr = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
+      const serverSubId = 'SUB_' + Utilities.getUuid().replace(/-/g, '').substring(0, 12);
+
+      // 僅以白名單欄位建構純淨交卷紀錄，拒絕客戶端注入任意未知屬性
+      const sanitizedRecord = {
+        id: serverSubId,
+        examTitle: String((state.examData && state.examData.title) || rawRecord.examTitle || '未命名測驗').substring(0, 120),
+        examDate: String((state.examData && state.examData.examDate) || rawRecord.examDate || '').substring(0, 20),
+        studentName: cleanName,
+        studentId: cleanStudentId,
+        studentEmail: cleanEmail,
+        score: Number(rawScore.toFixed(1)),
+        correctCount: correctCount,
+        totalQuestions: totalQ,
+        answeredCount: answeredCount,
+        warningCount: safeWarnCount,
+        status: safeStatus,
+        timeSpentSeconds: timeSpentSec,
+        timeSpentFormatted: serverTimeSpentFormatted,
+        submittedAt: serverNowStr,
+        emailSentAt: '',
+        answers: cleanAnswersMap,
+        answerDetails: gradedAnswerDetails
+      };
+
+      state.submissions.unshift(sanitizedRecord);
       saveCloudState(state);
       // 效能優化：使用 appendRow 追加，不再全量清空整張工作表重寫
-      appendSubmissionToScoresSheet(state.examData, record);
+      appendSubmissionToScoresSheet(state.examData, sanitizedRecord);
 
       // 不回傳評分後的 record (內含標準答案)，避免交卷後考生取得答案外流給其他考生
       return jsonResponse({
         status: 'success',
         message: '交卷成功並已寫入雲端資料庫',
+        submissionId: serverSubId,
+        submittedAt: serverNowStr,
         submissionsCount: state.submissions.length
       });
     }
@@ -475,14 +855,35 @@ function doPost(e) {
       });
     }
 
-    // 6. 寄送考生成績單 Email (支援單筆或批次寄送)
+    // 6. 寄送考生成績單 Email (H3 安全加固：僅允許寄發予伺服器端 state 既有的真實考生紀錄、強制由伺服器端組建 HTML 信件、拒絕客戶端 customHtmlBody、限制單次最多 100 封)
     if (action === 'sendScoreEmails') {
-      const recipients = Array.isArray(payload.recipients) ? payload.recipients : [];
-      const examInfo = payload.examData || state.examData || {};
+      const rawRecipients = Array.isArray(payload.recipients) ? payload.recipients : [];
       const sessionId = payload.sessionId || 'CURRENT';
+      const MAX_BATCH_EMAILS = 100;
 
-      if (recipients.length === 0) {
+      if (rawRecipients.length === 0) {
         return jsonResponse({ status: 'error', message: '沒有可寄送的考生 Email 名單' });
+      }
+      if (rawRecipients.length > MAX_BATCH_EMAILS) {
+        return jsonResponse({ status: 'error', message: `單次寄送數量超過上限（最多 ${MAX_BATCH_EMAILS} 封），請分批寄送` });
+      }
+
+      // 鎖定伺服器端真實場次與交卷紀錄清單
+      let authoritativeList = [];
+      let examInfo = state.examData || {};
+      if (sessionId === 'CURRENT') {
+        authoritativeList = Array.isArray(state.submissions) ? state.submissions : [];
+      } else {
+        const targetHist = (state.historySessions || []).find(h => h && h.id === sessionId);
+        if (!targetHist) {
+          return jsonResponse({ status: 'error', message: '找不到指定的歷史測驗場次紀錄' });
+        }
+        authoritativeList = Array.isArray(targetHist.submissions) ? targetHist.submissions : [];
+        examInfo = {
+          title: targetHist.examTitle || targetHist.sessionTitle || examInfo.title || '線上筆試測驗',
+          examDate: targetHist.examDate || examInfo.examDate || '-',
+          questions: Array.isArray(targetHist.questionsSnapshot) ? targetHist.questionsSnapshot : (examInfo.questions || [])
+        };
       }
 
       let sentCount = 0;
@@ -490,45 +891,42 @@ function doPost(e) {
       const errors = [];
       const nowStr = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
 
-      recipients.forEach(sub => {
-        if (!sub.studentEmail || !String(sub.studentEmail).includes('@')) {
+      rawRecipients.forEach(reqSub => {
+        if (!reqSub || !reqSub.id) return;
+        // 強制比對伺服器端真實交卷紀錄 ID，防止偽造收件人或釣魚信濫用
+        const authSub = authoritativeList.find(s => s && s.id === reqSub.id);
+        if (!authSub) {
+          errors.push(`找不到交卷紀錄 (${String(reqSub.id).substring(0, 24)})，請先將成績同步至雲端後再寄信`);
+          return;
+        }
+        const targetEmail = String(authSub.studentEmail || '').trim();
+        if (!targetEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+          errors.push(`${authSub.studentName || '考生'}：缺少有效的電子郵件信箱`);
           return;
         }
         try {
-          const subject = `【測驗成績通知】${sub.examTitle || examInfo.title || '線上筆試測驗'} - ${sub.studentName}${sub.studentId ? ` (${sub.studentId})` : ''}`;
-          const htmlBody = buildScoreEmailHtml(sub, examInfo, state);
+          const subject = `【測驗成績通知】${authSub.examTitle || examInfo.title || '線上筆試測驗'} - ${authSub.studentName}${authSub.studentId ? ` (${authSub.studentId})` : ''}`;
+          const htmlBody = buildScoreEmailHtml(authSub, examInfo, state);
 
           MailApp.sendEmail({
-            to: String(sub.studentEmail).trim(),
+            to: targetEmail,
             subject: subject,
             htmlBody: htmlBody
           });
 
+          authSub.emailSentAt = nowStr;
           sentCount++;
-          sentIds.push(sub.id);
+          sentIds.push(authSub.id);
         } catch (mailErr) {
-          errors.push(`${sub.studentName} (${sub.studentEmail}): ${mailErr.toString()}`);
+          console.error('MailApp.sendEmail error:', mailErr);
+          errors.push(`${authSub.studentName} (${targetEmail}): 郵件發送失敗`);
         }
       });
 
       // 更新雲端狀態中的 emailSentAt 標記
       if (sentIds.length > 0) {
         if (sessionId === 'CURRENT') {
-          state.submissions.forEach(s => {
-            if (sentIds.indexOf(s.id) !== -1) {
-              s.emailSentAt = nowStr;
-            }
-          });
           syncCurrentScoresSheet(state.examData, state.submissions);
-        } else {
-          const targetHist = state.historySessions.find(h => h.id === sessionId);
-          if (targetHist && Array.isArray(targetHist.submissions)) {
-            targetHist.submissions.forEach(s => {
-              if (sentIds.indexOf(s.id) !== -1) {
-                s.emailSentAt = nowStr;
-              }
-            });
-          }
         }
         saveCloudState(state);
       }
@@ -543,29 +941,68 @@ function doPost(e) {
       });
     }
 
-    // 7. 考題圖片上傳至 Google 雲端硬碟指定資料夾
+    // 7. 考題圖片上傳至 Google 雲端硬碟指定資料夾 (M1 安全加固：嚴格驗證圖片 MIME 類型、副檔名白名單與檔案魔術位元組 Magic Bytes)
     if (action === 'uploadQuestionImage') {
-      const base64Data = payload.base64Data || '';
-      const mimeType = payload.mimeType || 'image/png';
-      const originalFileName = payload.fileName || `question_img_${Date.now()}.png`;
+      const base64Data = String(payload.base64Data || '').trim();
+      const rawMimeType = String(payload.mimeType || 'image/png').trim().toLowerCase();
 
       if (!base64Data) {
         return jsonResponse({ status: 'error', message: '未收到圖片檔案資料' });
       }
 
+      // 僅允許安全點陣圖格式 (PNG, JPEG, GIF, WEBP)，阻絕 SVG / HTML / 腳本檔案上傳以防範 Stored XSS
+      const ALLOWED_IMAGE_MIMES = {
+        'image/png': 'png',
+        'image/jpeg': 'jpg',
+        'image/jpg': 'jpg',
+        'image/gif': 'gif',
+        'image/webp': 'webp'
+      };
+      if (!ALLOWED_IMAGE_MIMES[rawMimeType]) {
+        return jsonResponse({
+          status: 'error',
+          message: '不支援的圖片格式！僅允許上傳 PNG、JPG、GIF 或 WEBP 圖片檔'
+        });
+      }
+
       try {
+        const decoded = Utilities.base64Decode(base64Data);
+        if (!decoded || decoded.length < 12) {
+          return jsonResponse({ status: 'error', message: '圖片檔案內容無效或損毀' });
+        }
+
+        // 檢查檔案開頭 Magic Bytes，確保真實內容為合法的點陣圖檔
+        const b0 = decoded[0] & 0xff;
+        const b1 = decoded[1] & 0xff;
+        const b2 = decoded[2] & 0xff;
+        const b3 = decoded[3] & 0xff;
+        const isPng = (b0 === 0x89 && b1 === 0x50 && b2 === 0x4e && b3 === 0x47);
+        const isJpg = (b0 === 0xff && b1 === 0xd8 && b2 === 0xff);
+        const isGif = (b0 === 0x47 && b1 === 0x49 && b2 === 0x46 && b3 === 0x38);
+        const isWebp = (b0 === 0x52 && b1 === 0x49 && b2 === 0x46 && b3 === 0x46 &&
+                        (decoded[8] & 0xff) === 0x57 && (decoded[9] & 0xff) === 0x45 &&
+                        (decoded[10] & 0xff) === 0x42 && (decoded[11] & 0xff) === 0x50);
+
+        if (!isPng && !isJpg && !isGif && !isWebp) {
+          return jsonResponse({
+            status: 'error',
+            message: '檔案內容驗證失敗：非有效的 PNG、JPG、GIF 或 WEBP 影像格式'
+          });
+        }
+
+        const detectedExt = isPng ? 'png' : (isJpg ? 'jpg' : (isGif ? 'gif' : 'webp'));
+        const canonicalMime = isPng ? 'image/png' : (isJpg ? 'image/jpeg' : (isGif ? 'image/gif' : 'image/webp'));
+
         let folder;
-        if (EXAM_IMAGE_FOLDER_ID) {
-          folder = DriveApp.getFolderById(EXAM_IMAGE_FOLDER_ID);
+        const folderId = getExamImageFolderId();
+        if (folderId) {
+          folder = DriveApp.getFolderById(folderId);
         } else {
           folder = DriveApp.getRootFolder();
         }
 
-        const decoded = Utilities.base64Decode(base64Data);
-        const extMatch = originalFileName.match(/\.([a-zA-Z0-9]+)$/);
-        const ext = extMatch ? extMatch[1] : 'png';
-        const safeName = `exam_q_${Date.now()}_${Math.floor(Math.random()*1000)}.${ext}`;
-        const blob = Utilities.newBlob(decoded, mimeType, safeName);
+        const safeName = `exam_q_${Date.now()}_${Math.floor(Math.random() * 1000)}.${detectedExt}`;
+        const blob = Utilities.newBlob(decoded, canonicalMime, safeName);
         const file = folder.createFile(blob);
 
         // 設定檢視權限為知道連結者皆可檢視
@@ -588,33 +1025,30 @@ function doPost(e) {
           message: '圖片已成功上傳至 Google 雲端硬碟！'
         });
       } catch (uploadErr) {
+        console.error('uploadQuestionImage Exception:', uploadErr);
         return jsonResponse({
           status: 'error',
-          message: '上傳圖片至雲端硬碟失敗: ' + uploadErr.toString()
+          message: '上傳圖片至雲端硬碟失敗，請確認已執行 testDriveAuthorization 完成雲端硬碟授權'
         });
       }
     }
 
-    return jsonResponse({ status: 'error', message: '未知的 POST action: ' + action });
+    return jsonResponse({ status: 'error', message: '未知的 POST action' });
   } catch (err) {
-    return jsonResponse({ status: 'error', message: err.toString() });
+    console.error('doPost Exception:', err);
+    return jsonResponse({ status: 'error', message: '雲端伺服器處理請求時發生錯誤，請稍後再試' });
   } finally {
     lock.releaseLock();
   }
 }
 
 /**
- * 建立考生成績通知 HTML 信件內容 (含個人成績摘要與 5 欄式考生作答對錯明細，不含考題與標準答案)
+ * 建立考生成績通知 HTML 信件內容 (完全由伺服器端根據真實交卷紀錄與題庫順序組建，不含考題與標準答案)
  */
 function extractStudentAnswersForGasEmail(sub, examInfo, state) {
-  if (Array.isArray(sub.studentAnswers) && sub.studentAnswers.length > 0) {
-    return sub.studentAnswers;
-  }
-
-  // 若前端未直接傳入 studentAnswers，可從 sub.answerDetails 或雲端資料庫中的交卷紀錄提取
-  let details = sub.answerDetails || null;
+  let details = (sub && sub.answerDetails) ? sub.answerDetails : null;
   if (!details && state && Array.isArray(state.submissions)) {
-    const found = state.submissions.find(s => s.id === sub.id);
+    const found = state.submissions.find(s => s && s.id === sub.id);
     if (found && found.answerDetails) {
       details = found.answerDetails;
     }
@@ -623,7 +1057,7 @@ function extractStudentAnswersForGasEmail(sub, examInfo, state) {
     for (let i = 0; i < state.historySessions.length; i++) {
       const h = state.historySessions[i];
       if (h && Array.isArray(h.submissions)) {
-        const found = h.submissions.find(s => s.id === sub.id);
+        const found = h.submissions.find(s => s && s.id === sub.id);
         if (found && found.answerDetails) {
           details = found.answerDetails;
           break;
@@ -634,14 +1068,29 @@ function extractStudentAnswersForGasEmail(sub, examInfo, state) {
 
   if (!details) return [];
 
+  const questions = (examInfo && Array.isArray(examInfo.questions) && examInfo.questions.length > 0)
+    ? examInfo.questions
+    : (state && state.examData && Array.isArray(state.examData.questions) ? state.examData.questions : []);
+
   const list = [];
-  const total = Number(sub.totalQuestions) || Object.keys(details).length;
-  for (let i = 1; i <= total; i++) {
-    const d = details[i];
-    list.push({
-      qNum: i,
-      selected: d && d.selected ? String(d.selected) : '-',
-      isCorrect: Boolean(d && d.isCorrect)
+  if (questions.length > 0) {
+    questions.forEach((q, idx) => {
+      const d = details[q.id] !== undefined ? details[q.id] : details[idx + 1];
+      list.push({
+        qNum: idx + 1,
+        selected: d && d.selected ? String(d.selected) : '-',
+        isCorrect: Boolean(d && d.isCorrect)
+      });
+    });
+  } else {
+    const keys = Object.keys(details);
+    keys.forEach((k, idx) => {
+      const d = details[k];
+      list.push({
+        qNum: idx + 1,
+        selected: d && d.selected ? String(d.selected) : '-',
+        isCorrect: Boolean(d && d.isCorrect)
+      });
     });
   }
   return list;
@@ -702,10 +1151,7 @@ function buildStudentAnswerGridGasHtml(studentAnswers) {
 }
 
 function buildScoreEmailHtml(sub, examInfo, state) {
-  if (sub && sub.customHtmlBody) {
-    return sub.customHtmlBody;
-  }
-
+  // H3 安全加固：強制由伺服器端組建 HTML 成績通知信，不再接受客戶端傳入的 sub.customHtmlBody，防範任意 HTML 釣魚信注入
   const scoreColor = Number(sub.score) >= 60 ? '#007979' : '#dc2626';
   const passBadge = Number(sub.score) >= 60 ? '及格' : '未達及格標準 (60分)';
   const examDateStr = sub.examDate || (examInfo && examInfo.examDate) || '-';
@@ -855,13 +1301,13 @@ function syncExamLibrarySheet(librarySheet, examLibrary) {
     }
 
     rows.push([
-      exam.id || '',
-      exam.title || '未命名試卷',
-      examDateStr,
+      sanitizeSheetCellGas(exam.id || ''),
+      sanitizeSheetCellGas(exam.title || '未命名試卷'),
+      sanitizeSheetCellGas(examDateStr),
       exam.durationMinutes !== '' ? exam.durationMinutes : 60,
       Array.isArray(exam.questions) ? exam.questions.length : 0,
-      exam.updatedAt || new Date().toISOString(),
-      questionsJson
+      sanitizeSheetCellGas(exam.updatedAt || new Date().toISOString()),
+      sanitizeSheetCellGas(questionsJson)
     ]);
   });
 
@@ -1015,6 +1461,20 @@ function saveCloudState(state) {
 }
 
 /**
+ * 試算表公式注入防護 (H2 CSV / Formula Injection Protection)：
+ * 若文字欄位開頭為 =、+、-、@、Tab (\t) 或換行 (\r, \n)，自動加上單引號 (') 前綴，防止在 Google Sheets 或匯出 Excel 時被當成公式執行
+ */
+function sanitizeSheetCellGas(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'number' || typeof val === 'boolean') return val;
+  const str = String(val);
+  if (/^[=+\-@\t\r\n]/.test(str)) {
+    return "'" + str;
+  }
+  return str;
+}
+
+/**
  * 考生交卷時快速追加單筆成績 (appendRow)，不再清除全表重寫，提升 10 倍以上寫入效率
  */
 function appendSubmissionToScoresSheet(examData, sub) {
@@ -1026,7 +1486,7 @@ function appendSubmissionToScoresSheet(examData, sub) {
     '編號', '考生姓名', '電子郵件 (Email)', '總分', '答對題數', '總題數', '作答耗時', '防作弊警告', '交卷狀態', '交卷時間', '成績信寄送時間'
   ];
   questions.forEach((q, idx) => {
-    headers.push(`第${idx + 1}題(正解:${q.answer})`);
+    headers.push(sanitizeSheetCellGas(`第${idx + 1}題(正解:${q.answer})`));
   });
   if (headers.length > scoreSheet.getMaxColumns()) {
     scoreSheet.insertColumnsAfter(scoreSheet.getMaxColumns(), headers.length - scoreSheet.getMaxColumns());
@@ -1034,21 +1494,21 @@ function appendSubmissionToScoresSheet(examData, sub) {
   scoreSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 
   const row = [
-    sub.studentId || '',
-    sub.studentName || '',
-    sub.studentEmail || '',
-    sub.score ?? 0,
-    sub.correctCount ?? 0,
-    sub.totalQuestions ?? 0,
-    sub.timeSpentFormatted || '',
-    sub.warningCount ?? 0,
-    sub.status || '',
-    sub.submittedAt || '',
-    sub.emailSentAt || '尚未寄送'
+    sanitizeSheetCellGas(sub.studentId || ''),
+    sanitizeSheetCellGas(sub.studentName || ''),
+    sanitizeSheetCellGas(sub.studentEmail || ''),
+    Number(sub.score ?? 0),
+    Number(sub.correctCount ?? 0),
+    Number(sub.totalQuestions ?? 0),
+    sanitizeSheetCellGas(sub.timeSpentFormatted || ''),
+    Number(sub.warningCount ?? 0),
+    sanitizeSheetCellGas(sub.status || ''),
+    sanitizeSheetCellGas(sub.submittedAt || ''),
+    sanitizeSheetCellGas(sub.emailSentAt || '尚未寄送')
   ];
   questions.forEach(q => {
     const d = (sub.answerDetails && sub.answerDetails[q.id]) ? sub.answerDetails[q.id] : null;
-    row.push(d ? d.selected : '未作答');
+    row.push(sanitizeSheetCellGas(d ? d.selected : '未作答'));
   });
   scoreSheet.appendRow(row);
 }
@@ -1062,27 +1522,27 @@ function syncCurrentScoresSheet(examData, submissions) {
   ];
   const questions = (examData && Array.isArray(examData.questions)) ? examData.questions : [];
   questions.forEach((q, idx) => {
-    headers.push(`第${idx + 1}題(正解:${q.answer})`);
+    headers.push(sanitizeSheetCellGas(`第${idx + 1}題(正解:${q.answer})`));
   });
 
   const rows = [headers];
   (submissions || []).forEach(sub => {
     const row = [
-      sub.studentId || '',
-      sub.studentName || '',
-      sub.studentEmail || '',
-      sub.score ?? 0,
-      sub.correctCount ?? 0,
-      sub.totalQuestions ?? 0,
-      sub.timeSpentFormatted || '',
-      sub.warningCount ?? 0,
-      sub.status || '',
-      sub.submittedAt || '',
-      sub.emailSentAt || '尚未寄送'
+      sanitizeSheetCellGas(sub.studentId || ''),
+      sanitizeSheetCellGas(sub.studentName || ''),
+      sanitizeSheetCellGas(sub.studentEmail || ''),
+      Number(sub.score ?? 0),
+      Number(sub.correctCount ?? 0),
+      Number(sub.totalQuestions ?? 0),
+      sanitizeSheetCellGas(sub.timeSpentFormatted || ''),
+      Number(sub.warningCount ?? 0),
+      sanitizeSheetCellGas(sub.status || ''),
+      sanitizeSheetCellGas(sub.submittedAt || ''),
+      sanitizeSheetCellGas(sub.emailSentAt || '尚未寄送')
     ];
     questions.forEach(q => {
       const d = (sub.answerDetails && sub.answerDetails[q.id]) ? sub.answerDetails[q.id] : null;
-      row.push(d ? d.selected : '未作答');
+      row.push(sanitizeSheetCellGas(d ? d.selected : '未作答'));
     });
     rows.push(row);
   });
@@ -1105,15 +1565,15 @@ function syncHistoryLogSheet(historySessions) {
   (historySessions || []).forEach(h => {
     const st = h.stats || {};
     rows.push([
-      h.id || '',
-      h.examTitle || '',
-      h.examDate || '',
-      h.archivedAt || '',
-      (h.submissions ? h.submissions.length : 0),
-      st.mean ?? 0,
-      st.median ?? 0,
-      st.stdDev ?? 0,
-      st.passRate ?? 0
+      sanitizeSheetCellGas(h.id || ''),
+      sanitizeSheetCellGas(h.examTitle || ''),
+      sanitizeSheetCellGas(h.examDate || ''),
+      sanitizeSheetCellGas(h.archivedAt || ''),
+      Number(h.submissions ? h.submissions.length : 0),
+      Number(st.mean ?? 0),
+      Number(st.median ?? 0),
+      Number(st.stdDev ?? 0),
+      Number(st.passRate ?? 0)
     ]);
   });
 
@@ -1144,7 +1604,8 @@ function escapeHtmlStr(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function jsonResponse(obj) {

@@ -939,7 +939,7 @@
             <input type="text" id="newQImageUrl" placeholder="可直接 Ctrl+V 貼上圖片/截圖、貼上圖片網址，或點右側按鈕上傳圖檔" style="flex:1;"
               onpaste="handleQuestionImagePaste(event)" oninput="handleImageUrlInput()"
               onchange="handleImageUrlInput()">
-            <input type="file" id="questionImageFileInput" accept="image/*" class="hidden"
+            <input type="file" id="questionImageFileInput" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden"
               onchange="handleQuestionImageSelected(event)">
             <button type="button" class="btn btn-secondary btn-sm"
               onclick="document.getElementById('questionImageFileInput').click()" id="btnUploadQImage"
