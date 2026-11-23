@@ -82,6 +82,10 @@ let submissions = loadSubmissions();
 let historySessions = loadHistorySessions();
 let isExaminerAuthenticated = false;
 let currentExaminerAuthToken = '';
+let currentExaminerProfile = null; // { userId, username, displayName, organization, role, status }
+let isBootstrapAdminSession = false;
+let adminUsersCache = [];
+let currentExaminerAuthMode = 'login'; // 'login' | 'register' | 'forgot'
 let lastCloudUpdatedAt = '';
 let lastCloudSyncExaminer = false;
 let currentActiveExaminerTab = 'tabQuestions';
@@ -421,6 +425,9 @@ async function syncStateFromCloud(silent = true, force = false) {
       }
       const roleJustUpgraded = isExaminerAuthenticated && !lastCloudSyncExaminer;
       lastCloudSyncExaminer = isExaminerAuthenticated;
+      if (json.userProfile && typeof json.userProfile === 'object') {
+        currentExaminerProfile = json.userProfile;
+      }
 
       // 讀取試卷庫：雙軌相容讀取（優先讀取專屬 examLibrary 欄位，若無則讀取 examData.examLibrary 備援）
       const cloudLibrary = (Array.isArray(json.examLibrary) && json.examLibrary.length > 0)
@@ -473,6 +480,10 @@ async function syncStateFromCloud(silent = true, force = false) {
           examDate: normalizeDateForInput(json.examData.examDate ?? ''),
           isExamOpen: Boolean(json.examData.isExamOpen),
           openedAt: json.examData.openedAt ? Number(json.examData.openedAt) : (json.examData.isExamOpen ? (examData.openedAt || Date.now()) : null),
+          ownerId: json.examData.ownerId || '',
+          ownerName: json.examData.ownerName || '',
+          startedByUserId: json.examData.startedByUserId || '',
+          startedByName: json.examData.startedByName || '',
           activeExamToken: json.examData.activeExamToken || examData.activeExamToken || null,
           questions: mergedQuestions
         };
@@ -653,6 +664,43 @@ function generateRandomExamToken() {
   return 'tk_' + rand;
 }
 
+function isCurrentUserAdmin() {
+  return Boolean(currentExaminerProfile && currentExaminerProfile.role === 'admin');
+}
+
+function getCurrentExaminerUserId() {
+  return (currentExaminerProfile && currentExaminerProfile.userId) ? String(currentExaminerProfile.userId) : '';
+}
+
+function canCurrentUserModifyExam(exam) {
+  if (!exam) return false;
+  if (isCurrentUserAdmin()) return true;
+  const myId = getCurrentExaminerUserId();
+  if (!myId) return true;
+  if (!exam.ownerId) return true;
+  return exam.ownerId === myId;
+}
+
+function canCurrentUserManageActiveSession() {
+  if (isCurrentUserAdmin()) return true;
+  const myId = getCurrentExaminerUserId();
+  if (!myId) return true;
+  const activeOwner = (examData && (examData.startedByUserId || examData.ownerId)) || '';
+  if (!activeOwner) return true;
+  return activeOwner === myId;
+}
+
+function canCurrentUserManageActiveToken() {
+  if (isCurrentUserAdmin()) return true;
+  const myId = getCurrentExaminerUserId();
+  if (!myId) return true;
+  const tok = examData && examData.activeExamToken;
+  if (!tok || !tok.token || !isExamTokenActive(tok)) return true;
+  const creator = tok.createdByUserId || (examData && examData.ownerId) || '';
+  if (!creator) return true;
+  return creator === myId;
+}
+
 function isExamTokenActive(tokenObj) {
   if (!tokenObj || !tokenObj.token) return false;
   return Date.now() < Number(tokenObj.expiresAt || 0);
@@ -664,7 +712,13 @@ async function handleGenerateExamToken() {
     return;
   }
 
+  // 限制 3：一般考官不可覆蓋他人產生的有效測驗連結
   if (examData.activeExamToken && isExamTokenActive(examData.activeExamToken)) {
+    if (!canCurrentUserManageActiveToken()) {
+      const creatorName = examData.activeExamToken.createdByName || examData.ownerName || '其他考官';
+      alert(`⛔ 權限限制：目前的測驗連結是由考官【${creatorName}】所產生，且尚在有效期限內，您無法覆蓋或停用他人的測驗連結！`);
+      return;
+    }
     const confirmRegen = confirm(
       '⚠️ 目前已有使用中的隨機測驗連結！\n\n' +
       '若重新生成，先前發送給考生的舊連結將【立即失效作廢】。\n\n' +
@@ -675,24 +729,35 @@ async function handleGenerateExamToken() {
 
   const now = Date.now();
   const token = generateRandomExamToken();
-  const durationMinutes = 180;
+  // 將測驗連結有效時間改為「該試卷作答時間 + 15 分鐘」，避免測驗端被長期佔用
+  const examDurationMins = Math.max(1, Number(examData.durationMinutes) || 60);
+  const durationMinutes = examDurationMins + 15;
   const durationMs = durationMinutes * 60 * 1000;
 
   examData.activeExamToken = {
     token: token,
     createdAt: now,
     expiresAt: now + durationMs,
-    durationMinutes: durationMinutes
+    durationMinutes: durationMinutes,
+    createdByUserId: getCurrentExaminerUserId() || 'SYSTEM_ADMIN',
+    createdByName: (currentExaminerProfile && currentExaminerProfile.displayName) || '考官'
   };
 
   saveExamDataToStorage(true);
   updateExamLinkTabUI();
-  showToast('🎲 已成功生成隨機測驗連結！');
+  showToast(`🎲 已成功生成隨機測驗連結（有效時間 ${durationMinutes} 分鐘：作答 ${examDurationMins} 分 + 15 分）！`);
 }
 
 async function handleRevokeExamToken() {
   if (!examData.activeExamToken || !examData.activeExamToken.token) {
     alert('⚠️ 目前並無有效的測驗連結可停用！');
+    return;
+  }
+
+  // 限制 3 & 4：一般考官不可停用他人產生的測驗連結，亦不可結束他人正在進行中的測驗
+  if (!canCurrentUserManageActiveToken() || (examData.isExamOpen && !canCurrentUserManageActiveSession())) {
+    const ownerLabel = (examData.activeExamToken && examData.activeExamToken.createdByName) || examData.startedByName || examData.ownerName || '其他考官';
+    alert(`⛔ 權限限制：此測驗連結或進行中測驗是由考官【${ownerLabel}】建立，您無法停用他人的測驗連結或結束他人的測驗！`);
     return;
   }
 
@@ -731,18 +796,31 @@ function updateExamLinkTabUI() {
   const tokenObj = examData.activeExamToken;
   const statusBadge = document.getElementById('tokenStatusBadge');
   const tokenMetaBox = document.getElementById('tokenMetaBox');
+  const tokenCreatorNameEl = document.getElementById('tokenCreatorName');
   const tokenTimeRemainingEl = document.getElementById('tokenTimeRemaining');
   const tokenCreatedAtEl = document.getElementById('tokenCreatedAt');
   const tokenExpiresAtEl = document.getElementById('tokenExpiresAt');
+  const tokenRuleDescEl = document.getElementById('tokenDurationRuleDesc');
   const btnGenToken = document.getElementById('btnGenerateExamToken');
   const btnRevokeToken = document.getElementById('btnRevokeExamToken');
   const shareInput = document.getElementById('studentShareUrlInput');
   const qrImg = document.getElementById('studentQrImage');
   const qrHint = document.getElementById('qrCodeHint');
 
+  const examDurMins = Math.max(1, Number(examData.durationMinutes) || 60);
+  const totalValidMins = examDurMins + 15;
+  if (tokenRuleDescEl) {
+    tokenRuleDescEl.innerHTML = `每場測驗可生成一組獨立作答網址，<strong>有效時間為「該試卷作答時間 ${examDurMins} 分鐘 + 15 分鐘緩衝 = 共 ${totalValidMins} 分鐘」(自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！`;
+  }
+
   const now = Date.now();
   const hasToken = tokenObj && tokenObj.token;
   const isExpired = hasToken && (now > Number(tokenObj.expiresAt || 0));
+  const canManageToken = canCurrentUserManageActiveToken();
+
+  if (tokenCreatorNameEl) {
+    tokenCreatorNameEl.textContent = (tokenObj && tokenObj.createdByName) ? tokenObj.createdByName : (examData.ownerName || '考官');
+  }
 
   if (!hasToken) {
     if (statusBadge) {
@@ -753,6 +831,7 @@ function updateExamLinkTabUI() {
     if (btnGenToken) {
       btnGenToken.innerHTML = `產生連結`;
       btnGenToken.className = 'btn btn-token-primary';
+      btnGenToken.disabled = false;
     }
     if (btnRevokeToken) {
       btnRevokeToken.className = 'btn btn-token-revoke hidden';
@@ -774,6 +853,7 @@ function updateExamLinkTabUI() {
     if (btnGenToken) {
       btnGenToken.innerHTML = `重新生成測驗連結`;
       btnGenToken.className = 'btn btn-token-primary';
+      btnGenToken.disabled = false;
     }
     if (btnRevokeToken) {
       btnRevokeToken.className = 'btn btn-token-revoke hidden';
@@ -793,12 +873,14 @@ function updateExamLinkTabUI() {
     if (tokenMetaBox) tokenMetaBox.classList.remove('hidden');
     if (tokenTimeRemainingEl) tokenTimeRemainingEl.textContent = formatted;
     if (btnGenToken) {
-      btnGenToken.innerHTML = `重新生成測驗連結`;
+      btnGenToken.innerHTML = canManageToken ? `重新生成測驗連結` : `🔒 他人連結使用中`;
       btnGenToken.className = 'btn btn-token-primary';
+      btnGenToken.disabled = !canManageToken;
     }
     if (btnRevokeToken) {
       btnRevokeToken.className = 'btn btn-token-revoke';
-      btnRevokeToken.classList.remove('hidden');
+      btnRevokeToken.classList.toggle('hidden', !canManageToken);
+      btnRevokeToken.disabled = !canManageToken;
     }
   }
 
@@ -878,7 +960,7 @@ async function validateCurrentExamToken(urlToken) {
           showTokenInvalidView('⚠️ 此測驗連結已失效！考官已重新生成新連結，先前連結已立即作廢。<br>請向考官索取最新測驗連結！');
           return false;
         } else if (json.tokenStatus === 'expired') {
-          showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
+          showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過本場次「試卷作答時間 + 15 分鐘」有效期限）！');
           return false;
         } else {
           showTokenInvalidView('⚠️ 此測驗連結已失效或已遭考官停用！<br>目前無有效之測驗連結，請聯繫考官確認。');
@@ -903,7 +985,7 @@ async function validateCurrentExamToken(urlToken) {
     return false;
   }
   if (Date.now() > Number(localToken.expiresAt || 0)) {
-    showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過 180 分鐘有效期限）！');
+    showTokenInvalidView('⚠️ 此測驗連結已逾期失效（已超過本場次「試卷作答時間 + 15 分鐘」有效期限）！');
     return false;
   }
 
@@ -1205,13 +1287,18 @@ function renderExamControlBanner() {
 
   if (!banner || !badge || !desc || !btnStart || !btnStop) return;
 
+  const canManageSession = canCurrentUserManageActiveSession();
+  const starterLabel = examData.startedByName || examData.ownerName || '考官';
+
   if (examData.isExamOpen) {
     banner.classList.add('is-open');
     badge.className = 'exam-status-indicator open';
     badge.textContent = '測驗中';
-    desc.textContent = `試卷【${examData.title || '未命名測驗'}】已開放作答！`;
+    desc.textContent = `試卷【${examData.title || '未命名測驗'}】已開放作答（開考考官：${starterLabel}）！`;
     btnStart.classList.add('hidden');
     btnStop.classList.remove('hidden');
+    btnStop.disabled = !canManageSession;
+    btnStop.textContent = canManageSession ? '結束作答' : `🔒 ${starterLabel} 測驗中 (無法結束他人測驗)`;
     startExaminerLiveTimer();
   } else {
     banner.classList.remove('is-open');
@@ -1220,6 +1307,7 @@ function renderExamControlBanner() {
     desc.textContent = '目前試卷為關閉狀態，考生端將不會看到任何內容。';
     btnStart.classList.remove('hidden');
     btnStop.classList.add('hidden');
+    btnStart.disabled = false;
     stopExaminerLiveTimer();
   }
 }
@@ -1308,14 +1396,28 @@ function updateExaminerLiveTimerDisplay() {
 
 function setExamOpenStatus(isOpen) {
   if (isOpen) {
+    // 若已有他人正在進行測驗，阻擋開考
+    if (examData.isExamOpen && !canCurrentUserManageActiveSession()) {
+      const starterLabel = examData.startedByName || examData.ownerName || '其他考官';
+      alert(`⛔ 測驗進行中：目前正由考官【${starterLabel}】進行測驗中，其餘人員無法開考！`);
+      return;
+    }
+
     const currentExam = getCurrentSelectedExam();
     const targetExam = currentExam || examData;
+    if (!canCurrentUserModifyExam(targetExam)) {
+      alert(`⛔ 權限限制：試卷【${targetExam.title || '未命名試卷'}】是由考官【${targetExam.ownerName || '其他考官'}】上傳，您僅能使用自己上傳的試卷開考！`);
+      return;
+    }
+
     if (!targetExam || !targetExam.questions || targetExam.questions.length === 0) {
       alert('目前試卷中沒有任何題目（0 題），請先匯入考題或手動新增題目後再開始測驗！');
       return;
     }
 
     const openNow = Date.now();
+    const myId = getCurrentExaminerUserId() || 'SYSTEM_ADMIN';
+    const myName = (currentExaminerProfile && currentExaminerProfile.displayName) || '考官';
     // 若當前選中的試卷與目前活動的 examData 不同，確認套用選中的試卷
     if (currentExam && examData.id !== currentExam.id) {
       const confirmSwitch = confirm(`確定要將目前選中的試卷【${currentExam.title}】（共 ${currentExam.questions.length} 題）設為本次測驗試卷並開放作答嗎？`);
@@ -1327,17 +1429,32 @@ function setExamOpenStatus(isOpen) {
         durationMinutes: currentExam.durationMinutes,
         isExamOpen: true,
         openedAt: openNow,
+        ownerId: currentExam.ownerId || myId,
+        ownerName: currentExam.ownerName || myName,
+        startedByUserId: myId,
+        startedByName: myName,
         questions: JSON.parse(JSON.stringify(currentExam.questions || []))
       };
     } else {
       examData.isExamOpen = true;
       examData.openedAt = openNow;
+      examData.startedByUserId = myId;
+      examData.startedByName = myName;
+      if (!examData.ownerId) examData.ownerId = myId;
+      if (!examData.ownerName) examData.ownerName = myName;
     }
 
     saveExamDataToStorage(true);
     refreshExaminerAllViews();
     showToast(`🟢 已開始測驗！試卷【${examData.title || '未命名測驗'}】現已開放作答。`);
   } else {
+    // 限制 4：一般考官不可結束他人正在進行中的測驗
+    if (!canCurrentUserManageActiveSession()) {
+      const starterLabel = examData.startedByName || examData.ownerName || '其他考官';
+      alert(`⛔ 權限限制：目前的測驗是由考官【${starterLabel}】開放，您無法結束他人正在進行中的測驗！`);
+      return;
+    }
+
     // 防誤觸確認視窗：結束作答並收卷確認
     const isConfirmed = confirm('🔔 是否確定要結束作答並收卷？\n\n（結束後試卷將關閉，所有尚未交卷的考生將一律強制交卷）');
     if (!isConfirmed) return;
@@ -2260,12 +2377,297 @@ function getExaminerTurnstileToken() {
   return '';
 }
 
+function isStrongPasswordClient(pw) {
+  if (typeof pw !== 'string') return false;
+  if (pw.length < 8 || pw.length > 64) return false;
+  return /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw);
+}
+
+function switchExaminerAuthMode(mode) {
+  currentExaminerAuthMode = mode || 'login';
+  const loginForm = document.getElementById('pinForm');
+  const regForm = document.getElementById('examinerRegisterForm');
+  const forgotView = document.getElementById('examinerForgotView');
+  const btnLogin = document.getElementById('authTabBtnLogin');
+  const btnReg = document.getElementById('authTabBtnRegister');
+  const btnForgot = document.getElementById('authTabBtnForgot');
+  const titleEl = document.getElementById('examinerAuthCardTitle');
+  const subEl = document.getElementById('examinerAuthCardSubtitle');
+
+  if (loginForm) loginForm.classList.toggle('hidden', currentExaminerAuthMode !== 'login');
+  if (regForm) regForm.classList.toggle('hidden', currentExaminerAuthMode !== 'register');
+  if (forgotView) forgotView.classList.toggle('hidden', currentExaminerAuthMode !== 'forgot');
+
+  if (btnLogin) btnLogin.className = currentExaminerAuthMode === 'login' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+  if (btnReg) btnReg.className = currentExaminerAuthMode === 'register' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+  if (btnForgot) btnForgot.className = currentExaminerAuthMode === 'forgot' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+
+  if (currentExaminerAuthMode === 'register') {
+    if (titleEl) titleEl.textContent = '考官個人帳號註冊申請';
+    if (subEl) subEl.textContent = '請填寫真實資料，送出後由系統管理員審核通過即可登入';
+  } else if (currentExaminerAuthMode === 'forgot') {
+    if (titleEl) titleEl.textContent = '考官忘記密碼重設';
+    if (subEl) subEl.textContent = '核對註冊帳號、西元出生年月日與 Email 信箱即可重設密碼';
+  } else {
+    if (titleEl) titleEl.textContent = '測驗管理系統登入驗證';
+    if (subEl) subEl.textContent = '請輸入個人專屬考官帳號與密碼進入本系統';
+  }
+
+  initOrResetExaminerTurnstile();
+}
+
+async function handleExaminerRegister(event) {
+  if (event) event.preventDefault();
+  const displayName = (document.getElementById('regDisplayName')?.value || '').trim();
+  const birthDate = (document.getElementById('regBirthDate')?.value || '').trim();
+  const organization = (document.getElementById('regOrganization')?.value || '').trim();
+  const username = (document.getElementById('regUsername')?.value || '').trim();
+  const email = (document.getElementById('regEmail')?.value || '').trim();
+  const password = document.getElementById('regPassword')?.value || '';
+  const passwordConfirm = document.getElementById('regPasswordConfirm')?.value || '';
+  const consent = document.getElementById('regPrivacyConsent')?.checked;
+  const alertBox = document.getElementById('regAlertBox');
+  const submitBtn = document.getElementById('btnSubmitRegister');
+
+  function showRegAlert(msg, type = 'danger') {
+    if (!alertBox) {
+      alert(msg);
+      return;
+    }
+    alertBox.textContent = msg;
+    alertBox.className = `alert alert-${type}`;
+    alertBox.classList.remove('hidden');
+  }
+
+  if (!displayName || displayName.length < 2) {
+    showRegAlert('⚠️ 請填寫真實姓名（至少 2 個字）！');
+    return;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+    showRegAlert('⚠️ 請選擇正確的西元出生年月日！');
+    return;
+  }
+  if (!organization || organization.length < 2) {
+    showRegAlert('⚠️ 請填寫服務單位（至少 2 個字）！');
+    return;
+  }
+  if (!/^[a-zA-Z0-9_]{4,24}$/.test(username)) {
+    showRegAlert('⚠️ 自訂帳號須為 4~24 碼半形英文字母、數字或底線 (_)！');
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showRegAlert('⚠️ 請輸入格式正確的電子郵件 (Email)！');
+    return;
+  }
+  if (!isStrongPasswordClient(password)) {
+    showRegAlert('⚠️ 密碼強度不足！長度須為 8~64 碼，且必須同時包含「大寫英文」、「小寫英文」及「數字」！');
+    return;
+  }
+  if (password !== passwordConfirm) {
+    showRegAlert('⚠️ 兩次輸入的密碼不一致，請重新確認！');
+    return;
+  }
+  if (!consent) {
+    showRegAlert('⚠️ 請勾選同意個人資料蒐集與使用聲明！');
+    return;
+  }
+
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) {
+    showRegAlert('⚠️ 尚未設定 Google Apps Script 雲端資料庫網址，無法提交考官註冊申請！');
+    return;
+  }
+
+  const siteKey = getActiveTurnstileSiteKey();
+  const turnstileToken = getExaminerTurnstileToken();
+  if (siteKey && !turnstileToken) {
+    showRegAlert('🛡️ 請先完成下方 Cloudflare 訪客安全驗證後再送出註冊申請！', 'warning');
+    initOrResetExaminerTurnstile();
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = '⏳ 正在提交註冊申請...';
+  }
+
+  try {
+    const res = await postToCloud({
+      action: 'registerExaminer',
+      displayName,
+      birthDate,
+      organization,
+      username,
+      email,
+      password,
+      turnstileToken,
+      clientId: getOrCreateClientDeviceId()
+    });
+    initOrResetExaminerTurnstile();
+
+    if (res && res.status === 'success') {
+      showRegAlert(res.message || '✅ 註冊申請已送出！請靜候管理員審核通過後即可登入。', 'success');
+      showToast('✅ 考官註冊申請已成功送出！');
+      document.getElementById('examinerRegisterForm')?.reset();
+    } else {
+      showRegAlert((res && res.message) ? res.message : '❌ 註冊申請送出失敗，請檢查網路連線後再試！', 'danger');
+    }
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '📤 送出註冊申請 (待管理員審核)';
+    }
+  }
+}
+
+async function handleRequestPasswordReset(event) {
+  if (event) event.preventDefault();
+  const username = (document.getElementById('forgotUsername')?.value || '').trim();
+  const birthDate = (document.getElementById('forgotBirthDate')?.value || '').trim();
+  const email = (document.getElementById('forgotEmail')?.value || '').trim();
+  const alertBox = document.getElementById('forgotAlertBox');
+  const sendBtn = document.getElementById('btnSendResetCode');
+
+  function showForgotAlert(msg, type = 'danger') {
+    if (!alertBox) {
+      alert(msg);
+      return;
+    }
+    alertBox.textContent = msg;
+    alertBox.className = `alert alert-${type}`;
+    alertBox.classList.remove('hidden');
+  }
+
+  if (!username || !birthDate || !email) {
+    showForgotAlert('⚠️ 請完整填寫自訂帳號、西元出生年月日與註冊 Email！');
+    return;
+  }
+
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) {
+    showForgotAlert('⚠️ 尚未綁定雲端資料庫網址，無法執行忘記密碼重設！');
+    return;
+  }
+
+  const siteKey = getActiveTurnstileSiteKey();
+  const turnstileToken = getExaminerTurnstileToken();
+  if (siteKey && !turnstileToken) {
+    showForgotAlert('🛡️ 請先完成下方 Cloudflare 訪客安全驗證後再點擊寄送驗證碼！', 'warning');
+    initOrResetExaminerTurnstile();
+    return;
+  }
+
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.textContent = '⏳ 正在核對身分並寄送驗證碼...';
+  }
+
+  try {
+    const res = await postToCloud({
+      action: 'requestPasswordReset',
+      username,
+      birthDate,
+      email,
+      turnstileToken,
+      clientId: getOrCreateClientDeviceId()
+    });
+    initOrResetExaminerTurnstile();
+
+    if (res && res.status === 'success') {
+      showForgotAlert(res.message || '📧 已寄出 8 碼重設驗證碼，請至信箱查收並於步驟 2 輸入。', 'success');
+      showToast('📧 重設驗證碼已寄至您的信箱！');
+      document.getElementById('forgotResetCode')?.focus();
+    } else {
+      showForgotAlert((res && res.message) ? res.message : '❌ 核對失敗或寄信異常，請確認資料無誤後再試！', 'danger');
+    }
+  } finally {
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = '📧 核對身分並寄送重設驗證碼';
+    }
+  }
+}
+
+async function handleConfirmPasswordReset(event) {
+  if (event) event.preventDefault();
+  const username = (document.getElementById('forgotUsername')?.value || '').trim();
+  const resetCode = (document.getElementById('forgotResetCode')?.value || '').trim().toUpperCase();
+  const newPassword = document.getElementById('forgotNewPassword')?.value || '';
+  const confirmPw = document.getElementById('forgotNewPasswordConfirm')?.value || '';
+  const alertBox = document.getElementById('forgotAlertBox');
+  const confirmBtn = document.getElementById('btnConfirmResetPw');
+
+  function showForgotAlert(msg, type = 'danger') {
+    if (!alertBox) {
+      alert(msg);
+      return;
+    }
+    alertBox.textContent = msg;
+    alertBox.className = `alert alert-${type}`;
+    alertBox.classList.remove('hidden');
+  }
+
+  if (!username) {
+    showForgotAlert('⚠️ 請於上方步驟 1 欄位填寫您的自訂帳號！');
+    document.getElementById('forgotUsername')?.focus();
+    return;
+  }
+  if (!resetCode) {
+    showForgotAlert('⚠️ 請輸入信箱收到的 8 碼重設驗證碼！');
+    return;
+  }
+  if (!isStrongPasswordClient(newPassword)) {
+    showForgotAlert('⚠️ 新密碼強度不足！長度須為 8~64 碼，且必須同時包含「大寫英文」、「小寫英文」及「數字」！');
+    return;
+  }
+  if (newPassword !== confirmPw) {
+    showForgotAlert('⚠️ 兩次輸入的新密碼不一致，請重新確認！');
+    return;
+  }
+
+  if (confirmBtn) {
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '⏳ 正在驗證並更新密碼...';
+  }
+
+  try {
+    const res = await postToCloud({
+      action: 'confirmPasswordReset',
+      username,
+      resetCode,
+      newPassword,
+      clientId: getOrCreateClientDeviceId()
+    });
+
+    if (res && res.status === 'success') {
+      showForgotAlert(res.message || '✅ 密碼重設成功！請返回帳號登入頁面使用新密碼登入。', 'success');
+      showToast('✅ 密碼已成功重設！');
+      document.getElementById('forgotStep1Form')?.reset();
+      document.getElementById('forgotStep2Form')?.reset();
+      setTimeout(() => {
+        switchExaminerAuthMode('login');
+        const uInput = document.getElementById('examinerUsernameInput');
+        if (uInput) uInput.value = username;
+      }, 1500);
+    } else {
+      showForgotAlert((res && res.message) ? res.message : '❌ 驗證碼錯誤或已過期，請重新確認！', 'danger');
+    }
+  } finally {
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = '✅ 確認重設密碼';
+    }
+  }
+}
+
 async function handlePinLogin(event) {
   event.preventDefault();
   if (isPinLoggingIn) return;
 
+  const usernameInputEl = document.getElementById('examinerUsernameInput');
   const pinInputEl = document.getElementById('examinerPinInput');
-  const pinInput = pinInputEl.value.trim();
+  const usernameInput = (usernameInputEl ? usernameInputEl.value : '').trim();
+  const pinInput = (pinInputEl ? pinInputEl.value : '').trim();
   const errBox = document.getElementById('pinErrorMsg');
   const loadingBar = document.getElementById('pinLoadingBar');
   const pinBtn = document.getElementById('pinSubmitBtn') || document.querySelector('#pinForm button[type="submit"]');
@@ -2277,19 +2679,19 @@ async function handlePinLogin(event) {
     return;
   }
 
-  if (!pinInput) {
-    errBox.textContent = '⚠️ 請輸入考官登入 PIN 碼！';
+  if (!usernameInput) {
+    errBox.textContent = '⚠️ 請輸入您的考官帳號！';
     errBox.className = 'alert alert-danger';
     errBox.classList.remove('hidden');
-    pinInputEl.focus();
+    if (usernameInputEl) usernameInputEl.focus();
     return;
   }
 
-  if (!/^\d{4,12}$/.test(pinInput)) {
-    errBox.textContent = '❌ PIN 碼格式不符（僅能為 4 至 12 碼半形數字）！';
+  if (!pinInput) {
+    errBox.textContent = '⚠️ 請輸入考官登入密碼 (PIN)！';
     errBox.className = 'alert alert-danger';
     errBox.classList.remove('hidden');
-    pinInputEl.select();
+    if (pinInputEl) pinInputEl.focus();
     return;
   }
 
@@ -2310,17 +2712,21 @@ async function handlePinLogin(event) {
   errBox.classList.add('hidden');
   if (loadingBar) loadingBar.classList.remove('hidden');
   if (pinBtn) pinBtn.disabled = true;
+  if (usernameInputEl) usernameInputEl.disabled = true;
   if (pinInputEl) pinInputEl.disabled = true;
 
   try {
     const gasUrl = getActiveGasUrl();
     let cloudLockedMsg = '';
     let turnstileErrorMsg = '';
+    let customErrMsg = '';
 
-    // 考官登入一律強制透過雲端 Google Apps Script 權威驗證 Cloudflare Turnstile Token 與 PIN 碼（移除無雲端之前端本地 PIN 驗證旁路）
+    // 考官登入一律強制透過雲端 Google Apps Script 權威驗證 Cloudflare Turnstile Token 與帳號密碼
     if (gasUrl) {
       const verifyRes = await postToCloud({
         action: 'verifyExaminer',
+        username: usernameInput,
+        password: pinInput,
         pin: pinInput,
         turnstileToken: turnstileToken,
         clientId: getOrCreateClientDeviceId()
@@ -2328,19 +2734,28 @@ async function handlePinLogin(event) {
       if (verifyRes && verifyRes.status === 'success') {
         isPinValid = true;
         issuedSessionToken = verifyRes.sessionToken || '';
-        // 清除本機殘留的靜態 PIN 雜湊，避免洩漏於 localStorage
+        currentExaminerProfile = verifyRes.userProfile || {
+          userId: 'SYSTEM_ADMIN',
+          username: usernameInput,
+          displayName: usernameInput,
+          organization: '',
+          role: 'admin',
+          status: 'active'
+        };
+        isBootstrapAdminSession = Boolean(verifyRes.needBootstrapAdmin);
         localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
-      } else if (verifyRes && verifyRes.status === 'turnstile_failed') {
+      } else if (verifyRes && (verifyRes.status === 'turnstile_failed' || verifyRes.status === 'pending_review')) {
         isPinValid = false;
-        turnstileErrorMsg = verifyRes.message || '🛡️ Cloudflare 訪客安全驗證未通過或已逾時，請重新驗證後再試！';
+        turnstileErrorMsg = verifyRes.message || '⏳ 您的帳號尚在等待管理員審核中！';
       } else if (verifyRes && verifyRes.status === 'locked') {
         isPinValid = false;
-        cloudLockedMsg = verifyRes.message || '❌ PIN 碼錯誤次數過多，已暫時鎖定！';
+        cloudLockedMsg = verifyRes.message || '❌ 密碼錯誤次數過多，已暫時鎖定！';
       } else if (verifyRes && verifyRes.status === 'unauthorized') {
         isPinValid = false;
+        customErrMsg = verifyRes.message || '❌ 帳號或密碼錯誤，請重新確認！';
       } else {
         isPinValid = false;
-        cloudLockedMsg = '⚠️ 無法連線至雲端伺服器進行考官身分驗證，請檢查網路狀態！';
+        cloudLockedMsg = (verifyRes && verifyRes.message) ? verifyRes.message : '⚠️ 無法連線至雲端伺服器進行考官身分驗證，請檢查網路狀態！';
       }
     } else {
       isPinValid = false;
@@ -2358,8 +2773,10 @@ async function handlePinLogin(event) {
         await syncStateFromCloud(true, true);
       }
       showExaminerDashboard();
+      if (isCurrentUserAdmin()) {
+        fetchAdminUsersList(true);
+      }
     } else {
-      // Turnstile Token 僅能單次使用，登入未成功時立即重置 Widget 以取得新 Token
       initOrResetExaminerTurnstile();
 
       if (turnstileErrorMsg) {
@@ -2373,9 +2790,9 @@ async function handlePinLogin(event) {
           errBox.textContent = cloudLockedMsg;
         } else if (pinFailedAttempts >= 5) {
           startPinLockout(30);
-          errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，系統已暫時鎖定 30 秒！';
+          errBox.textContent = '❌ 帳號或密碼已連續錯誤 5 次，系統已暫時鎖定 30 秒！';
         } else {
-          errBox.textContent = `❌ PIN 碼錯誤，請重新確認！（剩餘 ${5 - pinFailedAttempts} 次嘗試機會）`;
+          errBox.textContent = customErrMsg || `❌ 帳號或密碼錯誤，請重新確認！（剩餘 ${5 - pinFailedAttempts} 次嘗試機會）`;
         }
         errBox.className = 'alert alert-danger';
         errBox.classList.remove('hidden');
@@ -2386,6 +2803,7 @@ async function handlePinLogin(event) {
     if (loadingBar) loadingBar.classList.add('hidden');
     if (pinLockoutRemaining <= 0) {
       if (pinBtn) pinBtn.disabled = false;
+      if (usernameInputEl) usernameInputEl.disabled = false;
       if (pinInputEl) {
         pinInputEl.disabled = false;
         if (!isPinValid) {
@@ -2400,10 +2818,12 @@ async function handlePinLogin(event) {
 function startPinLockout(seconds) {
   pinLockoutRemaining = seconds;
   const pinBtn = document.querySelector('#pinForm button[type="submit"]');
+  const usernameInputEl = document.getElementById('examinerUsernameInput');
   const pinInputEl = document.getElementById('examinerPinInput');
   const errBox = document.getElementById('pinErrorMsg');
 
   if (pinBtn) pinBtn.disabled = true;
+  if (usernameInputEl) usernameInputEl.disabled = true;
   if (pinInputEl) pinInputEl.disabled = true;
 
   if (pinLockoutTimer) clearInterval(pinLockoutTimer);
@@ -2415,12 +2835,13 @@ function startPinLockout(seconds) {
       pinLockoutRemaining = 0;
       pinFailedAttempts = 0;
       if (pinBtn) pinBtn.disabled = false;
+      if (usernameInputEl) usernameInputEl.disabled = false;
       if (pinInputEl) {
         pinInputEl.disabled = false;
         pinInputEl.focus();
       }
       if (errBox) {
-        errBox.textContent = '鎖定已解除，請重新輸入 PIN 碼。';
+        errBox.textContent = '鎖定已解除，請重新輸入帳號與密碼。';
         errBox.className = 'alert alert-info';
       }
     } else {
@@ -2491,6 +2912,9 @@ function logoutExaminer(reason) {
   const tokenToRevoke = currentExaminerAuthToken;
   isExaminerAuthenticated = false;
   currentExaminerAuthToken = '';
+  currentExaminerProfile = null;
+  isBootstrapAdminSession = false;
+  adminUsersCache = [];
   isGasUrlUnlockedBySecret = false;
   gasSecretClickCount = 0;
   stopExaminerLiveTimer();
@@ -2520,11 +2944,11 @@ function logoutExaminer(reason) {
   if (pinView) pinView.classList.remove('hidden');
   if (pinInput) pinInput.value = '';
   if (pinLoading) pinLoading.classList.add('hidden');
-  initOrResetExaminerTurnstile();
+  switchExaminerAuthMode('login');
 
   if (isIdle || isSessionExpired) {
     const msg = isSessionExpired
-      ? '⚠️ 雲端考官登入工作階段已逾時，請重新輸入 PIN 碼登入。'
+      ? '⚠️ 雲端考官登入工作階段已逾時，請重新輸入帳號與密碼登入。'
       : '⚠️ 閒置已超過 30 分鐘，系統已自動安全登出。';
     showToast(msg);
     if (pinErr) {
@@ -2541,14 +2965,14 @@ function logoutExaminer(reason) {
 
 async function handleUpdateExaminerPin(event) {
   if (event) event.preventDefault();
-  const adminKeyEl = document.getElementById('adminSecretKeyInput');
+  const currentPwEl = document.getElementById('currentExaminerPasswordInput');
   const newPinEl = document.getElementById('newExaminerPinInput');
   const confirmPinEl = document.getElementById('confirmExaminerPinInput');
   const alertBox = document.getElementById('updatePinAlertBox');
 
-  const adminKey = (adminKeyEl ? adminKeyEl.value : '').trim();
-  const newPin = (newPinEl ? newPinEl.value : '').trim();
-  const confirmPin = (confirmPinEl ? confirmPinEl.value : '').trim();
+  const currentPassword = (currentPwEl ? currentPwEl.value : '').trim();
+  const newPassword = (newPinEl ? newPinEl.value : '').trim();
+  const confirmPassword = (confirmPinEl ? confirmPinEl.value : '').trim();
 
   function showPinAlert(msg, type) {
     if (!alertBox) {
@@ -2561,76 +2985,356 @@ async function handleUpdateExaminerPin(event) {
     alertBox.classList.remove('hidden');
   }
 
-  if (!adminKey) {
-    showPinAlert('⚠️ 請輸入管理員金鑰以取得變更權限！', 'danger');
-    if (adminKeyEl) adminKeyEl.focus();
+  const isBootstrap = isBootstrapAdminSession || (currentExaminerProfile && currentExaminerProfile.userId === 'SYSTEM_ADMIN');
+  if (!isBootstrap && !currentPassword) {
+    showPinAlert('⚠️ 請輸入您目前的登入密碼 (PIN) 以驗證本人身分！', 'danger');
+    if (currentPwEl) currentPwEl.focus();
     return;
   }
 
-  // 驗證新 PIN 碼格式 (僅限半形數字，至少4碼，至多12碼)
-  if (!newPin) {
-    showPinAlert('⚠️ 請輸入新考官 PIN 碼！', 'danger');
+  if (!newPassword) {
+    showPinAlert('⚠️ 請輸入新密碼 (PIN)！', 'danger');
     if (newPinEl) newPinEl.focus();
     return;
   }
-  if (!/^\d+$/.test(newPin)) {
-    showPinAlert('⚠️ 考官 PIN 碼僅能使用半形數字 (0~9)，不得包含英文字母、空格或符號！', 'danger');
+  if (!isStrongPasswordClient(newPassword)) {
+    showPinAlert('⚠️ 新密碼強度不足！長度須為 8~64 碼，且必須同時包含「大寫英文」、「小寫英文」及「數字」！', 'danger');
     if (newPinEl) newPinEl.focus();
     return;
   }
-  if (newPin.length < 4 || newPin.length > 12) {
-    showPinAlert('⚠️ 考官 PIN 碼長度須介於 4 至 12 碼之間！', 'danger');
-    if (newPinEl) newPinEl.focus();
-    return;
-  }
-  if (newPin !== confirmPin) {
-    showPinAlert('⚠️ 兩次輸入的新 PIN 碼不一致，請重新確認！', 'danger');
+  if (newPassword !== confirmPassword) {
+    showPinAlert('⚠️ 兩次輸入的新密碼不一致，請重新確認！', 'danger');
     if (confirmPinEl) confirmPinEl.focus();
     return;
   }
 
   const gasUrl = getActiveGasUrl();
   if (!gasUrl) {
-    showPinAlert('⚠️ 為確保金鑰安全，變更考官 PIN 碼必須先綁定並連線至 Google Apps Script 雲端後端！', 'danger');
+    showPinAlert('⚠️ 變更個人密碼必須先綁定並連線至 Google Apps Script 雲端後端！', 'danger');
     return;
   }
 
-  // 統一交由雲端後端 Script Properties 驗證管理員金鑰並更新 PIN 雜湊 (C4：前端不再保存管理員金鑰雜湊)
-  const res = await postToCloud({
-    action: 'updateExaminerPin',
-    adminKey: adminKey,
-    newPin: newPin,
+  const reqPayload = {
+    action: 'updateOwnPassword',
+    currentPassword: currentPassword,
+    newPassword: newPassword,
     clientId: getOrCreateClientDeviceId()
-  });
+  };
+
+  if (isBootstrap) {
+    reqPayload.newAdminUsername = (document.getElementById('bootstrapAdminUsername')?.value || 'admin').trim();
+    reqPayload.displayName = (document.getElementById('bootstrapAdminName')?.value || '系統管理員').trim();
+    reqPayload.birthDate = (document.getElementById('bootstrapAdminBirth')?.value || '1990-01-01').trim();
+    reqPayload.email = (document.getElementById('bootstrapAdminEmail')?.value || 'admin@system.local').trim();
+  }
+
+  const res = await postToCloud(reqPayload);
 
   if (!res || res.status !== 'success') {
-    const errMsg = (res && res.message) ? `❌ ${res.message}` : '❌ 管理員金鑰驗證失敗或雲端連線異常！無法變更考官 PIN 碼。';
+    const errMsg = (res && res.message) ? res.message : '❌ 目前密碼驗證失敗或雲端連線異常！無法變更密碼。';
     showPinAlert(errMsg, 'danger');
-    if (adminKeyEl) adminKeyEl.select();
+    if (currentPwEl) currentPwEl.select();
     return;
   }
 
   if (res.sessionToken) {
     currentExaminerAuthToken = res.sessionToken;
   }
+  if (res.userProfile) {
+    currentExaminerProfile = res.userProfile;
+    isBootstrapAdminSession = false;
+  }
   localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
 
-  // 清空輸入框
-  if (adminKeyEl) adminKeyEl.value = '';
+  if (currentPwEl) currentPwEl.value = '';
   if (newPinEl) newPinEl.value = '';
   if (confirmPinEl) confirmPinEl.value = '';
 
-  showPinAlert('✅ 考官登入 PIN 碼已安全更新至雲端 Script Properties！日後登入請使用新設定的 PIN 碼。', 'success');
-  showToast('✅ 考官 PIN 碼已成功變更！');
+  renderExaminerSettingsTab();
+  showPinAlert(res.message || '✅ 您的個人登入密碼 (PIN) 已安全更新！下次登入請使用新密碼。', 'success');
+  showToast('✅ 個人密碼已成功變更！');
 }
 
 async function handleResetExaminerPin() {
-  alert('⚠️ 為確保系統安全，已停用恢復公開預設弱密碼功能。請直接在上方輸入管理員金鑰與新 PIN 碼進行變更！');
+  alert('💡 若忘記密碼，請登出後於登入畫面點擊「❓ 忘記密碼」，透過帳號、西元出生年月日與 Email 驗證重設密碼。');
+}
+
+// ==================== 管理員專屬：考官註冊審核 & 成員管理 ====================
+async function fetchAdminUsersList(silent = false) {
+  if (!isCurrentUserAdmin() || !getActiveGasUrl()) return;
+  const res = await postToCloud({
+    action: 'adminListUsers'
+  });
+  if (res && res.status === 'success' && Array.isArray(res.users)) {
+    adminUsersCache = res.users;
+    renderAdminUsersTable();
+    if (!silent) {
+      showToast(`👥 已同步成員清單（共 ${adminUsersCache.length} 位帳號）`);
+    }
+  } else if (!silent && res && res.message) {
+    showToast(res.message);
+  }
+}
+
+function renderAdminUsersTable() {
+  const pendingBadge = document.getElementById('adminPendingReviewBadge');
+  const pendingCount = (adminUsersCache || []).filter(u => u && u.status === 'pending_review').length;
+  if (pendingBadge) {
+    if (isCurrentUserAdmin() && pendingCount > 0) {
+      pendingBadge.textContent = `${pendingCount} 待審`;
+      pendingBadge.classList.remove('hidden');
+    } else {
+      pendingBadge.classList.add('hidden');
+    }
+  }
+
+  const tbody = document.getElementById('adminUsersTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  if (!Array.isArray(adminUsersCache) || adminUsersCache.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 20px;">目前尚無任何註冊考官帳號資料。</td></tr>`;
+    return;
+  }
+
+  // 待審核排最前，其次管理員，再依建立時間排序
+  const sorted = [...adminUsersCache].sort((a, b) => {
+    if (a.status === 'pending_review' && b.status !== 'pending_review') return -1;
+    if (b.status === 'pending_review' && a.status !== 'pending_review') return 1;
+    if (a.role === 'admin' && b.role !== 'admin') return -1;
+    if (b.role === 'admin' && a.role !== 'admin') return 1;
+    return 0;
+  });
+
+  sorted.forEach(u => {
+    const tr = document.createElement('tr');
+    if (u.status === 'pending_review') {
+      tr.style.background = '#fffbeb';
+    }
+
+    let statusBadgeHtml = '';
+    if (u.status === 'pending_review') {
+      statusBadgeHtml = '<span class="badge badge-amber">⏳ 待審核</span>';
+    } else if (u.status === 'active') {
+      statusBadgeHtml = '<span class="badge badge-teal">🟢 已啟用</span>';
+    } else if (u.status === 'suspended') {
+      statusBadgeHtml = '<span class="badge badge-danger">⛔ 已停用</span>';
+    } else {
+      statusBadgeHtml = '<span class="badge badge-secondary">❌ 已駁回</span>';
+    }
+
+    const roleBadgeHtml = u.role === 'admin'
+      ? '<span class="badge badge-amber" style="margin-left: 4px;">👑 管理員</span>'
+      : '<span class="badge badge-secondary" style="margin-left: 4px;">👤 考官</span>';
+
+    const lockHtml = u.isLocked ? '<br><span class="badge badge-danger" style="margin-top:4px;">🔒 錯誤過多鎖定中</span>' : '';
+    const isMe = (currentExaminerProfile && currentExaminerProfile.userId === u.userId);
+
+    tr.innerHTML = `
+      <td style="white-space: nowrap;">${statusBadgeHtml}${roleBadgeHtml}${lockHtml}</td>
+      <td style="white-space: nowrap;"><strong>${escapeHtml(u.username)}</strong>${isMe ? ' <span class="badge badge-teal">本人</span>' : ''}</td>
+      <td style="white-space: nowrap;">${escapeHtml(u.displayName)}</td>
+      <td>${escapeHtml(u.organization || '-')}</td>
+      <td style="white-space: nowrap;">${escapeHtml(u.birthDate || '-')}</td>
+      <td class="cell-wrap-email" style="font-size: 0.85rem;">${escapeHtml(u.email || '-')}</td>
+      <td style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">
+        註冊：${escapeHtml(u.createdAt || '-')}<br>
+        登入：${escapeHtml(u.lastLoginAt || '尚未登入')}
+      </td>
+      <td style="white-space: nowrap;">
+        <div class="js-admin-actions" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+      </td>
+    `;
+
+    const actWrap = tr.querySelector('.js-admin-actions');
+    if (actWrap) {
+      if (u.status === 'pending_review') {
+        const btnApprove = document.createElement('button');
+        btnApprove.type = 'button';
+        btnApprove.className = 'btn btn-primary btn-sm';
+        btnApprove.textContent = '✅ 核准通過';
+        btnApprove.onclick = () => handleAdminReviewUser(u.userId, u.displayName, 'approve');
+        actWrap.appendChild(btnApprove);
+
+        const btnReject = document.createElement('button');
+        btnReject.type = 'button';
+        btnReject.className = 'btn btn-danger-outline btn-sm';
+        btnReject.textContent = '❌ 駁回';
+        btnReject.onclick = () => handleAdminReviewUser(u.userId, u.displayName, 'reject');
+        actWrap.appendChild(btnReject);
+      } else {
+        // 啟用 / 停用切換
+        if (u.status === 'active') {
+          const btnSuspend = document.createElement('button');
+          btnSuspend.type = 'button';
+          btnSuspend.className = 'btn btn-outline btn-sm';
+          btnSuspend.textContent = '⏸️ 停用';
+          btnSuspend.disabled = isMe;
+          btnSuspend.onclick = () => handleAdminUpdateUser(u.userId, u.displayName, { newStatus: 'suspended' });
+          actWrap.appendChild(btnSuspend);
+        } else {
+          const btnActivate = document.createElement('button');
+          btnActivate.type = 'button';
+          btnActivate.className = 'btn btn-primary btn-sm';
+          btnActivate.textContent = '▶️ 啟用';
+          btnActivate.onclick = () => handleAdminUpdateUser(u.userId, u.displayName, { newStatus: 'active', unlockAccount: true });
+          actWrap.appendChild(btnActivate);
+        }
+
+        // 角色切換
+        const nextRole = u.role === 'admin' ? 'examiner' : 'admin';
+        const btnRole = document.createElement('button');
+        btnRole.type = 'button';
+        btnRole.className = 'btn btn-secondary btn-sm';
+        btnRole.textContent = u.role === 'admin' ? '設為一般考官' : '👑 設為管理員';
+        btnRole.disabled = isMe;
+        btnRole.onclick = () => handleAdminUpdateUser(u.userId, u.displayName, { newRole: nextRole });
+        actWrap.appendChild(btnRole);
+
+        // 協助重設密碼
+        const btnResetPw = document.createElement('button');
+        btnResetPw.type = 'button';
+        btnResetPw.className = 'btn btn-secondary btn-sm';
+        btnResetPw.textContent = '🔑 重設密碼';
+        btnResetPw.onclick = () => handleAdminResetUserPassword(u.userId, u.username, u.displayName);
+        actWrap.appendChild(btnResetPw);
+      }
+
+      // 刪除帳號
+      if (!isMe) {
+        const btnDel = document.createElement('button');
+        btnDel.type = 'button';
+        btnDel.className = 'btn btn-danger-outline btn-sm';
+        btnDel.textContent = '🗑️ 刪除';
+        btnDel.onclick = () => handleAdminDeleteUser(u.userId, u.username, u.displayName);
+        actWrap.appendChild(btnDel);
+      }
+    }
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function handleAdminReviewUser(targetUserId, displayName, decision) {
+  const actionText = decision === 'approve' ? '核准通過' : '駁回';
+  if (!confirm(`確定要【${actionText}】考官「${displayName}」的註冊申請嗎？`)) return;
+  const res = await postToCloud({
+    action: 'adminReviewUser',
+    targetUserId,
+    decision
+  });
+  if (res && res.status === 'success') {
+    if (Array.isArray(res.users)) adminUsersCache = res.users;
+    renderAdminUsersTable();
+    showToast(res.message || `已${actionText}申請！`);
+  } else {
+    alert((res && res.message) ? res.message : '操作失敗，請稍後再試');
+  }
+}
+
+async function handleAdminUpdateUser(targetUserId, displayName, updates) {
+  const res = await postToCloud(Object.assign({
+    action: 'adminUpdateUser',
+    targetUserId
+  }, updates));
+  if (res && res.status === 'success') {
+    if (Array.isArray(res.users)) adminUsersCache = res.users;
+    renderAdminUsersTable();
+    showToast(res.message || `已更新「${displayName}」的帳號狀態`);
+  } else {
+    alert((res && res.message) ? res.message : '更新失敗');
+  }
+}
+
+async function handleAdminResetUserPassword(targetUserId, username, displayName) {
+  const newPassword = prompt(`請為考官【${displayName} (${username})】輸入新的登入密碼：\n\n（密碼長度須為 8~64 碼，且同時包含大寫英文、小寫英文與數字）`, '');
+  if (newPassword === null) return;
+  const cleanPw = newPassword.trim();
+  if (!isStrongPasswordClient(cleanPw)) {
+    alert('⚠️ 密碼格式不符！長度須為 8~64 碼，且必須同時包含「大寫英文」、「小寫英文」及「數字」！');
+    return;
+  }
+  const res = await postToCloud({
+    action: 'adminResetUserPassword',
+    targetUserId,
+    newPassword: cleanPw
+  });
+  if (res && res.status === 'success') {
+    if (Array.isArray(res.users)) adminUsersCache = res.users;
+    renderAdminUsersTable();
+    showToast(res.message || '已成功重設密碼！');
+  } else {
+    alert((res && res.message) ? res.message : '重設密碼失敗');
+  }
+}
+
+async function handleAdminDeleteUser(targetUserId, username, displayName) {
+  if (!confirm(`⚠️ 確定要永久刪除帳號【${displayName} (${username})】嗎？\n\n（刪除後該帳號將立即無法登入，其上傳過的試卷將自動保留並轉移至管理員名下）`)) return;
+  const res = await postToCloud({
+    action: 'adminDeleteUser',
+    targetUserId
+  });
+  if (res && res.status === 'success') {
+    if (Array.isArray(res.users)) adminUsersCache = res.users;
+    renderAdminUsersTable();
+    showToast(res.message || '已刪除帳號！');
+  } else {
+    alert((res && res.message) ? res.message : '刪除帳號失敗');
+  }
+}
+
+function renderExaminerSettingsTab() {
+  const isAdmin = isCurrentUserAdmin();
+  const userPill = document.getElementById('currentExaminerUserPill');
+  const adminUsersCard = document.getElementById('adminUserManagementCard');
+  const adminCloudCard = document.getElementById('adminCloudConfigCard');
+  const settingsGrid = document.getElementById('settingsBottomGrid');
+  const ownUsernameEl = document.getElementById('ownProfileUsername');
+  const ownNameOrgEl = document.getElementById('ownProfileNameAndOrg');
+  const bootstrapWrap = document.getElementById('bootstrapAdminFieldsWrap');
+  const currPwGroup = document.getElementById('currentPasswordGroup');
+
+  if (userPill && currentExaminerProfile) {
+    const roleLabel = isAdmin ? '👑 管理員' : '👤 考官';
+    const orgLabel = currentExaminerProfile.organization ? ` (${currentExaminerProfile.organization})` : '';
+    userPill.textContent = `${roleLabel}：${currentExaminerProfile.displayName || currentExaminerProfile.username}${orgLabel}`;
+    userPill.className = isAdmin ? 'badge badge-amber' : 'badge badge-teal';
+  }
+
+  // 管理員才可檢視與操作「註冊審核 & 成員管理」以及「Google 雲端資料庫 & 自動寄成績信設定」
+  if (adminUsersCard) {
+    adminUsersCard.classList.toggle('hidden', !isAdmin);
+  }
+  if (adminCloudCard) {
+    adminCloudCard.classList.toggle('hidden', !isAdmin);
+  }
+  if (settingsGrid) {
+    settingsGrid.style.gridTemplateColumns = isAdmin ? '' : '1fr';
+  }
+
+  if (ownUsernameEl) {
+    ownUsernameEl.textContent = (currentExaminerProfile && currentExaminerProfile.username) ? currentExaminerProfile.username : '-';
+  }
+  if (ownNameOrgEl) {
+    const nameStr = (currentExaminerProfile && currentExaminerProfile.displayName) ? currentExaminerProfile.displayName : '-';
+    const orgStr = (currentExaminerProfile && currentExaminerProfile.organization) ? ` / ${currentExaminerProfile.organization}` : '';
+    const roleStr = isAdmin ? ' 【系統管理員】' : ' 【一般考官】';
+    ownNameOrgEl.textContent = `${nameStr}${orgStr}${roleStr}`;
+  }
+
+  const isBootstrap = isBootstrapAdminSession || (currentExaminerProfile && currentExaminerProfile.userId === 'SYSTEM_ADMIN');
+  if (bootstrapWrap) {
+    bootstrapWrap.classList.toggle('hidden', !isBootstrap);
+  }
+  if (currPwGroup) {
+    currPwGroup.classList.toggle('hidden', isBootstrap);
+  }
 }
 
 function showExaminerDashboard() {
   document.getElementById('examinerPinView').classList.add('hidden');
   document.getElementById('examinerDashboardView').classList.remove('hidden');
+  renderExaminerSettingsTab();
   refreshExaminerAllViews(true);
 }
 
@@ -2645,11 +3349,15 @@ function switchExaminerTab(tabId) {
     if (el) el.classList.toggle('hidden', id !== tabId);
   });
 
+  if (tabId === 'tabSettings' && isCurrentUserAdmin()) {
+    fetchAdminUsersList(true);
+  }
   refreshExaminerAllViews();
 }
 
 function refreshExaminerAllViews(forceAll = false) {
   renderExamControlBanner();
+  renderExaminerSettingsTab();
   updateCloudStatusUI();
 
   // 更新頁籤計數徽章
@@ -2700,12 +3408,18 @@ function handleCreateNewExamPaper() {
   }
 
   const todayStr = normalizeDateForInput(new Date().toISOString().slice(0, 10));
+  const myId = getCurrentExaminerUserId() || 'SYSTEM_ADMIN';
+  const myName = (currentExaminerProfile && currentExaminerProfile.displayName) || '考官';
+  const myOrg = (currentExaminerProfile && currentExaminerProfile.organization) || '';
   const newExam = {
     id: 'exam_' + Date.now(),
     title: title,
     examDate: todayStr,
     durationMinutes: 60,
     questions: [],
+    ownerId: myId,
+    ownerName: myName,
+    ownerOrg: myOrg,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -2718,12 +3432,19 @@ function handleCreateNewExamPaper() {
 
 function isExamLockedForEditing(exam) {
   const target = exam || getCurrentSelectedExam();
-  return Boolean(target && examData && examData.isExamOpen && examData.id === target.id);
+  if (!target) return false;
+  if (!canCurrentUserModifyExam(target)) return true;
+  return Boolean(examData && examData.isExamOpen && examData.id === target.id);
 }
 
 function guardActiveExamEditing(exam, actionLabel = '異動此試卷') {
-  if (!isExamLockedForEditing(exam)) return false;
   const target = exam || getCurrentSelectedExam();
+  if (target && !canCurrentUserModifyExam(target)) {
+    const ownerLabel = target.ownerName || '其他考官';
+    alert(`⛔ 權限限制：試卷「${target.title || '未命名試卷'}」是由考官【${ownerLabel}】所上傳，您無法${actionLabel}他人上傳的試卷！`);
+    return true;
+  }
+  if (!isExamLockedForEditing(exam)) return false;
   const title = (target && target.title) ? target.title : (examData.title || '當前試卷');
   alert(`⛔ 試卷「${title}」正在測驗進行中！\n\n測驗進行中的試卷禁止${actionLabel}。\n請先於上方控制列點擊「結束作答」後再進行修改。`);
   return true;
@@ -2763,6 +3484,12 @@ function handleRenameExamPaper() {
 function handleDeleteExamPaper() {
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
+  // 限制 1：一般考官不可刪除他人上傳的試卷
+  if (!canCurrentUserModifyExam(currentExam)) {
+    const ownerLabel = currentExam.ownerName || '其他考官';
+    alert(`⛔ 權限限制：試卷「${currentExam.title}」是由考官【${ownerLabel}】所上傳，您無法刪除他人上傳的試卷！`);
+    return;
+  }
   if (examLibrary.length <= 1) {
     alert('⚠️ 試卷庫中至少需保留一份試卷！若要清空考題，請使用「清空全部題目」按鈕。');
     return;
@@ -2796,6 +3523,11 @@ function handleDeleteExamPaper() {
 function handleApplyAsActiveExam() {
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
+  if (!canCurrentUserModifyExam(currentExam)) {
+    const ownerLabel = currentExam.ownerName || '其他考官';
+    alert(`⛔ 權限限制：試卷「${currentExam.title}」是由考官【${ownerLabel}】所上傳，您僅能將自己上傳的試卷設為當前測驗試卷！`);
+    return;
+  }
   if (examData.id === currentExam.id) {
     showToast(`此試卷【${currentExam.title}】已經是當前測驗試卷！`);
     return;
@@ -2809,7 +3541,7 @@ function handleApplyAsActiveExam() {
     return;
   }
 
-  if (submissions.length > 0) {
+  if (submissions.length > 0 && canCurrentUserManageActiveSession()) {
     const shouldArchive = confirm(
       `⚠️ 切換測驗試卷前提醒：\n目前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
     );
@@ -2818,11 +3550,15 @@ function handleApplyAsActiveExam() {
     }
   }
 
+  const myId = getCurrentExaminerUserId() || 'SYSTEM_ADMIN';
+  const myName = (currentExaminerProfile && currentExaminerProfile.displayName) || '考官';
   examData = {
     id: currentExam.id,
     title: currentExam.title,
     examDate: currentExam.examDate,
     durationMinutes: currentExam.durationMinutes,
+    ownerId: currentExam.ownerId || myId,
+    ownerName: currentExam.ownerName || myName,
     isExamOpen: false,
     questions: JSON.parse(JSON.stringify(currentExam.questions || []))
   };
@@ -2882,16 +3618,20 @@ function renderExaminerQuestionTab() {
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
 
-  // 1. 渲染試卷庫下拉選單
+  // 1. 渲染試卷庫下拉選單 (一般考官僅顯示自己上傳的試卷，或若他人試卷正在測驗中則標示擁有者唯讀；管理員可檢視與管理全部試卷)
   const libSelect = document.getElementById('examLibrarySelect');
   if (libSelect) {
     libSelect.innerHTML = '';
     examLibrary.forEach(exam => {
+      if (!isCurrentUserAdmin() && !canCurrentUserModifyExam(exam) && (!examData || examData.id !== exam.id)) {
+        return;
+      }
       const opt = document.createElement('option');
       opt.value = exam.id;
       const isActive = examData && examData.id === exam.id;
       const statusMark = isActive ? (examData.isExamOpen ? '　【🟢測驗進行中】' : '　【📍當前試卷】') : '';
-      opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${statusMark}`;
+      const ownerMark = exam.ownerName ? ` [👤${exam.ownerName}]` : '';
+      opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${ownerMark}${statusMark}`;
       libSelect.appendChild(opt);
     });
     libSelect.value = currentExam.id;
@@ -4305,12 +5045,16 @@ async function confirmArchiveCurrentSession(event) {
 
 function createAndSaveHistorySession(sessionTitle, clearCurrent = true, newExamData = null) {
   const stats = calculateStatsForList(submissions);
+  const myId = getCurrentExaminerUserId() || 'SYSTEM_ADMIN';
+  const myName = (currentExaminerProfile && currentExaminerProfile.displayName) || '考官';
   const archivedRecord = {
     id: 'HIST_' + Date.now(),
     sessionTitle: sessionTitle || examData.title || '未命名測驗',
     examTitle: examData.title || '未命名測驗',
     examDate: examData.examDate || '-',
     durationMinutes: examData.durationMinutes,
+    ownerId: examData.ownerId || myId,
+    ownerName: examData.ownerName || myName,
     archivedAt: formatDateTime(new Date()),
     questionsSnapshot: JSON.parse(JSON.stringify(examData.questions)),
     submissions: JSON.parse(JSON.stringify(submissions)),
@@ -4343,23 +5087,36 @@ function createAndSaveHistorySession(sessionTitle, clearCurrent = true, newExamD
   return archivedRecord;
 }
 
+function canCurrentUserModifyHistory(hist) {
+  if (!hist) return false;
+  if (isCurrentUserAdmin()) return true;
+  const myId = getCurrentExaminerUserId();
+  if (!myId || !hist.ownerId) return true;
+  return hist.ownerId === myId;
+}
+
 function renderExaminerHistoryTab() {
+  const visibleHistoryList = isCurrentUserAdmin()
+    ? historySessions
+    : historySessions.filter(h => canCurrentUserModifyHistory(h));
+
   const countEl = document.getElementById('tabHistoryCount');
-  if (countEl) countEl.textContent = historySessions.length;
+  if (countEl) countEl.textContent = visibleHistoryList.length;
 
   const tbody = document.getElementById('historyTableBody');
   if (!tbody) return;
   tbody.innerHTML = '';
 
-  if (historySessions.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 28px;">目前尚無封存的歷次測驗紀錄。於每次考試結束後點擊「📌 結束本場測驗並歸檔至歷史紀錄」，即可將每一次測驗結果獨立保存於此！</td></tr>`;
+  if (visibleHistoryList.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; color: var(--text-muted); padding: 28px;">目前尚無您個人封存的歷次測驗紀錄。於每次考試結束後點擊「💾 儲存本次測驗紀錄」，即可將測驗結果獨立保存於此！</td></tr>`;
     return;
   }
 
-  historySessions.forEach((hist, idx) => {
+  visibleHistoryList.forEach((hist, idx) => {
     const st = hist.stats || calculateStatsForList(hist.submissions || []);
     const qLen = hist.questionsSnapshot ? hist.questionsSnapshot.length : 0;
     const subLen = hist.submissions ? hist.submissions.length : 0;
+    const ownerTag = hist.ownerName ? `<div class="text-muted text-sm">👤 考官：${escapeHtml(hist.ownerName)}</div>` : '';
 
     const tr = document.createElement('tr');
     if (currentViewingHistoryId === hist.id) {
@@ -4368,10 +5125,10 @@ function renderExaminerHistoryTab() {
 
     tr.innerHTML = `
       <td>
-        <strong>#${historySessions.length - idx}</strong>
+        <strong>#${visibleHistoryList.length - idx}</strong>
         <div class="text-muted text-sm">${escapeHtml(hist.archivedAt)}</div>
       </td>
-      <td><strong>${escapeHtml(hist.sessionTitle || hist.examTitle)}</strong></td>
+      <td><strong>${escapeHtml(hist.sessionTitle || hist.examTitle)}</strong>${ownerTag}</td>
       <td>${escapeHtml(hist.examDate || '-')}</td>
       <td>${qLen} 題</td>
       <td><strong>${subLen} 人</strong></td>
@@ -4454,6 +5211,14 @@ function closeHistorySessionDetail() {
 }
 
 function deleteHistorySession(histId) {
+  const targetHist = historySessions.find(h => h.id === histId);
+  if (!targetHist) return;
+  // 限制 2：一般考官不可刪除他人的歷史測驗紀錄
+  if (!canCurrentUserModifyHistory(targetHist)) {
+    const ownerLabel = targetHist.ownerName || '其他考官';
+    alert(`⛔ 權限限制：此筆歷史測驗紀錄屬於考官【${ownerLabel}】，您無法刪除他人的歷史測驗紀錄！`);
+    return;
+  }
   if (!confirm('確定要永久刪除此筆歷史測驗紀錄嗎？此操作無法復原！')) return;
   historySessions = historySessions.filter(h => h.id !== histId);
   if (currentViewingHistoryId === histId) {
