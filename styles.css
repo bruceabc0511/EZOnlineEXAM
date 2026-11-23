@@ -1078,7 +1078,7 @@ input:disabled {
 }
 
 .pin-input-wrap {
-  margin: 22px 0 16px;
+  margin: 22px 0 14px;
 }
 
 .pin-input-wrap input {
@@ -1086,6 +1086,21 @@ input:disabled {
   font-size: 1.35rem;
   letter-spacing: 6px;
   font-weight: 700;
+}
+
+.turnstile-widget-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 68px;
+  margin: 0 0 14px;
+}
+
+.turnstile-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
 }
 
 .pin-loading-wrap {

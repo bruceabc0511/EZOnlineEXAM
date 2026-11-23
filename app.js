@@ -9,6 +9,9 @@
 // 若有固定部署的預設 Google Apps Script 網址（格式為 https://script.google.com/macros/s/.../exec），請設定於此處：
 const DEFAULT_GAS_URL = '';
 
+// Cloudflare Turnstile (Verify Visitors Without CAPTCHA) 公開 Site Key
+const TURNSTILE_SITE_KEY = '0x4AAAAAAGOOrfOOEWchQ394';
+
 // 嚴格驗證 Google Apps Script 網頁應用程式網址白名單格式 (防範惡意第三方後端劫持)
 const GAS_URL_REGEX = /^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec$/;
 
@@ -68,6 +71,9 @@ let pinFailedAttempts = 0;
 let pinLockoutRemaining = 0;
 let pinLockoutTimer = null;
 let isPinLoggingIn = false;
+let turnstileWidgetId = null;
+let currentTurnstileToken = '';
+let turnstileLoadPollTimer = null;
 
 // 當前考試進行中狀態
 let activeSession = {
@@ -1145,6 +1151,7 @@ function switchRole(role) {
       if (pinErr && !pinErr.classList.contains('alert-warning')) pinErr.classList.add('hidden');
       if (pinLoading) pinLoading.classList.add('hidden');
       if (pinBtn && pinLockoutRemaining <= 0) pinBtn.disabled = false;
+      initOrResetExaminerTurnstile();
       if (pinInput && pinLockoutRemaining <= 0) setTimeout(() => pinInput.focus(), 100);
     }
   }
@@ -2147,6 +2154,84 @@ function getStoredExaminerPinHash() {
   return DEFAULT_EXAMINER_PIN_HASH;
 }
 
+// ==================== Cloudflare Turnstile (Verify Visitors Without CAPTCHA) ====================
+function getActiveTurnstileSiteKey() {
+  return String(TURNSTILE_SITE_KEY || '').trim();
+}
+
+function initOrResetExaminerTurnstile() {
+  const siteKey = getActiveTurnstileSiteKey();
+  const wrap = document.getElementById('turnstileWidgetWrap');
+  const container = document.getElementById('examinerTurnstileContainer');
+  if (!wrap || !container) return;
+
+  if (!siteKey) {
+    wrap.classList.add('hidden');
+    currentTurnstileToken = '';
+    return;
+  }
+  wrap.classList.remove('hidden');
+
+  if (typeof window.turnstile === 'undefined' || typeof window.turnstile.render !== 'function') {
+    if (!turnstileLoadPollTimer) {
+      let attempts = 0;
+      turnstileLoadPollTimer = setInterval(() => {
+        attempts++;
+        if (typeof window.turnstile !== 'undefined' && typeof window.turnstile.render === 'function') {
+          clearInterval(turnstileLoadPollTimer);
+          turnstileLoadPollTimer = null;
+          initOrResetExaminerTurnstile();
+        } else if (attempts >= 25) {
+          clearInterval(turnstileLoadPollTimer);
+          turnstileLoadPollTimer = null;
+        }
+      }, 200);
+    }
+    return;
+  }
+
+  currentTurnstileToken = '';
+  if (turnstileWidgetId !== null) {
+    try {
+      window.turnstile.reset(turnstileWidgetId);
+      return;
+    } catch (e) {
+      turnstileWidgetId = null;
+      container.innerHTML = '';
+    }
+  }
+
+  try {
+    container.innerHTML = '';
+    turnstileWidgetId = window.turnstile.render('#examinerTurnstileContainer', {
+      sitekey: siteKey,
+      theme: 'light',
+      callback: function (token) {
+        currentTurnstileToken = String(token || '').trim();
+      },
+      'expired-callback': function () {
+        currentTurnstileToken = '';
+      },
+      'error-callback': function () {
+        currentTurnstileToken = '';
+      }
+    });
+  } catch (err) {
+    console.warn('Turnstile render error:', err);
+  }
+}
+
+function getExaminerTurnstileToken() {
+  if (currentTurnstileToken) return currentTurnstileToken;
+  if (typeof window.turnstile !== 'undefined' && turnstileWidgetId !== null) {
+    try {
+      const resp = window.turnstile.getResponse(turnstileWidgetId);
+      if (resp) return String(resp).trim();
+    } catch (e) { }
+  }
+  return '';
+}
+
 async function handlePinLogin(event) {
   event.preventDefault();
   if (isPinLoggingIn) return;
@@ -2180,6 +2265,17 @@ async function handlePinLogin(event) {
     return;
   }
 
+  // 檢查 Cloudflare Turnstile 訪客安全驗證狀態
+  const siteKey = getActiveTurnstileSiteKey();
+  const turnstileToken = getExaminerTurnstileToken();
+  const isTurnstileLoaded = typeof window.turnstile !== 'undefined' && turnstileWidgetId !== null;
+  if (siteKey && isTurnstileLoaded && !turnstileToken) {
+    errBox.textContent = '🛡️ 請稍候，正在完成 Cloudflare 訪客安全驗證（或請勾選驗證框）！';
+    errBox.className = 'alert alert-warning';
+    errBox.classList.remove('hidden');
+    return;
+  }
+
   isPinLoggingIn = true;
   let isPinValid = false;
   let issuedSessionToken = '';
@@ -2191,18 +2287,23 @@ async function handlePinLogin(event) {
   try {
     const gasUrl = getActiveGasUrl();
     let cloudLockedMsg = '';
+    let turnstileErrorMsg = '';
 
-    // 若已連線雲端，一律交由雲端後端驗證 PIN 碼並簽發隨機 Session Token（防範 Pass-the-Hash 與離線破解）
+    // 若已連線雲端，一律交由雲端後端驗證 Cloudflare Turnstile Token 與 PIN 碼並簽發隨機 Session Token（防範 Pass-the-Hash 與離線破解）
     if (gasUrl) {
       const verifyRes = await postToCloud({
         action: 'verifyExaminer',
-        pin: pinInput
+        pin: pinInput,
+        turnstileToken: turnstileToken
       });
       if (verifyRes && verifyRes.status === 'success') {
         isPinValid = true;
         issuedSessionToken = verifyRes.sessionToken || '';
         // 清除本機殘留的靜態 PIN 雜湊，避免洩漏於 localStorage
         localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+      } else if (verifyRes && verifyRes.status === 'turnstile_failed') {
+        isPinValid = false;
+        turnstileErrorMsg = verifyRes.message || '🛡️ Cloudflare 訪客安全驗證未通過或已逾時，請重新驗證後再試！';
       } else if (verifyRes && verifyRes.status === 'locked') {
         isPinValid = false;
         cloudLockedMsg = verifyRes.message || '❌ PIN 碼錯誤次數過多，雲端已暫時鎖定 5 分鐘！';
@@ -2232,18 +2333,27 @@ async function handlePinLogin(event) {
       }
       showExaminerDashboard();
     } else {
-      pinFailedAttempts++;
-      if (cloudLockedMsg) {
-        startPinLockout(30);
-        errBox.textContent = cloudLockedMsg;
-      } else if (pinFailedAttempts >= 5) {
-        startPinLockout(30);
-        errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，系統已暫時鎖定 30 秒！';
+      // Turnstile Token 僅能單次使用，登入未成功時立即重置 Widget 以取得新 Token
+      initOrResetExaminerTurnstile();
+
+      if (turnstileErrorMsg) {
+        errBox.textContent = turnstileErrorMsg;
+        errBox.className = 'alert alert-warning';
+        errBox.classList.remove('hidden');
       } else {
-        errBox.textContent = `❌ PIN 碼錯誤，請重新確認！（剩餘 ${5 - pinFailedAttempts} 次嘗試機會）`;
+        pinFailedAttempts++;
+        if (cloudLockedMsg) {
+          startPinLockout(30);
+          errBox.textContent = cloudLockedMsg;
+        } else if (pinFailedAttempts >= 5) {
+          startPinLockout(30);
+          errBox.textContent = '❌ PIN 碼已連續錯誤 5 次，系統已暫時鎖定 30 秒！';
+        } else {
+          errBox.textContent = `❌ PIN 碼錯誤，請重新確認！（剩餘 ${5 - pinFailedAttempts} 次嘗試機會）`;
+        }
+        errBox.className = 'alert alert-danger';
+        errBox.classList.remove('hidden');
       }
-      errBox.className = 'alert alert-danger';
-      errBox.classList.remove('hidden');
     }
   } finally {
     isPinLoggingIn = false;
@@ -2384,6 +2494,7 @@ function logoutExaminer(reason) {
   if (pinView) pinView.classList.remove('hidden');
   if (pinInput) pinInput.value = '';
   if (pinLoading) pinLoading.classList.add('hidden');
+  initOrResetExaminerTurnstile();
 
   if (isIdle || isSessionExpired) {
     const msg = isSessionExpired

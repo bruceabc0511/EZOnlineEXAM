@@ -8,11 +8,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261122_1">
+  <link rel="stylesheet" href="styles.css?v=20261123_1">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
     crossorigin="anonymous"></script>
+  <!-- Cloudflare Turnstile (Verify Visitors Without CAPTCHA) -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 
 <body class="examiner-mode">
@@ -32,7 +34,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.31)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.32)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -287,6 +289,10 @@
           <div class="pin-input-wrap">
             <input type="password" id="examinerPinInput" placeholder="＊＊＊＊" required autocomplete="off"
               inputmode="numeric" pattern="\d{4,12}" maxlength="12" title="請輸入 4 至 12 碼半形數字">
+          </div>
+          <!-- Cloudflare Turnstile 非互動式訪客驗證區塊 -->
+          <div id="turnstileWidgetWrap" class="turnstile-widget-wrap">
+            <div id="examinerTurnstileContainer" class="turnstile-container"></div>
           </div>
           <div id="pinErrorMsg" class="alert alert-danger hidden">PIN 碼錯誤，請重新確認！</div>
           <div id="pinLoadingBar" class="pin-loading-wrap hidden" role="progressbar" aria-label="登入驗證進度">

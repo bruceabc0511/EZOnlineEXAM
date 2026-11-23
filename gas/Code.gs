@@ -17,6 +17,7 @@
  * 安全設定說明 (Script Properties)：
  * - 首次執行時，系統會自動將預設的 EXAMINER_PIN_HASH、EXAMINER_PIN_SALT、ADMIN_KEY_HASH、ADMIN_KEY_SALT 寫入指令碼屬性 (Script Properties)。
  * - 強烈建議考官在部署後，至「專案設定 (齒輪)」>「指令碼屬性 (Script Properties)」修改金鑰或於考官後台變更 PIN 碼。
+ * - Cloudflare Turnstile 訪客安全驗證：可於 Script Properties 新增屬性 `TURNSTILE_SECRET_KEY` 填入您的 Cloudflare Turnstile Secret Key。
  * ============================================================================
  */
 
@@ -77,13 +78,65 @@ function getSecurityConfig(state) {
   const adminHash = (all.ADMIN_KEY_HASH || defaultAdminHash).trim().toLowerCase();
   if (!all.ADMIN_KEY_HASH) updates.ADMIN_KEY_HASH = adminHash;
 
+  // Cloudflare Turnstile Secret Key (可於 Script Properties 設定 TURNSTILE_SECRET_KEY)
+  const turnstileSecretKey = (all.TURNSTILE_SECRET_KEY || '').trim();
+
   if (Object.keys(updates).length > 0) {
     try {
       props.setProperties(updates, false);
     } catch (e) {}
   }
 
-  return { pinSalt, pinHash, adminSalt, adminHash };
+  return { pinSalt, pinHash, adminSalt, adminHash, turnstileSecretKey };
+}
+
+/**
+ * 向 Cloudflare Turnstile Siteverify API 驗證前端傳入之訪客 Token
+ * - 若 Script Properties 已設定 TURNSTILE_SECRET_KEY，則強制使用該金鑰驗證。
+ * - 若尚未設定 TURNSTILE_SECRET_KEY 但前端有傳入 turnstileToken (如使用 Cloudflare 官方測試 Site Key)，則使用官方測試 Secret Key 進行驗證。
+ */
+function verifyCloudflareTurnstileToken(turnstileToken, state) {
+  const cfg = getSecurityConfig(state);
+  const configuredSecret = cfg.turnstileSecretKey;
+  const cleanToken = String(turnstileToken || '').trim();
+
+  // 若後端未設定 TURNSTILE_SECRET_KEY 且前端亦未傳入 token，則跳過驗證以保持向下相容
+  if (!configuredSecret && !cleanToken) {
+    return { success: true };
+  }
+
+  if (!cleanToken) {
+    return {
+      success: false,
+      message: '🛡️ 請先完成 Cloudflare 訪客安全驗證後再點擊登入！'
+    };
+  }
+
+  const secretToUse = configuredSecret || '1x0000000000000000000000000000000AA';
+  try {
+    const response = UrlFetchApp.fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'post',
+      payload: {
+        secret: secretToUse,
+        response: cleanToken
+      },
+      muteHttpExceptions: true
+    });
+    const result = JSON.parse(response.getContentText() || '{}');
+    if (result && result.success === true) {
+      return { success: true };
+    }
+    return {
+      success: false,
+      message: '🛡️ Cloudflare 訪客安全驗證未通過或已逾時，請重新驗證後再試！'
+    };
+  } catch (err) {
+    console.error('Turnstile siteverify error:', err);
+    return {
+      success: false,
+      message: '🛡️ 雲端驗證 Cloudflare Turnstile 時發生連線異常，請稍後再試！'
+    };
+  }
 }
 
 /**
@@ -411,10 +464,17 @@ function doPost(e) {
 
     const state = loadCloudState();
 
-    // 考官 PIN 驗證：核對成功後簽發伺服器端隨機高熵 Session Token (含統一失敗次數限流防暴力破解)
+    // 考官 PIN 驗證：先驗證 Cloudflare Turnstile Token，核對 PIN 成功後簽發伺服器端隨機高熵 Session Token (含統一失敗次數限流防暴力破解)
     if (action === 'verifyExaminer') {
       if (isAuthRateLimited()) {
         return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+      }
+      const turnstileCheck = verifyCloudflareTurnstileToken(payload.turnstileToken, state);
+      if (!turnstileCheck.success) {
+        return jsonResponse({
+          status: 'turnstile_failed',
+          message: turnstileCheck.message
+        });
       }
       const secret = payload.pin || payload.authPin || payload.authPinHash || '';
       if (verifyExaminerPinSecret(secret, state)) {
