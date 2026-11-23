@@ -1165,9 +1165,12 @@ function saveExamLibraryToStorage(syncCloud = true) {
 }
 
 function getCurrentSelectedExam() {
-  let exam = examLibrary.find(e => e.id === currentSelectedExamId);
+  const pool = isCurrentUserAdmin()
+    ? examLibrary
+    : examLibrary.filter(e => canCurrentUserModifyExam(e));
+  let exam = pool.find(e => e.id === currentSelectedExamId);
   if (!exam) {
-    exam = examLibrary[0];
+    exam = pool[0] || null;
     if (exam) currentSelectedExamId = exam.id;
   }
   return exam;
@@ -3019,7 +3022,25 @@ async function handleUpdateExaminerPin(event) {
     clientId: getOrCreateClientDeviceId()
   };
 
-  const res = await postToCloud(reqPayload);
+  const loadingBar = document.getElementById('updatePinLoadingBar');
+  const submitBtn = document.getElementById('btnUpdatePinSubmit');
+  if (alertBox) alertBox.classList.add('hidden');
+  if (loadingBar) loadingBar.classList.remove('hidden');
+  if (submitBtn) submitBtn.disabled = true;
+  if (currentPwEl) currentPwEl.disabled = true;
+  if (newPinEl) newPinEl.disabled = true;
+  if (confirmPinEl) confirmPinEl.disabled = true;
+
+  let res = null;
+  try {
+    res = await postToCloud(reqPayload);
+  } finally {
+    if (loadingBar) loadingBar.classList.add('hidden');
+    if (submitBtn) submitBtn.disabled = false;
+    if (currentPwEl) currentPwEl.disabled = false;
+    if (newPinEl) newPinEl.disabled = false;
+    if (confirmPinEl) confirmPinEl.disabled = false;
+  }
 
   if (!res || res.status !== 'success') {
     const errMsg = (res && res.message) ? res.message : '❌ 目前密碼驗證失敗或雲端連線異常！無法變更密碼。';
@@ -3599,30 +3620,77 @@ function setupExamMetaAutoSync() {
 
 function renderExaminerQuestionTab() {
   const currentExam = getCurrentSelectedExam();
-  if (!currentExam) return;
+  const hasNoOwnedExam = !currentExam;
+  const noExamNotice = document.getElementById('noOwnedExamNotice');
+  if (noExamNotice) {
+    noExamNotice.classList.toggle('hidden', !hasNoOwnedExam);
+  }
 
   // 1. 渲染試卷庫下拉選單 (一般考官僅顯示自己上傳的試卷，或若他人試卷正在測驗中則標示擁有者唯讀；管理員可檢視與管理全部試卷)
   const libSelect = document.getElementById('examLibrarySelect');
   if (libSelect) {
     libSelect.innerHTML = '';
-    examLibrary.forEach(exam => {
-      if (!isCurrentUserAdmin() && !canCurrentUserModifyExam(exam) && (!examData || examData.id !== exam.id)) {
-        return;
-      }
-      const opt = document.createElement('option');
-      opt.value = exam.id;
-      const isActive = examData && examData.id === exam.id;
-      const statusMark = isActive ? (examData.isExamOpen ? '　【🟢測驗進行中】' : '　【📍當前試卷】') : '';
-      const ownerMark = exam.ownerName ? ` (👤${exam.ownerName})` : '';
-      opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${ownerMark}${statusMark}`;
-      libSelect.appendChild(opt);
-    });
-    libSelect.value = currentExam.id;
+    if (hasNoOwnedExam) {
+      const emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '（您尚未擁有任何試卷，請先建立新試卷或匯入考題）';
+      libSelect.appendChild(emptyOpt);
+      libSelect.value = '';
+    } else {
+      examLibrary.forEach(exam => {
+        if (!isCurrentUserAdmin() && !canCurrentUserModifyExam(exam) && (!examData || examData.id !== exam.id)) {
+          return;
+        }
+        const opt = document.createElement('option');
+        opt.value = exam.id;
+        const isActive = examData && examData.id === exam.id;
+        const statusMark = isActive ? (examData.isExamOpen ? '　【🟢測驗進行中】' : '　【📍當前試卷】') : '';
+        const ownerMark = exam.ownerName ? ` (👤${exam.ownerName})` : '';
+        opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${ownerMark}${statusMark}`;
+        libSelect.appendChild(opt);
+      });
+      libSelect.value = currentExam.id;
+    }
+  }
+
+  const titleInput = document.getElementById('metaExamTitle');
+  const dateInput = document.getElementById('metaExamDate');
+  const durationInput = document.getElementById('metaExamDuration');
+  const metaSubmitBtn = document.querySelector('#examMetaForm button[type="submit"]');
+  const btnApply = document.getElementById('btnApplyAsActiveExam');
+  const tbody = document.getElementById('questionsTableBody');
+
+  if (hasNoOwnedExam) {
+    if (btnApply) btnApply.style.display = 'none';
+    if (titleInput) {
+      titleInput.value = '';
+      titleInput.disabled = true;
+      titleInput.classList.add('input-locked');
+    }
+    if (dateInput) {
+      dateInput.value = '';
+      dateInput.disabled = true;
+      dateInput.classList.add('input-locked');
+    }
+    if (durationInput) {
+      durationInput.value = '';
+      durationInput.disabled = true;
+      durationInput.classList.add('input-locked');
+    }
+    if (metaSubmitBtn) {
+      metaSubmitBtn.disabled = true;
+      metaSubmitBtn.title = '請先建立新試卷或匯入考題';
+    }
+    document.getElementById('metaValidQCount').textContent = '0';
+    document.getElementById('metaPointsPerQ').textContent = '0';
+    document.getElementById('questionTableCount').textContent = '0';
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 28px;">💡 您目前尚未擁有任何試卷！請點擊上方「<strong>➕ 建立新試卷</strong>」或自「<strong>📥 匯入考題 Excel / CSV</strong>」匯入題庫。</td></tr>`;
+    }
+    return;
   }
 
   // 2. 顯示當前選中試卷是否為活動測驗試卷的徽章與套用按鈕
-  const activeBadge = document.getElementById('currentExamActiveBadge');
-  const btnApply = document.getElementById('btnApplyAsActiveExam');
   const isCurrentActive = examData && examData.id === currentExam.id;
 
   if (btnApply) {
@@ -3631,10 +3699,6 @@ function renderExaminerQuestionTab() {
 
   const qCount = (currentExam.questions || []).length;
   const pts = getPointsPerQuestion(qCount);
-
-  const titleInput = document.getElementById('metaExamTitle');
-  const dateInput = document.getElementById('metaExamDate');
-  const durationInput = document.getElementById('metaExamDuration');
 
   if (titleInput && document.activeElement !== titleInput) {
     titleInput.value = currentExam.title ?? '';
@@ -3652,7 +3716,6 @@ function renderExaminerQuestionTab() {
     el.disabled = isLocked;
     el.classList.toggle('input-locked', isLocked);
   });
-  const metaSubmitBtn = document.querySelector('#examMetaForm button[type="submit"]');
   if (metaSubmitBtn) {
     metaSubmitBtn.disabled = isLocked;
     metaSubmitBtn.title = isLocked ? '測驗進行中，禁止修改試卷資訊' : '';
@@ -3662,7 +3725,6 @@ function renderExaminerQuestionTab() {
   document.getElementById('metaPointsPerQ').textContent = pts;
   document.getElementById('questionTableCount').textContent = qCount;
 
-  const tbody = document.getElementById('questionsTableBody');
   tbody.innerHTML = '';
 
   if (qCount === 0) {
@@ -3889,6 +3951,10 @@ function syncAnswerSelectWithOptions(preferredAnswer) {
 
 function openAddQuestionModal() {
   const currentExam = getCurrentSelectedExam();
+  if (!currentExam) {
+    alert('⚠️ 您目前尚未擁有任何試卷！請先點擊上方「➕ 建立新試卷」或「📥 匯入考題 Excel / CSV」建立試卷後再新增題目。');
+    return;
+  }
   if (guardActiveExamEditing(currentExam, '新增題目')) return;
   editingQuestionId = null;
   document.getElementById('addQuestionForm').reset();
@@ -4225,7 +4291,7 @@ function handleSaveNewQuestion(event) {
     saveExamLibraryToStorage(true);
     closeAddQuestionModal();
     refreshExaminerAllViews();
-    showImportAlert(`已成功更新試卷【${currentExam.title}】第 ${editingQuestionId} 題內容並同步！`, 'success');
+    showImportAlert(`已成功更新試卷【${currentExam.title}】內容並同步至試卷庫！`, 'success');
     return;
   }
 
@@ -4370,7 +4436,7 @@ function parseTemplateRows(rows, fileName) {
   }
 
   const fileBaseTitle = fileName.replace(/\.[^/.]+$/, '').replace(/_考題範本$/, '').trim() || '匯入試卷';
-  const existingExam = examLibrary.find(e => e.title.trim().toLowerCase() === fileBaseTitle.toLowerCase());
+  const existingExam = examLibrary.find(e => e.title.trim().toLowerCase() === fileBaseTitle.toLowerCase() && canCurrentUserModifyExam(e));
 
   if (existingExam) {
     const shouldOverwrite = confirm(

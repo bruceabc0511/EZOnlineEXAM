@@ -552,6 +552,9 @@
               <div class="section-title-row">
                 <h3>⚙️ 試卷資訊設定</h3>
               </div>
+              <div id="noOwnedExamNotice" class="alert alert-warning hidden" style="margin-bottom: 12px;">
+                💡 您目前尚未擁有任何試卷！請先點擊上方「<strong>➕ 建立新試卷</strong>」或右側「<strong>📥 匯入考題 Excel / CSV</strong>」，即可開始編輯試卷資訊與題庫。
+              </div>
               <form id="examMetaForm" onsubmit="saveExamMetadata(event)">
                 <div class="form-group">
                   <label>📜 試卷名稱</label>
@@ -1064,8 +1067,15 @@
                   </div>
                 </div>
 
+                <div id="updatePinLoadingBar" class="pin-loading-wrap hidden" style="margin-top: 14px; margin-bottom: 0;"
+                  role="progressbar" aria-label="密碼變更進度">
+                  <div class="pin-loading-track">
+                    <div class="pin-loading-fill"></div>
+                  </div>
+                </div>
+
                 <div class="action-btn-group" style="margin-top: 14px; flex-wrap: wrap;">
-                  <button type="submit" class="btn btn-primary">
+                  <button type="submit" id="btnUpdatePinSubmit" class="btn btn-primary">
                     ✅ 確認變更個人密碼 (PIN)
                   </button>
                 </div>
