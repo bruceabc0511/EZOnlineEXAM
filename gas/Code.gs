@@ -30,8 +30,8 @@ const SHEET_NAMES = {
   AUDIT_LOG: '安全稽核紀錄'
 };
 
-// 考題圖片專用 Google 雲端硬碟資料夾 ID (請於 Script Properties 設定 EXAM_IMAGE_FOLDER_ID，不於程式碼公開預設資料夾 ID)
-const DEFAULT_EXAM_IMAGE_FOLDER_ID = '';
+// 考題圖片專用 Google 雲端硬碟資料夾 ID (優先讀取 Script Properties 的 EXAM_IMAGE_FOLDER_ID，未設定時使用此預設指定資料夾)
+const DEFAULT_EXAM_IMAGE_FOLDER_ID = '11vY2bQE-3G_gwrcanjCeCJMYjPbnYYrl';
 
 function getExamImageFolderId() {
   try {
