@@ -4,11 +4,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' https://cdn.sheetjs.com https://cdn.jsdelivr.net https://challenges.cloudflare.com 'unsafe-inline'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://lh3.googleusercontent.com https://drive.google.com https://*.googleusercontent.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://challenges.cloudflare.com; object-src 'none'; base-uri 'self';">
   <title>線上筆試測驗系統(測試版)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261123_7">
+  <link rel="stylesheet" href="styles.css?v=20261123_9">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
@@ -38,7 +40,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.35)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.36)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -981,7 +983,7 @@
                     <th style="width: 18%; min-width: 160px;">服務單位</th>
                     <th style="width: 115px;">生日</th>
                     <th style="width: 20%; min-width: 200px;">Email</th>
-                    <th style="width: 200px; font-size: 0.82rem; line-height: 1.35;">註冊 /<br>最後登入時間</th>
+                    <th style="width: 230px; font-size: 0.82rem; line-height: 1.35;">註冊 /<br>最後登入時間</th>
                     <th style="min-width: 230px;">管理操作</th>
                   </tr>
                 </thead>
@@ -1041,34 +1043,6 @@
               </div>
 
               <form id="updatePinForm" onsubmit="handleUpdateExaminerPin(event)">
-                <!-- 若為首次 SYSTEM_ADMIN 初始模式，顯示建立首位管理員帳號欄位 -->
-                <div id="bootstrapAdminFieldsWrap" class="hidden"
-                  style="background: #fffbeb; border: 1px solid #fde68a; padding: 12px; border-radius: 8px; margin-bottom: 14px;">
-                  <div class="text-sm" style="color: #92400e; font-weight: 700; margin-bottom: 8px;">
-                    ⚠️ 系統首次初始化：請設定首位正式管理員帳號與基本資料
-                  </div>
-                  <div class="form-row">
-                    <div class="form-group">
-                      <label for="bootstrapAdminUsername">管理員帳號 <span class="required">*</span></label>
-                      <input type="text" id="bootstrapAdminUsername" value="admin" placeholder="4~24碼英數">
-                    </div>
-                    <div class="form-group">
-                      <label for="bootstrapAdminName">管理員姓名 <span class="required">*</span></label>
-                      <input type="text" id="bootstrapAdminName" value="管理員">
-                    </div>
-                  </div>
-                  <div class="form-row">
-                    <div class="form-group">
-                      <label for="bootstrapAdminBirth">西元出生年月日 <span class="required">*</span></label>
-                      <input type="date" id="bootstrapAdminBirth" value="1990-01-01">
-                    </div>
-                    <div class="form-group">
-                      <label for="bootstrapAdminEmail">管理員 Email <span class="required">*</span></label>
-                      <input type="email" id="bootstrapAdminEmail" placeholder="admin@gmail.com">
-                    </div>
-                  </div>
-                </div>
-
                 <div class="form-group" id="currentPasswordGroup">
                   <label for="currentExaminerPasswordInput">
                     🔑 目前登入密碼 (PIN) <span class="required">*</span>
@@ -1264,7 +1238,7 @@
   <!-- Toast 訊息通知容器 -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="app.js?v=20261123_1"></script>
+  <script src="app.js?v=20261123_2"></script>
   <p class="Powered" style="font-size: 9px; text-align: center;">Powered by Chin Wei Li 2026</p>
 </body>
 

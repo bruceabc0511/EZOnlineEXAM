@@ -83,7 +83,6 @@ let historySessions = loadHistorySessions();
 let isExaminerAuthenticated = false;
 let currentExaminerAuthToken = '';
 let currentExaminerProfile = null; // { userId, username, displayName, organization, role, status }
-let isBootstrapAdminSession = false;
 let adminUsersCache = [];
 let currentExaminerAuthMode = 'login'; // 'login' | 'register' | 'forgot'
 let lastCloudUpdatedAt = '';
@@ -426,12 +425,14 @@ async function syncStateFromCloud(silent = true, force = false) {
         currentExaminerProfile = json.userProfile;
       }
 
-      // 讀取試卷庫：雙軌相容讀取（優先讀取專屬 examLibrary 欄位，若無則讀取 examData.examLibrary 備援）
-      const cloudLibrary = (Array.isArray(json.examLibrary) && json.examLibrary.length > 0)
+      // 讀取試卷庫：M6 考官僅顯示自己上傳的試卷 (管理員為全部)，允許空陣列覆寫舊快取
+      const cloudLibrary = (json.isExaminer === true && Array.isArray(json.examLibrary))
         ? json.examLibrary
-        : (json.examData && Array.isArray(json.examData.examLibrary) && json.examData.examLibrary.length > 0
-          ? json.examData.examLibrary
-          : null);
+        : ((Array.isArray(json.examLibrary) && json.examLibrary.length > 0)
+          ? json.examLibrary
+          : (json.examData && Array.isArray(json.examData.examLibrary) && json.examData.examLibrary.length > 0
+            ? json.examData.examLibrary
+            : null));
 
       // 當考官已登入後台或剛異動過試卷庫時，背景靜默輪詢 (silent=true) 不覆蓋本機試卷庫，避免新匯入或手動編輯內容被雲端舊狀態覆蓋
       const shouldSyncExamLibrary = !silent || force || roleJustUpgraded || (!isExaminerAuthenticated && (Date.now() - lastExamLibrarySaveAt > 15000));
@@ -439,7 +440,7 @@ async function syncStateFromCloud(silent = true, force = false) {
         examLibrary = cloudLibrary;
         localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
         if (!currentSelectedExamId || !examLibrary.some(e => e.id === currentSelectedExamId)) {
-          currentSelectedExamId = examLibrary[0].id;
+          currentSelectedExamId = examLibrary[0] ? examLibrary[0].id : '';
         }
       }
 
@@ -2622,6 +2623,14 @@ async function handleConfirmPasswordReset(event) {
     return;
   }
 
+  const siteKey = getActiveTurnstileSiteKey();
+  const turnstileToken = getExaminerTurnstileToken();
+  if (siteKey && !turnstileToken) {
+    showForgotAlert('🛡️ 請先完成下方 Cloudflare 訪客安全驗證後再送出重設密碼！', 'warning');
+    initOrResetExaminerTurnstile();
+    return;
+  }
+
   if (confirmBtn) {
     confirmBtn.disabled = true;
     confirmBtn.textContent = '⏳ 正在驗證並更新密碼...';
@@ -2633,8 +2642,10 @@ async function handleConfirmPasswordReset(event) {
       username,
       resetCode,
       newPassword,
+      turnstileToken,
       clientId: getOrCreateClientDeviceId()
     });
+    initOrResetExaminerTurnstile();
 
     if (res && res.status === 'success') {
       showForgotAlert(res.message || '✅ 密碼重設成功！請返回帳號登入頁面使用新密碼登入。', 'success');
@@ -2731,15 +2742,7 @@ async function handlePinLogin(event) {
       if (verifyRes && verifyRes.status === 'success') {
         isPinValid = true;
         issuedSessionToken = verifyRes.sessionToken || '';
-        currentExaminerProfile = verifyRes.userProfile || {
-          userId: 'SYSTEM_ADMIN',
-          username: usernameInput,
-          displayName: usernameInput,
-          organization: '',
-          role: 'admin',
-          status: 'active'
-        };
-        isBootstrapAdminSession = Boolean(verifyRes.needBootstrapAdmin);
+        currentExaminerProfile = verifyRes.userProfile || null;
         localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
       } else if (verifyRes && (verifyRes.status === 'turnstile_failed' || verifyRes.status === 'pending_review')) {
         isPinValid = false;
@@ -2910,7 +2913,6 @@ function logoutExaminer(reason) {
   isExaminerAuthenticated = false;
   currentExaminerAuthToken = '';
   currentExaminerProfile = null;
-  isBootstrapAdminSession = false;
   adminUsersCache = [];
   isGasUrlUnlockedBySecret = false;
   gasSecretClickCount = 0;
@@ -2982,8 +2984,7 @@ async function handleUpdateExaminerPin(event) {
     alertBox.classList.remove('hidden');
   }
 
-  const isBootstrap = isBootstrapAdminSession || (currentExaminerProfile && currentExaminerProfile.userId === 'SYSTEM_ADMIN');
-  if (!isBootstrap && !currentPassword) {
+  if (!currentPassword) {
     showPinAlert('⚠️ 請輸入您目前的登入密碼 (PIN) 以驗證本人身分！', 'danger');
     if (currentPwEl) currentPwEl.focus();
     return;
@@ -3018,13 +3019,6 @@ async function handleUpdateExaminerPin(event) {
     clientId: getOrCreateClientDeviceId()
   };
 
-  if (isBootstrap) {
-    reqPayload.newAdminUsername = (document.getElementById('bootstrapAdminUsername')?.value || 'admin').trim();
-    reqPayload.displayName = (document.getElementById('bootstrapAdminName')?.value || '管理員').trim();
-    reqPayload.birthDate = (document.getElementById('bootstrapAdminBirth')?.value || '1990-01-01').trim();
-    reqPayload.email = (document.getElementById('bootstrapAdminEmail')?.value || 'admin@system.local').trim();
-  }
-
   const res = await postToCloud(reqPayload);
 
   if (!res || res.status !== 'success') {
@@ -3039,7 +3033,6 @@ async function handleUpdateExaminerPin(event) {
   }
   if (res.userProfile) {
     currentExaminerProfile = res.userProfile;
-    isBootstrapAdminSession = false;
   }
   localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
 
@@ -3293,7 +3286,6 @@ function renderExaminerSettingsTab() {
   const settingsGrid = document.getElementById('settingsBottomGrid');
   const ownUsernameEl = document.getElementById('ownProfileUsername');
   const ownNameOrgEl = document.getElementById('ownProfileNameAndOrg');
-  const bootstrapWrap = document.getElementById('bootstrapAdminFieldsWrap');
   const currPwGroup = document.getElementById('currentPasswordGroup');
 
   // 管理員才可檢視與操作「註冊審核 & 成員管理」以及「Google 雲端資料庫 & 自動寄成績信設定」
@@ -3317,12 +3309,8 @@ function renderExaminerSettingsTab() {
     ownNameOrgEl.textContent = `${nameStr}${orgStr}${roleStr}`;
   }
 
-  const isBootstrap = isBootstrapAdminSession || (currentExaminerProfile && currentExaminerProfile.userId === 'SYSTEM_ADMIN');
-  if (bootstrapWrap) {
-    bootstrapWrap.classList.toggle('hidden', !isBootstrap);
-  }
   if (currPwGroup) {
-    currPwGroup.classList.toggle('hidden', isBootstrap);
+    currPwGroup.classList.remove('hidden');
   }
 }
 

@@ -42,78 +42,25 @@ function getExamImageFolderId() {
 }
 
 /**
- * 首次部署或需要更新後端管理員金鑰 / 初始化預設管理員帳號時，可在 Apps Script 編輯器修改下方參數並執行一次 `initCustomSecurityCredentials`
+ * 首次部署或需要更新後端管理員金鑰時，可在 Apps Script 編輯器修改下方參數並執行一次 `initCustomSecurityCredentials`
  * 執行後系統會自動產生高熵隨機 Salt/Pepper 並將雜湊安全寫入 Script Properties (請勿將真實密碼留存於程式碼中提交至 GitHub)
  */
 function initCustomSecurityCredentials() {
   const props = PropertiesService.getScriptProperties();
   const all = props.getProperties();
-  const pinSalt = all.EXAMINER_PIN_SALT || ('PIN_SALT_' + Utilities.getUuid().replace(/-/g, ''));
   const adminSalt = all.ADMIN_KEY_SALT || ('ADM_SALT_' + Utilities.getUuid().replace(/-/g, ''));
   const pwPepper = all.USER_PASSWORD_PEPPER || ('PEPPER_' + Utilities.getUuid().replace(/-/g, '') + '_' + Utilities.getUuid().replace(/-/g, ''));
-  // 如需重設，請暫時將下方空字串改為您自訂的 PIN 碼與管理員金鑰並點選「執行」，執行完畢後請清空還原為 ''
-  const customPin = '';
+  // 如需重設管理員金鑰，請暫時將下方空字串改為自訂金鑰並點選「執行」，執行完畢後請清空還原為 ''
   const customAdminKey = '';
-  // 如需直接於試算表建立/重設首位管理員帳號，可填入下方 adminUsername 與 adminPassword (須含大小寫英文與數字，至少 8 碼)，執行後請清空還原為 ''
-  const bootstrapAdminUsername = '';
-  const bootstrapAdminPassword = '';
   const updates = {
-    EXAMINER_PIN_SALT: pinSalt,
     ADMIN_KEY_SALT: adminSalt,
     USER_PASSWORD_PEPPER: pwPepper
   };
-  if (customPin) {
-    updates.EXAMINER_PIN_HASH = sha256Hex(`${pinSalt}:${customPin}`).toLowerCase();
-  }
   if (customAdminKey) {
     updates.ADMIN_KEY_HASH = sha256Hex(`${adminSalt}:${customAdminKey}`).toLowerCase();
   }
   props.setProperties(updates, false);
-
-  if (bootstrapAdminUsername && bootstrapAdminPassword) {
-    const cleanUser = String(bootstrapAdminUsername).trim().toLowerCase();
-    const cleanPass = String(bootstrapAdminPassword);
-    if (!isStrongPasswordGas(cleanPass)) {
-      Logger.log('❌ 管理員密碼強度不符（須 8~64 碼且包含大寫英文、小寫英文與數字）');
-      return;
-    }
-    const users = loadUsersFromSheet();
-    const existing = users.find(u => u.username.toLowerCase() === cleanUser);
-    const salt = 'USR_SALT_' + Utilities.getUuid().replace(/-/g, '');
-    const hash = hashUserPasswordGas(cleanPass, salt, pwPepper);
-    const nowIso = new Date().toISOString();
-    if (existing) {
-      existing.pwSalt = salt;
-      existing.pwHash = hash;
-      existing.role = 'admin';
-      existing.status = 'active';
-      existing.failCount = 0;
-      existing.lockedUntil = 0;
-      existing.pwChangedAt = Date.now();
-    } else {
-      users.push({
-        userId: 'usr_admin_' + Utilities.getUuid().replace(/-/g, '').substring(0, 12),
-        username: cleanUser,
-        displayName: '系統管理員',
-        birthDate: '1990-01-01',
-        organization: '系統管理中心',
-        email: 'admin@system.local',
-        pwSalt: salt,
-        pwHash: hash,
-        role: 'admin',
-        status: 'active',
-        failCount: 0,
-        lockedUntil: 0,
-        createdAt: nowIso,
-        approvedBy: 'SYSTEM_BOOTSTRAP',
-        lastLoginAt: '',
-        pwChangedAt: Date.now()
-      });
-    }
-    saveUsersToSheet(users);
-    Logger.log('✅ 已於【考官帳號資料】建立/更新管理員帳號：' + cleanUser);
-  }
-  Logger.log('✅ 安全憑證雜湊已更新至 Script Properties！');
+  Logger.log('✅ 安全憑證設定已更新至 Script Properties！');
 }
 
 /**
@@ -148,17 +95,45 @@ function sha256Hex(text) {
   return bytes.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
 }
 
+const PW_HASH_ITERATIONS_V2 = 10000;
+
 /**
- * 考官密碼雜湊 (Per-User Random Salt + Server Pepper + 2500 次迭代 SHA-256 雜湊鏈)
+ * 考官密碼雜湊 (Per-User Random Salt + Server Pepper + 10,000 次迭代 SHA-256 雜湊鏈，M4 安全加固)
  * 防止離線字典破解與彩虹表攻擊
  */
-function hashUserPasswordGas(plainPassword, userSalt, serverPepper) {
+function hashUserPasswordGas(plainPassword, userSalt, serverPepper, iterations) {
+  const iter = Number(iterations) || PW_HASH_ITERATIONS_V2;
   const seed = `${serverPepper || ''}:${userSalt || ''}:${plainPassword || ''}`;
   let digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, seed, Utilities.Charset.UTF_8);
-  for (let i = 0; i < 2500; i++) {
+  for (let i = 0; i < iter; i++) {
     digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, digest);
   }
-  return digest.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
+  const hex = digest.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
+  return iterations ? hex : `v2$${iter}$${hex}`;
+}
+
+/**
+ * 驗證考官密碼 (支援 v2 高迭代格式並向下相容舊版 2500 次雜湊，登入成功時可無痛升級)
+ */
+function verifyUserPasswordGas(plainPassword, userSalt, serverPepper, storedHash) {
+  const stored = String(storedHash || '').trim();
+  if (!stored) return { matched: false, needsUpgrade: false };
+  if (stored.startsWith('v2$')) {
+    const parts = stored.split('$');
+    const iter = parseInt(parts[1], 10);
+    const expectedHex = parts[2] || '';
+    if (!iter || iter < 1000 || !expectedHex) return { matched: false, needsUpgrade: false };
+    const computedHex = hashUserPasswordGas(plainPassword, userSalt, serverPepper, iter);
+    return {
+      matched: constantTimeEqualsGas(computedHex, expectedHex),
+      needsUpgrade: iter < PW_HASH_ITERATIONS_V2
+    };
+  }
+  const legacyHex = hashUserPasswordGas(plainPassword, userSalt, serverPepper, 2500);
+  return {
+    matched: constantTimeEqualsGas(legacyHex, stored),
+    needsUpgrade: true
+  };
 }
 
 /**
@@ -188,14 +163,10 @@ function isStrongPasswordGas(pw) {
  * 讀取與自動初始化 Script Properties 中的安全憑證雜湊與鹽值
  * (將機敏驗證參數存放於伺服器端 Script Properties，避免暴露於前端原始碼或試算表儲存格)
  */
-function getSecurityConfig(state) {
+function getSecurityConfig() {
   const props = PropertiesService.getScriptProperties();
   let all = props.getProperties();
   const updates = {};
-
-  // 自動產生每個部署專屬的隨機高熵 Salt & Pepper，不再於程式碼中寫死公開 Salt 或預設弱密碼雜湊
-  const pinSalt = (all.EXAMINER_PIN_SALT || '').trim() || ('PIN_SALT_' + Utilities.getUuid().replace(/-/g, ''));
-  if (!all.EXAMINER_PIN_SALT) updates.EXAMINER_PIN_SALT = pinSalt;
 
   const adminSalt = (all.ADMIN_KEY_SALT || '').trim() || ('ADM_SALT_' + Utilities.getUuid().replace(/-/g, ''));
   if (!all.ADMIN_KEY_SALT) updates.ADMIN_KEY_SALT = adminSalt;
@@ -203,15 +174,15 @@ function getSecurityConfig(state) {
   const pwPepper = (all.USER_PASSWORD_PEPPER || '').trim() || ('PEPPER_' + Utilities.getUuid().replace(/-/g, '') + '_' + Utilities.getUuid().replace(/-/g, ''));
   if (!all.USER_PASSWORD_PEPPER) updates.USER_PASSWORD_PEPPER = pwPepper;
 
-  // 僅讀取 Script Properties (或舊版試算表遷移之自訂雜湊)，移除原始碼中寫死的公開預設雜湊
-  const legacyStateHash = (state && state.examinerPinHash) ? String(state.examinerPinHash).trim().toLowerCase() : '';
-  const pinHash = (all.EXAMINER_PIN_HASH || legacyStateHash || '').trim().toLowerCase();
-  if (!all.EXAMINER_PIN_HASH && pinHash) updates.EXAMINER_PIN_HASH = pinHash;
-
   const adminHash = (all.ADMIN_KEY_HASH || '').trim().toLowerCase();
 
   // Cloudflare Turnstile Secret Key (必須於 Script Properties 設定 TURNSTILE_SECRET_KEY)
   const turnstileSecretKey = (all.TURNSTILE_SECRET_KEY || '').trim();
+  // 選填：於 Script Properties 設定 TURNSTILE_ALLOWED_HOSTNAMES (以逗號分隔，如 bruceabc0511.github.io) 以限制驗證網域 (M7)
+  const turnstileAllowedHostnames = String(all.TURNSTILE_ALLOWED_HOSTNAMES || '')
+    .split(',')
+    .map(h => h.trim().toLowerCase())
+    .filter(Boolean);
 
   if (Object.keys(updates).length > 0) {
     try {
@@ -219,30 +190,30 @@ function getSecurityConfig(state) {
     } catch (e) {}
   }
 
-  return { pinSalt, pinHash, adminSalt, adminHash, pwPepper, turnstileSecretKey };
+  return { adminSalt, adminHash, pwPepper, turnstileSecretKey, turnstileAllowedHostnames };
 }
 
 /**
- * 向 Cloudflare Turnstile Siteverify API 驗證前端傳入之訪客 Token (Fail-Closed 強制驗證機制)
+ * 向 Cloudflare Turnstile Siteverify API 驗證前端傳入之訪客 Token (Fail-Closed 強制驗證機制 + Hostname 檢查)
  * - 必須於 Script Properties 設定 TURNSTILE_SECRET_KEY，且前端必須傳入有效之單次 turnstileToken。
- * - 移除測試用 Secret Key (1x0000000000000000000000000000000AA) 與空 Token 跳過邏輯，徹底防範繞過攻擊。
+ * - 若設定了 TURNSTILE_ALLOWED_HOSTNAMES，會額外比對 Turnstile 回傳之 hostname，防止跨網域 Token 重放。
  */
-function verifyCloudflareTurnstileToken(turnstileToken, state) {
-  const cfg = getSecurityConfig(state);
+function verifyCloudflareTurnstileToken(turnstileToken) {
+  const cfg = getSecurityConfig();
   const configuredSecret = cfg.turnstileSecretKey;
   const cleanToken = String(turnstileToken || '').trim();
 
   if (!configuredSecret) {
     return {
       success: false,
-      message: '🛡️ 雲端後端尚未於 Script Properties 設定 TURNSTILE_SECRET_KEY，系統拒絕登入請求！'
+      message: '🛡️ 雲端後端尚未於 Script Properties 設定 TURNSTILE_SECRET_KEY，系統拒絕請求！'
     };
   }
 
   if (!cleanToken) {
     return {
       success: false,
-      message: '🛡️ 請先完成 Cloudflare 訪客安全驗證後再點擊登入！'
+      message: '🛡️ 請先完成 Cloudflare 訪客安全驗證後再送出！'
     };
   }
 
@@ -258,6 +229,16 @@ function verifyCloudflareTurnstileToken(turnstileToken, state) {
     });
     const result = JSON.parse(response.getContentText() || '{}');
     if (result && result.success === true) {
+      if (cfg.turnstileAllowedHostnames && cfg.turnstileAllowedHostnames.length > 0) {
+        const respHost = String(result.hostname || '').trim().toLowerCase();
+        if (!respHost || cfg.turnstileAllowedHostnames.indexOf(respHost) === -1) {
+          console.warn('Turnstile hostname mismatch:', respHost);
+          return {
+            success: false,
+            message: '🛡️ Cloudflare 驗證來源網域不符，請重新整理頁面後再試！'
+          };
+        }
+      }
       return { success: true };
     }
     return {
@@ -326,20 +307,21 @@ function clearAuthFailures(clientId) {
 }
 
 /**
- * 考官伺服器端 Session Token 管理 (隨機高熵 UUID，綁定個人身分與角色，30 分鐘滑動有效期限)
+ * 考官伺服器端 Session Token 管理 (隨機高熵 UUID，綁定個人身分與角色，30 分鐘滑動有效期限 + 8 小時絕對存活上限)
  */
 const EXAMINER_SESSION_TTL_SEC = 1800;
+const EXAMINER_SESSION_MAX_LIFETIME_MS = 8 * 60 * 60 * 1000;
 
 function createExaminerSession(userProfile) {
+  if (!userProfile || !userProfile.userId) return '';
   const token = 'exs_' + Utilities.getUuid().replace(/-/g, '') + '_' + Utilities.getUuid().replace(/-/g, '');
   const cache = CacheService.getScriptCache();
   const sessObj = {
-    userId: (userProfile && userProfile.userId) ? String(userProfile.userId) : 'SYSTEM_ADMIN',
-    username: (userProfile && userProfile.username) ? String(userProfile.username) : 'admin',
-    displayName: (userProfile && userProfile.displayName) ? String(userProfile.displayName) : '系統管理員',
-    organization: (userProfile && userProfile.organization) ? String(userProfile.organization) : '系統管理中心',
-    role: (userProfile && userProfile.role) ? String(userProfile.role) : 'admin',
-    pwChangedAt: (userProfile && userProfile.pwChangedAt) ? Number(userProfile.pwChangedAt) : 0,
+    userId: String(userProfile.userId),
+    username: String(userProfile.username || ''),
+    displayName: String(userProfile.displayName || ''),
+    organization: String(userProfile.organization || ''),
+    role: String(userProfile.role || 'examiner'),
     issuedAt: Date.now()
   };
   cache.put('EXAMINER_SESS_' + token, JSON.stringify(sessObj), EXAMINER_SESSION_TTL_SEC);
@@ -347,7 +329,7 @@ function createExaminerSession(userProfile) {
 }
 
 /**
- * 取得並驗證考官 Session 身分物件 (同時核對該使用者在 USERS 表中是否仍為 active，以及密碼是否已變更導致舊 Session 失效)
+ * 取得並驗證考官 Session 身分物件 (檢查絕對存活上限、帳號撤銷標記並更新滑動效期)
  */
 function getExaminerSessionUser(sessionToken) {
   if (!sessionToken || typeof sessionToken !== 'string') return null;
@@ -355,36 +337,33 @@ function getExaminerSessionUser(sessionToken) {
   if (!clean.startsWith('exs_')) return null;
   const cache = CacheService.getScriptCache();
   const val = cache.get('EXAMINER_SESS_' + clean);
-  if (!val) return null;
+  if (!val || !val.startsWith('{')) return null;
 
   let sessObj = null;
   try {
-    if (val.startsWith('{')) {
-      sessObj = JSON.parse(val);
-    } else {
-      // 向下相容舊版純時間戳 Session
-      sessObj = {
-        userId: 'SYSTEM_ADMIN',
-        username: 'admin',
-        displayName: '系統管理員',
-        organization: '系統管理中心',
-        role: 'admin',
-        pwChangedAt: 0,
-        issuedAt: Number(val) || Date.now()
-      };
-    }
+    sessObj = JSON.parse(val);
   } catch (e) {
     return null;
   }
 
-  // 若為真實註冊帳號 (非 SYSTEM_ADMIN)，即時檢查帳號狀態是否已被停用或密碼已被變更
-  if (sessObj && sessObj.userId && sessObj.userId !== 'SYSTEM_ADMIN') {
-    const revKey = 'USER_REVOKED_AT_' + sessObj.userId;
-    const revokedAt = Number(cache.get(revKey) || 0);
-    if (revokedAt > 0 && revokedAt > Number(sessObj.issuedAt || 0)) {
-      cache.remove('EXAMINER_SESS_' + clean);
-      return null;
-    }
+  if (!sessObj || !sessObj.userId || sessObj.userId === 'SYSTEM_ADMIN') {
+    cache.remove('EXAMINER_SESS_' + clean);
+    return null;
+  }
+
+  // M1: 檢查 Session 絕對存活上限 (8 小時)，防止透過滑動續期無限延長有效期限
+  const issuedAt = Number(sessObj.issuedAt || 0);
+  if (!issuedAt || (Date.now() - issuedAt > EXAMINER_SESSION_MAX_LIFETIME_MS)) {
+    cache.remove('EXAMINER_SESS_' + clean);
+    return null;
+  }
+
+  // 即時檢查帳號是否已被停用、降級或密碼已變更
+  const revKey = 'USER_REVOKED_AT_' + sessObj.userId;
+  const revokedAt = Number(cache.get(revKey) || 0);
+  if (revokedAt > 0 && revokedAt > issuedAt) {
+    cache.remove('EXAMINER_SESS_' + clean);
+    return null;
   }
 
   // 滑動延長 Session 有效期限
@@ -406,26 +385,13 @@ function revokeExaminerSession(sessionToken) {
 }
 
 /**
- * 立即撤銷某位使用者的所有既有登入 Session (用於密碼變更、忘記密碼重設、管理員停用/刪除帳號)
+ * 立即撤銷某位使用者的所有既有登入 Session (用於密碼變更、忘記密碼重設、管理員停用/降級/刪除帳號)
  */
 function revokeAllUserSessionsGas(userId) {
   if (!userId) return;
   try {
     CacheService.getScriptCache().put('USER_REVOKED_AT_' + String(userId), String(Date.now()), EXAMINER_SESSION_TTL_SEC + 300);
   } catch (e) {}
-}
-
-/**
- * 驗證舊版考官 PIN (僅供尚未建立任何 USERS 帳號時的首次向下相容緊急登入)
- */
-function verifyExaminerPinSecret(pinOrHash, state) {
-  if (!pinOrHash || typeof pinOrHash !== 'string') return false;
-  const cfg = getSecurityConfig(state);
-  if (!cfg.pinHash) return false;
-  const clean = pinOrHash.trim();
-  if (!/^\d{4,12}$/.test(clean)) return false;
-  const computed = sha256Hex(`${cfg.pinSalt}:${clean}`).toLowerCase();
-  return computed === cfg.pinHash;
 }
 
 /**
@@ -438,17 +404,6 @@ function getAuthorizedExaminerUser(payload, state) {
 
 function isExaminerRequestAuthorized(payload, state) {
   return Boolean(getAuthorizedExaminerUser(payload, state));
-}
-
-/**
- * 管理員金鑰後端驗證 (讀取 Script Properties，不再將雜湊暴露於前端)
- */
-function isAdminKeyValid(adminKey, state) {
-  if (!adminKey || typeof adminKey !== 'string') return false;
-  const cfg = getSecurityConfig(state);
-  if (!cfg.adminHash) return false;
-  const clean = adminKey.trim();
-  return sha256Hex(`${cfg.adminSalt}:${clean}`).toLowerCase() === cfg.adminHash;
 }
 
 /**
@@ -517,13 +472,12 @@ function doGet(e) {
     const action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getExamState';
 
     if (action === 'ping') {
-      const state = loadCloudState();
-      getSecurityConfig(state); // 確保 Script Properties 已自動初始化
+      ensureSheetsInitialized();
+      getSecurityConfig(); // 確保 Script Properties 已自動初始化，不載入完整試卷與成績狀態
       return jsonResponse({
         status: 'success',
         message: 'Google 試算表雲端測驗資料庫與自動寄信服務運作正常！',
         hasExamLibrarySupport: true,
-        version: '2026-11-22-v4-security-hardened',
         timestamp: new Date().toISOString()
       });
     }
@@ -656,6 +610,71 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  let payload = {};
+  try {
+    const rawBody = (e && e.postData && e.postData.contents) ? e.postData.contents : '{}';
+    payload = JSON.parse(rawBody);
+  } catch (parseErr) {
+    return jsonResponse({ status: 'error', message: '請求格式不正確' });
+  }
+  const action = payload.action || '';
+
+  // M4 & H1 安全加固：將外部 HTTP 驗證 (Turnstile) 與免鎖預檢移至全域 ScriptLock 之外，避免外部網路延遲阻塞考生交卷
+  const turnstileActions = ['registerExaminer', 'requestPasswordReset', 'confirmPasswordReset', 'verifyExaminer'];
+  if (turnstileActions.indexOf(action) !== -1) {
+    const clientIdPre = String(payload.clientId || '').trim();
+    if (isAuthRateLimited(clientIdPre)) {
+      return jsonResponse({ status: 'locked', message: '操作過於頻繁或錯誤次數過多，系統已暫時鎖定 3 分鐘' });
+    }
+    const turnstileCheck = verifyCloudflareTurnstileToken(payload.turnstileToken);
+    if (!turnstileCheck.success) {
+      return jsonResponse({
+        status: 'turnstile_failed',
+        message: turnstileCheck.message
+      });
+    }
+  }
+
+  // 若為考官註冊，先於鎖外完成欄位格式檢查與高迭代密碼雜湊計算 (M4)
+  let precomputedReg = null;
+  if (action === 'registerExaminer') {
+    const displayName = String(payload.displayName || '').trim().substring(0, 40);
+    const birthDate = String(payload.birthDate || '').trim();
+    const organization = String(payload.organization || '').trim().substring(0, 60);
+    const username = String(payload.username || '').trim().toLowerCase();
+    const password = String(payload.password || '');
+    const email = String(payload.email || '').trim().toLowerCase().substring(0, 120);
+
+    if (!displayName || displayName.length < 2) {
+      return jsonResponse({ status: 'error', message: '請填寫正確的考官姓名（至少 2 個字）' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+      return jsonResponse({ status: 'error', message: '請選擇正確的西元出生年月日（格式 YYYY-MM-DD）' });
+    }
+    const birthYear = parseInt(birthDate.substring(0, 4), 10);
+    const currentYear = new Date().getFullYear();
+    if (isNaN(birthYear) || birthYear < 1920 || birthYear > currentYear) {
+      return jsonResponse({ status: 'error', message: '西元出生年份不合理，請重新確認' });
+    }
+    if (!organization || organization.length < 2) {
+      return jsonResponse({ status: 'error', message: '請填寫服務單位（至少 2 個字）' });
+    }
+    if (!/^[a-zA-Z0-9_]{4,24}$/.test(username)) {
+      return jsonResponse({ status: 'error', message: '自訂帳號格式不符（須為 4~24 碼半形英文字母、數字或底線 _）' });
+    }
+    if (!isStrongPasswordGas(password)) {
+      return jsonResponse({ status: 'error', message: '密碼強度不足！密碼長度須為 8~64 碼，且必須同時包含「大寫英文」、「小寫英文」及「數字」' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return jsonResponse({ status: 'error', message: '請填寫格式正確的電子郵件 (Email)' });
+    }
+
+    const cfg = getSecurityConfig();
+    const pwSalt = 'USR_SALT_' + Utilities.getUuid().replace(/-/g, '');
+    const pwHash = hashUserPasswordGas(password, pwSalt, cfg.pwPepper);
+    precomputedReg = { displayName, birthDate, organization, username, email, pwSalt, pwHash };
+  }
+
   const lock = LockService.getScriptLock();
   // 併發安全防護：取鎖失敗時回傳 busy 狀態，由前端自動隨機退避重試，避免資料覆蓋
   const hasLock = lock.tryLock(20000);
@@ -667,73 +686,21 @@ function doPost(e) {
   }
 
   try {
-    const rawBody = (e && e.postData && e.postData.contents) ? e.postData.contents : '{}';
-    const payload = JSON.parse(rawBody);
-    const action = payload.action || '';
-
     const state = loadCloudState();
 
-    // 0-A. 考官註冊申請 (姓名、西元出生年月日、服務單位、自訂帳號、密碼、Email，送出後由管理員審核通過始得登入)
+    // 0-A. 考官註冊申請 (Low #1：不洩漏是帳號還是 Email 重複)
     if (action === 'registerExaminer') {
-      const clientId = String(payload.clientId || '').trim();
-      if (isAuthRateLimited(clientId)) {
-        return jsonResponse({ status: 'locked', message: '操作過於頻繁或錯誤次數過多，系統已暫時鎖定 3 分鐘' });
-      }
-      const turnstileCheck = verifyCloudflareTurnstileToken(payload.turnstileToken, state);
-      if (!turnstileCheck.success) {
+      const { displayName, birthDate, organization, username, email, pwSalt, pwHash } = precomputedReg;
+      const users = loadUsersFromSheet();
+      const dupExists = users.some(u => u.username.toLowerCase() === username || u.email.toLowerCase() === email);
+      if (dupExists) {
         return jsonResponse({
-          status: 'turnstile_failed',
-          message: turnstileCheck.message
+          status: 'error',
+          message: '❌ 註冊失敗：此帳號或電子郵件已無法使用，請更換其他帳號與信箱，或聯繫管理員確認。'
         });
       }
 
-      const displayName = String(payload.displayName || '').trim().substring(0, 40);
-      const birthDate = String(payload.birthDate || '').trim();
-      const organization = String(payload.organization || '').trim().substring(0, 60);
-      const username = String(payload.username || '').trim().toLowerCase();
-      const password = String(payload.password || '');
-      const email = String(payload.email || '').trim().toLowerCase().substring(0, 120);
-
-      if (!displayName || displayName.length < 2) {
-        return jsonResponse({ status: 'error', message: '請填寫正確的考官姓名（至少 2 個字）' });
-      }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
-        return jsonResponse({ status: 'error', message: '請選擇正確的西元出生年月日（格式 YYYY-MM-DD）' });
-      }
-      const birthYear = parseInt(birthDate.substring(0, 4), 10);
-      const currentYear = new Date().getFullYear();
-      if (isNaN(birthYear) || birthYear < 1920 || birthYear > currentYear) {
-        return jsonResponse({ status: 'error', message: '西元出生年份不合理，請重新確認' });
-      }
-      if (!organization || organization.length < 2) {
-        return jsonResponse({ status: 'error', message: '請填寫服務單位（至少 2 個字）' });
-      }
-      if (!/^[a-zA-Z0-9_]{4,24}$/.test(username)) {
-        return jsonResponse({ status: 'error', message: '自訂帳號格式不符（須為 4~24 碼半形英文字母、數字或底線 _）' });
-      }
-      if (!isStrongPasswordGas(password)) {
-        return jsonResponse({ status: 'error', message: '密碼強度不足！密碼長度須為 8~64 碼，且必須同時包含「大寫英文」、「小寫英文」及「數字」' });
-      }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return jsonResponse({ status: 'error', message: '請填寫格式正確的電子郵件 (Email)' });
-      }
-
-      const users = loadUsersFromSheet();
-      const dupUser = users.find(u => u.username.toLowerCase() === username);
-      if (dupUser) {
-        return jsonResponse({ status: 'error', message: '此自訂帳號已被註冊使用，請更換其他帳號名稱' });
-      }
-      const dupEmail = users.find(u => u.email.toLowerCase() === email);
-      if (dupEmail) {
-        return jsonResponse({ status: 'error', message: '此電子郵件 (Email) 已被註冊使用，若忘記密碼請使用「忘記密碼」功能' });
-      }
-
-      const cfg = getSecurityConfig(state);
-      const pwSalt = 'USR_SALT_' + Utilities.getUuid().replace(/-/g, '');
-      const pwHash = hashUserPasswordGas(password, pwSalt, cfg.pwPepper);
       const nowIso = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
-
-      // 若系統目前完全沒有任何管理員帳號，且此註冊者提供了正確的系統管理員金鑰 (或可在後台手動核准)，預設註冊一律為 pending_review 考官
       const newUserId = 'usr_' + Utilities.getUuid().replace(/-/g, '').substring(0, 12);
       users.push({
         userId: newUserId,
@@ -764,19 +731,9 @@ function doPost(e) {
     }
 
     // 0-B. 忘記密碼 — 步驟 1：核對「自訂帳號 + Email + 西元出生年月日」三要素並寄發 15 分鐘有效之一次性重設驗證碼
+    // (Low #1：對外回傳統一訊息，防止帳號/信箱/生日枚舉；M3：使用密碼學安全雜湊衍生驗證碼)
     if (action === 'requestPasswordReset') {
       const clientId = String(payload.clientId || '').trim();
-      if (isAuthRateLimited(clientId)) {
-        return jsonResponse({ status: 'locked', message: '驗證嘗試次數過多，系統已暫時鎖定 3 分鐘' });
-      }
-      const turnstileCheck = verifyCloudflareTurnstileToken(payload.turnstileToken, state);
-      if (!turnstileCheck.success) {
-        return jsonResponse({
-          status: 'turnstile_failed',
-          message: turnstileCheck.message
-        });
-      }
-
       const username = String(payload.username || '').trim().toLowerCase();
       const email = String(payload.email || '').trim().toLowerCase();
       const birthDate = String(payload.birthDate || '').trim();
@@ -787,21 +744,14 @@ function doPost(e) {
 
       const users = loadUsersFromSheet();
       const targetUser = users.find(u => u.username.toLowerCase() === username);
+      const genericSuccessMsg = '📧 若輸入的帳號、Email 與西元出生年月日與系統紀錄相符且帳號已啟用，系統已將 8 碼重設驗證碼寄至您的註冊信箱（15 分鐘內有效）。';
 
-      // 核對帳號、Email、西元出生年月日三者是否完全吻合，且帳號狀態為 active
-      if (!targetUser || targetUser.email.toLowerCase() !== email || targetUser.birthDate !== birthDate) {
+      if (!targetUser || targetUser.email.toLowerCase() !== email || targetUser.birthDate !== birthDate || targetUser.status !== 'active') {
         recordAuthFailure(clientId);
-        appendAuditLogGas('-', username, 'PW_RESET_REQ_FAIL', username, '忘記密碼三要素核對不符');
+        appendAuditLogGas('-', username, 'PW_RESET_REQ_FAIL', username, '忘記密碼三要素核對不符或帳號未啟用');
         return jsonResponse({
-          status: 'error',
-          message: '❌ 帳號、電子郵件或西元出生年月日核對不符！請確認輸入資料與註冊時相同。'
-        });
-      }
-
-      if (targetUser.status !== 'active') {
-        return jsonResponse({
-          status: 'error',
-          message: '⚠️ 此帳號目前尚未通過管理員審核或已被停用，無法進行密碼重設，請聯繫系統管理員。'
+          status: 'success',
+          message: genericSuccessMsg
         });
       }
 
@@ -815,15 +765,17 @@ function doPost(e) {
         });
       }
 
-      // 產生 8 碼大寫英數高熵驗證碼 (排除易混淆字元 0, O, 1, I, L)
+      // M3: 使用密碼學高熵 UUID + SHA-256 雜湊位元組產生 8 碼大寫英數驗證碼 (取代 Math.random)
       const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+      const entropySeed = `${Utilities.getUuid()}:${Utilities.getUuid()}:${Date.now()}:${targetUser.userId}`;
+      const entropyBytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, entropySeed, Utilities.Charset.UTF_8);
       let resetCode = '';
       for (let i = 0; i < 8; i++) {
-        const randIdx = Math.floor(Math.random() * chars.length);
-        resetCode += chars.charAt(randIdx);
+        const idx = (entropyBytes[i] & 0xff) % chars.length;
+        resetCode += chars.charAt(idx);
       }
 
-      const cfg = getSecurityConfig(state);
+      const cfg = getSecurityConfig();
       const codeHash = sha256Hex(`${cfg.pwPepper}:RESET:${targetUser.userId}:${resetCode}`);
       const resetPayload = {
         userId: targetUser.userId,
@@ -870,17 +822,13 @@ function doPost(e) {
       appendAuditLogGas(targetUser.userId, targetUser.username, 'PW_RESET_CODE_SENT', targetUser.userId, '已寄發密碼重設驗證碼至註冊信箱');
       return jsonResponse({
         status: 'success',
-        message: '📧 身分核對通過！已將 8 碼重設驗證碼寄至您的註冊信箱（15 分鐘內有效），請於下方輸入驗證碼與新密碼。'
+        message: genericSuccessMsg
       });
     }
 
-    // 0-C. 忘記密碼 — 步驟 2：驗證 8 碼重設驗證碼並更新為新密碼
+    // 0-C. 忘記密碼 — 步驟 2：驗證 Turnstile + 8 碼重設驗證碼並更新為新密碼 (H1)
     if (action === 'confirmPasswordReset') {
       const clientId = String(payload.clientId || '').trim();
-      if (isAuthRateLimited(clientId)) {
-        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，系統已暫時鎖定 3 分鐘' });
-      }
-
       const username = String(payload.username || '').trim().toLowerCase();
       const resetCode = String(payload.resetCode || '').trim().toUpperCase();
       const newPassword = String(payload.newPassword || '');
@@ -915,7 +863,7 @@ function doPost(e) {
         return jsonResponse({ status: 'error', message: '驗證資料異常，請重新申請驗證碼' });
       }
 
-      const cfg = getSecurityConfig(state);
+      const cfg = getSecurityConfig();
       const inputHash = sha256Hex(`${cfg.pwPepper}:RESET:${targetUser.userId}:${resetCode}`);
       if (!constantTimeEqualsGas(inputHash, resetData.codeHash)) {
         resetData.attempts = (Number(resetData.attempts) || 0) + 1;
@@ -951,160 +899,96 @@ function doPost(e) {
       });
     }
 
-    // 0-D. 考官帳號密碼登入驗證 (PIN = 密碼)：先強制驗證 Cloudflare Turnstile Token，通過後核對帳號密碼並簽發綁定個人身分的 Session Token
+    // 0-D. 考官帳號密碼登入驗證 (已移除舊版初始 SYSTEM_ADMIN 與預設 PIN 登入分支，Low #4)
     if (action === 'verifyExaminer') {
       const clientId = String(payload.clientId || '').trim();
-      if (isAuthRateLimited(clientId)) {
-        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，系統已暫時鎖定 3 分鐘' });
-      }
-      const turnstileCheck = verifyCloudflareTurnstileToken(payload.turnstileToken, state);
-      if (!turnstileCheck.success) {
-        return jsonResponse({
-          status: 'turnstile_failed',
-          message: turnstileCheck.message
-        });
-      }
-
       const rawUsername = String(payload.username || '').trim().toLowerCase();
       const rawPassword = String(payload.password !== undefined ? payload.password : (payload.pin || ''));
+
+      if (!rawUsername || !rawPassword) {
+        return jsonResponse({ status: 'unauthorized', message: '請輸入考官帳號與密碼！' });
+      }
+
       const users = loadUsersFromSheet();
-      const cfg = getSecurityConfig(state);
+      const cfg = getSecurityConfig();
+      const user = users.find(u => u.username.toLowerCase() === rawUsername);
+      const genericAuthErr = '❌ 帳號或密碼錯誤，或此帳號暫時無法登入，請確認後再試！';
 
-      // 1. 若有輸入帳號，或 USERS 表已有使用者，走個人帳號密碼驗證
-      if (rawUsername) {
-        const user = users.find(u => u.username.toLowerCase() === rawUsername);
-
-        // 若 USERS 表尚無任何管理員，且使用者以帳號 'admin' + 原系統管理員金鑰 (或舊版 PIN) 首次登入，或透過 bootstrap 建立
-        if (!user) {
-          const hasAnyAdmin = users.some(u => u.role === 'admin' && u.status === 'active');
-          if (!hasAnyAdmin && rawUsername === 'admin' && (isAdminKeyValid(rawPassword, state) || verifyExaminerPinSecret(rawPassword, state))) {
-            clearAuthFailures(clientId);
-            const fallbackProfile = {
-              userId: 'SYSTEM_ADMIN',
-              username: 'admin',
-              displayName: '系統管理員 (初始模式)',
-              organization: '系統管理中心',
-              role: 'admin',
-              status: 'active',
-              pwChangedAt: 0
-            };
-            const sessionToken = createExaminerSession(fallbackProfile);
-            appendAuditLogGas('SYSTEM_ADMIN', 'admin', 'LOGIN_BOOTSTRAP_ADMIN', 'SYSTEM_ADMIN', '以初始金鑰登入管理員模式');
-            return jsonResponse({
-              status: 'success',
-              sessionToken: sessionToken,
-              userProfile: fallbackProfile,
-              needBootstrapAdmin: true,
-              expiresInSeconds: EXAMINER_SESSION_TTL_SEC
-            });
-          }
-
-          const fails = recordAuthFailure(clientId);
-          if (fails >= AUTH_CLIENT_MAX_FAILS) {
-            return jsonResponse({ status: 'locked', message: '帳號或密碼錯誤次數過多，已暫時鎖定 3 分鐘' });
-          }
-          return jsonResponse({ status: 'unauthorized', message: '帳號或密碼錯誤，請重新確認！' });
+      if (!user) {
+        const fails = recordAuthFailure(clientId);
+        if (fails >= AUTH_CLIENT_MAX_FAILS) {
+          return jsonResponse({ status: 'locked', message: '帳號或密碼錯誤次數過多，已暫時鎖定 3 分鐘' });
         }
+        return jsonResponse({ status: 'unauthorized', message: genericAuthErr });
+      }
 
-        // 檢查帳號層級鎖定 (連續錯誤 5 次鎖定 15 分鐘)
-        const nowTs = Date.now();
-        if (user.lockedUntil && Number(user.lockedUntil) > nowTs) {
-          const remMins = Math.ceil((Number(user.lockedUntil) - nowTs) / 60000);
-          return jsonResponse({
-            status: 'locked',
-            message: `此帳號因密碼連續錯誤已暫時鎖定，請於 ${remMins} 分鐘後再試，或使用「忘記密碼」重設。`
-          });
-        }
+      // 檢查帳號層級鎖定 (連續錯誤 5 次鎖定 5 分鐘，Low #1：不透露帳號是否存在)
+      const nowTs = Date.now();
+      if (user.lockedUntil && Number(user.lockedUntil) > nowTs) {
+        recordAuthFailure(clientId);
+        return jsonResponse({
+          status: 'unauthorized',
+          message: genericAuthErr
+        });
+      }
 
-        const computedHash = hashUserPasswordGas(rawPassword, user.pwSalt, cfg.pwPepper);
-        const isPwMatch = constantTimeEqualsGas(computedHash, user.pwHash);
+      const pwCheck = verifyUserPasswordGas(rawPassword, user.pwSalt, cfg.pwPepper, user.pwHash);
 
-        if (!isPwMatch) {
-          user.failCount = (Number(user.failCount) || 0) + 1;
-          if (user.failCount >= 5) {
-            user.lockedUntil = nowTs + 15 * 60 * 1000; // 鎖定 15 分鐘
-            saveUsersToSheet(users);
-            appendAuditLogGas(user.userId, user.username, 'ACCOUNT_LOCKED', user.userId, '連續密碼錯誤 5 次鎖定 15 分鐘');
-            return jsonResponse({
-              status: 'locked',
-              message: '密碼連續錯誤達 5 次，此帳號已自動鎖定 15 分鐘！'
-            });
-          }
+      if (!pwCheck.matched) {
+        user.failCount = (Number(user.failCount) || 0) + 1;
+        if (user.failCount >= 5) {
+          user.lockedUntil = nowTs + 5 * 60 * 1000; // 鎖定 5 分鐘
           saveUsersToSheet(users);
-          const fails = recordAuthFailure(clientId);
-          if (fails >= AUTH_CLIENT_MAX_FAILS) {
-            return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，裝置已暫時鎖定 3 分鐘' });
-          }
-          return jsonResponse({ status: 'unauthorized', message: '帳號或密碼錯誤，請重新確認！' });
-        }
-
-        // 密碼正確後，檢查審核與啟用狀態
-        if (user.status === 'pending_review') {
-          return jsonResponse({
-            status: 'pending_review',
-            message: '⏳ 您的考官帳號正在等待系統管理員審核中，審核通過後方可登入！'
-          });
-        }
-        if (user.status === 'rejected') {
+          appendAuditLogGas(user.userId, user.username, 'ACCOUNT_LOCKED', user.userId, '連續密碼錯誤 5 次鎖定 5 分鐘');
           return jsonResponse({
             status: 'unauthorized',
-            message: '❌ 您的帳號註冊申請未通過審核，如有疑問請洽系統管理員。'
+            message: genericAuthErr
           });
         }
-        if (user.status === 'suspended' || user.status !== 'active') {
-          return jsonResponse({
-            status: 'unauthorized',
-            message: '⛔ 您的帳號目前已被停用，請聯繫系統管理員。'
-          });
-        }
-
-        // 登入成功：重置失敗計數並更新最後登入時間
-        user.failCount = 0;
-        user.lockedUntil = 0;
-        user.lastLoginAt = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
         saveUsersToSheet(users);
-        clearAuthFailures(clientId);
+        const fails = recordAuthFailure(clientId);
+        if (fails >= AUTH_CLIENT_MAX_FAILS) {
+          return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，裝置已暫時鎖定 3 分鐘' });
+        }
+        return jsonResponse({ status: 'unauthorized', message: genericAuthErr });
+      }
 
-        const safeProfile = sanitizeUserForClientGas(user, false);
-        const sessionToken = createExaminerSession(user);
-        appendAuditLogGas(user.userId, user.username, 'LOGIN_SUCCESS', user.userId, `登入成功 (${user.role})`);
-
+      // 密碼正確後，檢查審核與啟用狀態
+      if (user.status === 'pending_review') {
         return jsonResponse({
-          status: 'success',
-          sessionToken: sessionToken,
-          userProfile: safeProfile,
-          expiresInSeconds: EXAMINER_SESSION_TTL_SEC
+          status: 'pending_review',
+          message: '⏳ 您的考官帳號正在等待系統管理員審核中，審核通過後方可登入！'
+        });
+      }
+      if (user.status !== 'active') {
+        return jsonResponse({
+          status: 'unauthorized',
+          message: genericAuthErr
         });
       }
 
-      // 2. 若未提供 username 且系統尚未建立任何 active 管理員帳號時，允許舊版 PIN 向下相容登入為初始管理員
-      const hasAnyActiveAdmin = users.some(u => u.role === 'admin' && u.status === 'active');
-      if (!hasAnyActiveAdmin && verifyExaminerPinSecret(rawPassword, state)) {
-        clearAuthFailures(clientId);
-        const fallbackProfile = {
-          userId: 'SYSTEM_ADMIN',
-          username: 'admin',
-          displayName: '系統管理員 (初始模式)',
-          organization: '系統管理中心',
-          role: 'admin',
-          status: 'active',
-          pwChangedAt: 0
-        };
-        const sessionToken = createExaminerSession(fallbackProfile);
-        return jsonResponse({
-          status: 'success',
-          sessionToken: sessionToken,
-          userProfile: fallbackProfile,
-          needBootstrapAdmin: true,
-          expiresInSeconds: EXAMINER_SESSION_TTL_SEC
-        });
+      // 登入成功：重置失敗計數、更新最後登入時間，若為舊版 2500 次雜湊則無痛升級至 10,000 次 (M4)
+      user.failCount = 0;
+      user.lockedUntil = 0;
+      user.lastLoginAt = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
+      if (pwCheck.needsUpgrade) {
+        const upgradedSalt = 'USR_SALT_' + Utilities.getUuid().replace(/-/g, '');
+        user.pwSalt = upgradedSalt;
+        user.pwHash = hashUserPasswordGas(rawPassword, upgradedSalt, cfg.pwPepper);
       }
+      saveUsersToSheet(users);
+      clearAuthFailures(clientId);
 
-      const fails = recordAuthFailure(clientId);
-      if (fails >= AUTH_CLIENT_MAX_FAILS) {
-        return jsonResponse({ status: 'locked', message: '帳號或密碼錯誤次數過多，已暫時鎖定 3 分鐘' });
-      }
-      return jsonResponse({ status: 'unauthorized', message: '請輸入正確的考官帳號與密碼！' });
+      const safeProfile = sanitizeUserForClientGas(user, false);
+      const sessionToken = createExaminerSession(user);
+      appendAuditLogGas(user.userId, user.username, 'LOGIN_SUCCESS', user.userId, `登入成功 (${user.role})`);
+
+      return jsonResponse({
+        status: 'success',
+        sessionToken: sessionToken,
+        userProfile: safeProfile,
+        expiresInSeconds: EXAMINER_SESSION_TTL_SEC
+      });
     }
 
     // 考官登出：立即銷毀伺服器端 Session Token
@@ -1115,7 +999,7 @@ function doPost(e) {
       return jsonResponse({ status: 'success', message: '已安全登出並撤銷雲端工作階段' });
     }
 
-    // 0-E. 考官變更自己的登入密碼 / PIN 碼 (僅能變更自己帳號的密碼，不再需要輸入管理員金鑰，亦不允許指定他人 userId)
+    // 0-E. 考官變更自己的登入密碼 / PIN 碼 (僅能變更自己帳號的密碼，並驗證本人目前密碼)
     if (action === 'updateOwnPassword' || action === 'updateExaminerPin') {
       const clientId = String(payload.clientId || '').trim();
       if (isAuthRateLimited(clientId)) {
@@ -1141,52 +1025,9 @@ function doPost(e) {
       }
 
       const users = loadUsersFromSheet();
-      const cfg = getSecurityConfig(state);
+      const cfg = getSecurityConfig();
 
-      // 若目前是以初始 SYSTEM_ADMIN 模式登入，允許直接建立首位正式管理員帳號
-      if (sessUser.userId === 'SYSTEM_ADMIN') {
-        const customUsername = String(payload.newAdminUsername || 'admin').trim().toLowerCase();
-        if (!/^[a-zA-Z0-9_]{4,24}$/.test(customUsername)) {
-          return jsonResponse({ status: 'error', message: '管理員帳號格式須為 4~24 碼半形英數字或底線' });
-        }
-        if (users.some(u => u.username.toLowerCase() === customUsername)) {
-          return jsonResponse({ status: 'error', message: '此帳號名稱已存在' });
-        }
-        const newSalt = 'USR_SALT_' + Utilities.getUuid().replace(/-/g, '');
-        const newHash = hashUserPasswordGas(newPassword, newSalt, cfg.pwPepper);
-        const nowIso = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
-        const newAdmin = {
-          userId: 'usr_admin_' + Utilities.getUuid().replace(/-/g, '').substring(0, 12),
-          username: customUsername,
-          displayName: String(payload.displayName || '系統管理員').trim().substring(0, 40),
-          birthDate: String(payload.birthDate || '1990-01-01').trim(),
-          organization: String(payload.organization || '系統管理中心').trim().substring(0, 60),
-          email: String(payload.email || 'admin@system.local').trim().toLowerCase(),
-          pwSalt: newSalt,
-          pwHash: newHash,
-          role: 'admin',
-          status: 'active',
-          failCount: 0,
-          lockedUntil: 0,
-          createdAt: nowIso,
-          approvedBy: 'SYSTEM_INIT',
-          lastLoginAt: nowIso,
-          pwChangedAt: Date.now()
-        };
-        users.push(newAdmin);
-        saveUsersToSheet(users);
-        revokeExaminerSession(payload.sessionToken);
-        const newToken = createExaminerSession(newAdmin);
-        appendAuditLogGas(newAdmin.userId, newAdmin.username, 'CREATE_PRIMARY_ADMIN', newAdmin.userId, '初始化正式管理員帳號與密碼');
-        return jsonResponse({
-          status: 'success',
-          message: `✅ 已成功建立正式管理員帳號【${newAdmin.username}】並更新密碼！`,
-          sessionToken: newToken,
-          userProfile: sanitizeUserForClientGas(newAdmin, false)
-        });
-      }
-
-      // 一般考官或正式管理員：強制鎖定只更新 sessionToken 本人的帳號 (防範 IDOR 越權)
+      // 強制鎖定只更新 sessionToken 本人的帳號 (防範 IDOR 越權)
       const me = users.find(u => u.userId === sessUser.userId);
       if (!me) {
         return jsonResponse({ status: 'error', message: '找不到您的帳號資料，請重新登入' });
@@ -1195,8 +1036,8 @@ function doPost(e) {
         return jsonResponse({ status: 'error', message: '請輸入您目前的密碼以驗證本人身分' });
       }
 
-      const currHash = hashUserPasswordGas(currentPassword, me.pwSalt, cfg.pwPepper);
-      if (!constantTimeEqualsGas(currHash, me.pwHash)) {
+      const currPwCheck = verifyUserPasswordGas(currentPassword, me.pwSalt, cfg.pwPepper, me.pwHash);
+      if (!currPwCheck.matched) {
         const fails = recordAuthFailure(clientId);
         if (fails >= AUTH_CLIENT_MAX_FAILS) {
           return jsonResponse({ status: 'locked', message: '目前密碼驗證錯誤次數過多，已暫時鎖定 3 分鐘' });
@@ -1289,6 +1130,8 @@ function doPost(e) {
 
       // 變更成員狀態 (active / suspended)、角色 (examiner / admin) 或解鎖
       if (action === 'adminUpdateUser') {
+        const prevRole = targetUser.role;
+        const prevStatus = targetUser.status;
         const newStatus = payload.newStatus ? String(payload.newStatus).trim() : targetUser.status;
         const newRole = payload.newRole ? String(payload.newRole).trim() : targetUser.role;
 
@@ -1311,7 +1154,8 @@ function doPost(e) {
         }
 
         saveUsersToSheet(users);
-        if (targetUser.status !== 'active') {
+        // M1: 帳號遭停用、非 active 或角色變更（如降級）時，立即撤銷該使用者的所有既有 Session
+        if (targetUser.status !== 'active' || targetUser.role !== prevRole || targetUser.status !== prevStatus) {
           revokeAllUserSessionsGas(targetUser.userId);
         }
         appendAuditLogGas(sessUser.userId, sessUser.username, 'ADMIN_UPDATE_USER', targetUser.userId, `更新帳號 ${targetUser.username} -> role=${targetUser.role}, status=${targetUser.status}`);
@@ -1332,7 +1176,7 @@ function doPost(e) {
             message: '新密碼格式不符！須為 8~64 碼且同時包含大寫英文、小寫英文與數字。'
           });
         }
-        const cfg = getSecurityConfig(state);
+        const cfg = getSecurityConfig();
         const newSalt = 'USR_SALT_' + Utilities.getUuid().replace(/-/g, '');
         targetUser.pwSalt = newSalt;
         targetUser.pwHash = hashUserPasswordGas(tempPassword, newSalt, cfg.pwPepper);
@@ -1392,11 +1236,8 @@ function doPost(e) {
       }
     }
 
-    // 考官授權檢視或考生透過 POST 讀取試卷狀態 (憑證不暴露於 URL Query String)
+    // 考官授權檢視或考生透過 POST 讀取試卷狀態 (H1: 已登入 Session 不受全域未驗證限流阻擋; M6: 一般考官僅能看到自己上傳的試卷; Low #8: userProfile 經白名單過濾)
     if (action === 'getExamState') {
-      if (isAuthRateLimited() && (payload.authPin || payload.authPinHash)) {
-        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
-      }
       const sessUser = getAuthorizedExaminerUser(payload, state);
       if (sessUser) {
         const isAdmin = (sessUser.role === 'admin');
@@ -1407,26 +1248,50 @@ function doPost(e) {
           ? (state.historySessions || [])
           : (state.historySessions || []).filter(h => h && h.ownerId === myId);
 
-        // 過濾當前場次成績：考官僅能查看自己試卷 / 自己開考場次的成績；管理員可查看全部
+        // 過濾試卷庫：M6 一般考官僅能看到自己上傳的試卷；管理員可查看全部
+        const visibleLibrary = isAdmin
+          ? (state.examLibrary || [])
+          : (state.examLibrary || []).filter(ex => ex && ex.ownerId === myId);
+
+        // 過濾當前場次成績與試卷：考官僅能查看自己試卷 / 自己開考場次的成績與題目；管理員可查看全部
         const currentExamOwnerId = (state.examData && state.examData.ownerId) ? state.examData.ownerId : '';
         const currentStartedById = (state.examData && state.examData.startedByUserId) ? state.examData.startedByUserId : '';
         const canViewCurrentSubmissions = isAdmin || (currentExamOwnerId === myId) || (currentStartedById === myId);
         const visibleSubmissions = canViewCurrentSubmissions ? (state.submissions || []) : [];
 
+        let visibleExamData = state.examData;
+        if (!canViewCurrentSubmissions && state.examData) {
+          // 若當前場次為他人正在進行或未歸檔之試卷，僅回傳基本占線狀態，不外洩他人試卷題目與答案
+          visibleExamData = {
+            id: state.examData.id || '',
+            title: state.examData.title || '',
+            durationMinutes: state.examData.durationMinutes || 60,
+            examDate: state.examData.examDate || '',
+            isExamOpen: Boolean(state.examData.isExamOpen),
+            openedAt: state.examData.openedAt || null,
+            ownerId: state.examData.ownerId || '',
+            ownerName: state.examData.ownerName || '',
+            startedByUserId: state.examData.startedByUserId || '',
+            startedByName: state.examData.startedByName || '',
+            activeExamToken: state.examData.activeExamToken ? { expiresAt: state.examData.activeExamToken.expiresAt } : null,
+            questions: []
+          };
+        }
+
         return jsonResponse({
           status: 'success',
           isExaminer: true,
-          userProfile: sessUser,
-          examData: state.examData,
+          userProfile: sanitizeUserForClientGas(sessUser, false),
+          examData: visibleExamData,
           submissions: visibleSubmissions,
           historySessions: visibleHistory,
-          examLibrary: state.examLibrary,
+          examLibrary: visibleLibrary,
           updatedAt: state.updatedAt
         });
       }
 
-      // 若原本嘗試以考官身分請求但 Session 已過期或無效，明確回傳 session_expired 供前端引導重新登入
-      if (payload.sessionToken || payload.authPin || payload.authPinHash) {
+      // 若原本嘗試以考官身分請求但 Session 已過期或無效，明確回傳 unauthorized 供前端引導重新登入
+      if (payload.sessionToken) {
         return jsonResponse({
           status: 'unauthorized',
           isExaminer: false,
@@ -1474,7 +1339,7 @@ function doPost(e) {
       });
     }
 
-    // 檢查考官權限 (除了考生交卷 submitExam 以外，所有後台管理操作均需驗證考官 Session Token，並受統一限流保護)
+    // 檢查考官權限 (H1: 已登入之合法 Session 操作不受全域未驗證限流影響，防止免登入 DoS 癱瘓考官操作)
     const examinerActions = [
       'saveExamData', 'saveExamLibrary', 'syncSubmissions',
       'archiveSession', 'syncHistory', 'sendScoreEmails', 'uploadQuestionImage'
@@ -1482,12 +1347,6 @@ function doPost(e) {
 
     let currentSessionUser = null;
     if (examinerActions.indexOf(action) !== -1) {
-      if (isAuthRateLimited()) {
-        return jsonResponse({
-          status: 'locked',
-          message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘'
-        });
-      }
       currentSessionUser = getAuthorizedExaminerUser(payload, state);
       if (!currentSessionUser) {
         return jsonResponse({
@@ -1536,7 +1395,7 @@ function doPost(e) {
       return othersExams.concat(myUpdatedExams);
     }
 
-    // 1. 考官儲存題庫與試卷設定 (強制檢查：不可結束他人進行中測驗、不可停用他人有效測驗連結、連結效期強制為試卷作答時間+15分鐘)
+    // 1. 考官儲存題庫與試卷設定 (H2 安全加固：伺服器端強制決定 ownerId 與 startedByUserId，禁止接管他人場次或未歸檔成績)
     if (action === 'saveExamData') {
       const isAdmin = (currentSessionUser.role === 'admin');
       const myId = currentSessionUser.userId;
@@ -1553,15 +1412,14 @@ function doPost(e) {
         const maxHoldMs = (prevDurMins + 15) * 60 * 1000;
         const isPrevOpenExpired = wasOpen && prevExam.openedAt && (Date.now() - Number(prevExam.openedAt) > maxHoldMs);
 
-        // 限制 4：一般考官不可結束他人正在進行中的測驗，亦不可在他人測驗進行中切換試卷或搶先開考
-        if (wasOpen && !isPrevOpenExpired && !isAdmin) {
-          const startedBy = prevExam.startedByUserId || prevExam.ownerId || '';
-          if (startedBy && startedBy !== myId) {
-            return jsonResponse({
-              status: 'forbidden',
-              message: `⛔ 權限限制：目前正由考官【${prevExam.startedByName || prevExam.ownerName || '其他考官'}】進行測驗中，您無法結束他人的測驗或切換當前試卷！`
-            });
-          }
+        // H2: 若目前場次有他人尚未歸檔的考生成績，或他人測驗正進行中，一般考官不得覆寫 state.examData 接管場次
+        const prevOwnerOrStarter = prevExam.startedByUserId || prevExam.ownerId || '';
+        const hasOtherSubmissions = Array.isArray(state.submissions) && state.submissions.length > 0 && prevOwnerOrStarter && prevOwnerOrStarter !== myId;
+        if (!isAdmin && ((wasOpen && !isPrevOpenExpired && prevOwnerOrStarter && prevOwnerOrStarter !== myId) || hasOtherSubmissions)) {
+          return jsonResponse({
+            status: 'forbidden',
+            message: `⛔ 權限限制：目前場次尚有考官【${prevExam.startedByName || prevExam.ownerName || '其他考官'}】的進行中測驗或未歸檔成績，無法接管或覆寫！`
+          });
         }
 
         // 限制 3：一般考官不可停用或覆蓋他人產生的有效測驗連結
@@ -1577,32 +1435,45 @@ function doPost(e) {
           }
         }
 
-        // 若新開考，綁定開考考官身分；且一般考官僅能將自己上傳的試卷設為當前測驗
+        // 伺服器端從試卷庫或目前使用者強制判定 ownerId，忽略客戶端傳入的偽造 ownerId / startedByUserId
         const targetExamInLib = (state.examLibrary || []).find(e => e && e.id === payload.examData.id);
-        const targetOwnerId = (targetExamInLib && targetExamInLib.ownerId) ? targetExamInLib.ownerId : (payload.examData.ownerId || myId);
-        if (!isAdmin && targetOwnerId && targetOwnerId !== myId && (nowOpen || payload.examData.id !== prevExam.id)) {
-          return jsonResponse({
-            status: 'forbidden',
-            message: '⛔ 權限限制：您僅能將自己上傳的試卷設為當前測驗試卷或開放作答！'
-          });
+        let resolvedOwnerId = myId;
+        let resolvedOwnerName = currentSessionUser.displayName;
+        if (targetExamInLib && targetExamInLib.ownerId) {
+          if (!isAdmin && targetExamInLib.ownerId !== myId) {
+            return jsonResponse({
+              status: 'forbidden',
+              message: '⛔ 權限限制：您僅能將自己上傳的試卷設為當前測驗試卷或開放作答！'
+            });
+          }
+          resolvedOwnerId = targetExamInLib.ownerId;
+          resolvedOwnerName = targetExamInLib.ownerName || currentSessionUser.displayName;
+        } else if (isAdmin && prevExam.id === payload.examData.id && prevExam.ownerId) {
+          resolvedOwnerId = prevExam.ownerId;
+          resolvedOwnerName = prevExam.ownerName || currentSessionUser.displayName;
         }
 
-        payload.examData.ownerId = targetOwnerId || myId;
-        payload.examData.ownerName = (targetExamInLib && targetExamInLib.ownerName) ? targetExamInLib.ownerName : (payload.examData.ownerName || currentSessionUser.displayName);
+        payload.examData.ownerId = resolvedOwnerId;
+        payload.examData.ownerName = resolvedOwnerName;
 
         if (nowOpen && !wasOpen) {
           payload.examData.startedByUserId = myId;
           payload.examData.startedByName = currentSessionUser.displayName;
-          payload.examData.openedAt = payload.examData.openedAt || Date.now();
+          payload.examData.openedAt = Date.now();
           payload.examData.closedAt = null;
         } else if (nowOpen && wasOpen) {
           payload.examData.startedByUserId = prevExam.startedByUserId || myId;
           payload.examData.startedByName = prevExam.startedByName || currentSessionUser.displayName;
+          payload.examData.openedAt = prevExam.openedAt || Date.now();
           payload.examData.closedAt = null;
         } else if (!nowOpen && wasOpen) {
+          payload.examData.startedByUserId = prevExam.startedByUserId || myId;
+          payload.examData.startedByName = prevExam.startedByName || currentSessionUser.displayName;
           payload.examData.closedAt = Date.now();
-        } else if (!nowOpen && prevExam.closedAt && !payload.examData.closedAt) {
-          payload.examData.closedAt = prevExam.closedAt;
+        } else {
+          payload.examData.startedByUserId = (prevExam.id === payload.examData.id && prevExam.startedByUserId) ? prevExam.startedByUserId : myId;
+          payload.examData.startedByName = (prevExam.id === payload.examData.id && prevExam.startedByName) ? prevExam.startedByName : currentSessionUser.displayName;
+          payload.examData.closedAt = prevExam.closedAt || null;
         }
 
         // 強制規範測驗連結有效時間 = 該試卷作答時間 (durationMinutes) + 15 分鐘
@@ -1626,35 +1497,38 @@ function doPost(e) {
         state.examLibrary = mergeAndProtectExamLibraryGas(payload.examLibrary, state.examLibrary, currentSessionUser);
       }
       saveCloudState(state);
+      const visibleLib = isAdmin ? state.examLibrary : (state.examLibrary || []).filter(ex => ex && ex.ownerId === myId);
       return jsonResponse({
         status: 'success',
         message: '題庫與試卷設定已同步至雲端',
         examData: state.examData,
-        examLibrary: state.examLibrary
+        examLibrary: visibleLib
       });
     }
 
-    // 1-b. 考官儲存試卷庫 (多份試卷獨立保存於試卷庫資料工作表，強制保護他人試卷不可被一般考官刪除或修改)
+    // 1-b. 考官儲存試卷庫 (M6: 多份試卷獨立保存於試卷庫資料工作表，一般考官僅回傳自己上傳的試卷)
     if (action === 'saveExamLibrary') {
+      const isAdmin = (currentSessionUser.role === 'admin');
+      const myId = currentSessionUser.userId;
       const libraryData = Array.isArray(payload.examLibrary)
         ? payload.examLibrary
         : (payload.examLibrary ? [payload.examLibrary] : null);
 
       if (libraryData) {
-        const prevCount = (state.examLibrary || []).length;
         state.examLibrary = mergeAndProtectExamLibraryGas(libraryData, state.examLibrary, currentSessionUser);
         const { stateSheet, librarySheet } = ensureSheetsInitialized();
         syncExamLibrarySheet(librarySheet, state.examLibrary);
         touchUpdatedAt(stateSheet);
       }
+      const visibleLib = isAdmin ? state.examLibrary : (state.examLibrary || []).filter(ex => ex && ex.ownerId === myId);
       return jsonResponse({
         status: 'success',
         message: '試卷庫已同步至雲端',
-        examLibrary: state.examLibrary
+        examLibrary: visibleLib
       });
     }
 
-    // 2. 考生提交試卷 (H1 安全加固：白名單欄位與長度限制、伺服器端生成 ID/時間戳、開考狀態與關閉寬限期權威校驗、後端客觀評分)
+    // 2. 考生提交試卷 (M5 Fail-Closed：必須已有有效測驗連結 Token 始得交卷；H1 白名單與伺服器時間戳)
     if (action === 'submitExam') {
       const rawRecord = payload.record;
       if (!rawRecord || typeof rawRecord !== 'object') {
@@ -1695,25 +1569,29 @@ function doPost(e) {
         });
       }
 
-      // 後端驗證考生隨機測驗連結 Token (若系統已啟用 activeExamToken，必須持有相符之 Token 始得交卷)
+      // M5 Fail-Closed：一律要求系統必須已生成測驗連結 Token，且考生必須持有相符的 Token 始得交卷
       const activeTokenObj = (state.examData && state.examData.activeExamToken) ? state.examData.activeExamToken : null;
       const reqExamToken = String(payload.examToken || rawRecord.examToken || '').trim();
-      if (activeTokenObj && activeTokenObj.token) {
-        const tokenStatus = evaluateExamTokenStatus(activeTokenObj, reqExamToken);
-        if (tokenStatus === 'none' || tokenStatus === 'invalid') {
-          return jsonResponse({
-            status: 'token_invalid',
-            message: '無效的測驗連結憑證，系統拒絕接收交卷！'
-          });
-        }
-        const tokenExpiredAt = Number(activeTokenObj.expiresAt || 0);
-        const withinTokenGrace = tokenStatus === 'expired' && isForcedSubmission && (Date.now() - tokenExpiredAt <= 180000);
-        if (tokenStatus === 'expired' && !withinTokenGrace) {
-          return jsonResponse({
-            status: 'token_expired',
-            message: '此測驗連結已超過有效期限，已停止接收交卷！'
-          });
-        }
+      if (!activeTokenObj || !activeTokenObj.token) {
+        return jsonResponse({
+          status: 'token_invalid',
+          message: '測驗尚未生成有效專屬連結憑證，系統拒絕接收交卷！'
+        });
+      }
+      const tokenStatus = evaluateExamTokenStatus(activeTokenObj, reqExamToken);
+      if (tokenStatus === 'none' || tokenStatus === 'invalid' || tokenStatus === 'not_generated') {
+        return jsonResponse({
+          status: 'token_invalid',
+          message: '無效的測驗連結憑證，系統拒絕接收交卷！'
+        });
+      }
+      const tokenExpiredAt = Number(activeTokenObj.expiresAt || 0);
+      const withinTokenGrace = tokenStatus === 'expired' && isForcedSubmission && (Date.now() - tokenExpiredAt <= 180000);
+      if (tokenStatus === 'expired' && !withinTokenGrace) {
+        return jsonResponse({
+          status: 'token_expired',
+          message: '此測驗連結已超過有效期限，已停止接收交卷！'
+        });
       }
 
       // 檢查當前場次是否已有相同電子郵件 (Email) (不區分大小寫)
@@ -1810,7 +1688,7 @@ function doPost(e) {
       });
     }
 
-    // 3. 考官同步當前場次成績列表 (僅允許當前場次試卷擁有者或管理員修改/刪除當前成績)
+    // 3. 考官同步當前場次成績列表 (H2: 僅允許當前場次試卷擁有者或管理員修改/刪除，且不允許透過此端點竄改 ownerId/startedByUserId)
     if (action === 'syncSubmissions') {
       const isAdmin = (currentSessionUser.role === 'admin');
       const myId = currentSessionUser.userId;
@@ -1828,7 +1706,14 @@ function doPost(e) {
         state.submissions = payload.submissions;
       }
       if (payload.examData && (isAdmin || !currOwner || currOwner === myId)) {
-        state.examData = payload.examData;
+        const nextExam = Object.assign({}, payload.examData);
+        if (!isAdmin) {
+          nextExam.ownerId = prevExam.ownerId || myId;
+          nextExam.ownerName = prevExam.ownerName || currentSessionUser.displayName;
+          nextExam.startedByUserId = prevExam.startedByUserId || myId;
+          nextExam.startedByName = prevExam.startedByName || currentSessionUser.displayName;
+        }
+        state.examData = nextExam;
       }
       saveCloudState(state);
       syncCurrentScoresSheet(state.examData, state.submissions);
@@ -1840,7 +1725,7 @@ function doPost(e) {
       });
     }
 
-    // 4. 將當前測驗場次結算並歸檔為一筆獨立歷史紀錄 (綁定擁有者 ownerId，且禁止一般考官結束或歸檔他人正在進行中的場次)
+    // 4. 將當前測驗場次結算並歸檔為一筆獨立歷史紀錄 (H2: 檢查覆蓋既有歷史 ID 之擁有權與 newExamData 之擁有權)
     if (action === 'archiveSession') {
       const isAdmin = (currentSessionUser.role === 'admin');
       const myId = currentSessionUser.userId;
@@ -1859,13 +1744,22 @@ function doPost(e) {
         return jsonResponse({ status: 'error', message: '缺少歷史場次歸檔資料' });
       }
 
+      const existingIdx = state.historySessions.findIndex(h => h && h.id === historyRecord.id);
+      if (existingIdx !== -1 && !isAdmin) {
+        const prevHist = state.historySessions[existingIdx];
+        if (prevHist && prevHist.ownerId && prevHist.ownerId !== myId) {
+          return jsonResponse({
+            status: 'forbidden',
+            message: '⛔ 權限限制：禁止覆蓋其他考官的歷史場次紀錄！'
+          });
+        }
+      }
+
       // 強制綁定歷史紀錄之擁有者資訊
       historyRecord.ownerId = prevExam.ownerId || myId;
       historyRecord.ownerName = prevExam.ownerName || currentSessionUser.displayName;
       historyRecord.ownerOrg = currentSessionUser.organization || '';
 
-      // 避免重複歸檔同 ID
-      const existingIdx = state.historySessions.findIndex(h => h.id === historyRecord.id);
       if (existingIdx !== -1) {
         state.historySessions[existingIdx] = historyRecord;
       } else {
@@ -1876,9 +1770,21 @@ function doPost(e) {
       if (payload.clearCurrent !== false) {
         state.submissions = [];
       }
-      // 若同時傳入新試卷資料
+      // 若同時傳入新試卷資料，強制伺服器端核對擁有權與綁定 ownerId
       if (payload.newExamData) {
-        state.examData = payload.newExamData;
+        const nextExam = Object.assign({}, payload.newExamData);
+        const libMatch = (state.examLibrary || []).find(e => e && e.id === nextExam.id);
+        if (!isAdmin && libMatch && libMatch.ownerId && libMatch.ownerId !== myId) {
+          return jsonResponse({
+            status: 'forbidden',
+            message: '⛔ 權限限制：您無法將他人試卷設定為下一個活動測驗試卷！'
+          });
+        }
+        nextExam.ownerId = (libMatch && libMatch.ownerId) ? libMatch.ownerId : myId;
+        nextExam.ownerName = (libMatch && libMatch.ownerName) ? libMatch.ownerName : currentSessionUser.displayName;
+        nextExam.startedByUserId = myId;
+        nextExam.startedByName = currentSessionUser.displayName;
+        state.examData = nextExam;
       }
 
       saveCloudState(state);
@@ -2376,6 +2282,15 @@ function appendAuditLogGas(actorUserId, actorUsername, actionType, targetId, det
   }
 }
 
+function unsanitizeSheetCellGas(val) {
+  const str = String(val || '').trim();
+  // Low #5: 僅還原 sanitizeSheetCellGas 因公式注入防護而加上的前導單引號，保留使用者原本就以單引號開頭的名稱
+  if (/^'[=+\-@\t\r\n]/.test(str)) {
+    return str.substring(1);
+  }
+  return str;
+}
+
 function loadUsersFromSheet() {
   const { usersSheet } = ensureSheetsInitialized();
   const lastRow = usersSheet.getLastRow();
@@ -2383,31 +2298,31 @@ function loadUsersFromSheet() {
   const rows = usersSheet.getRange(2, 1, lastRow - 1, 16).getValues();
   const list = [];
   rows.forEach(r => {
-    const uid = String(r[0] || '').trim().replace(/^'/, '');
-    const uname = String(r[1] || '').trim().replace(/^'/, '');
+    const uid = unsanitizeSheetCellGas(r[0]);
+    const uname = unsanitizeSheetCellGas(r[1]);
     if (!uid && !uname) return;
     let bDate = '';
     if (r[3] instanceof Date) {
       bDate = Utilities.formatDate(r[3], Session.getScriptTimeZone() || 'GMT+8', 'yyyy-MM-dd');
     } else {
-      bDate = String(r[3] || '').trim().replace(/^'/, '');
+      bDate = unsanitizeSheetCellGas(r[3]);
     }
     list.push({
       userId: uid || ('usr_' + Utilities.getUuid().replace(/-/g, '').substring(0, 12)),
       username: uname,
-      displayName: String(r[2] || '').trim().replace(/^'/, ''),
+      displayName: unsanitizeSheetCellGas(r[2]),
       birthDate: bDate,
-      organization: String(r[4] || '').trim().replace(/^'/, ''),
-      email: String(r[5] || '').trim().replace(/^'/, '').toLowerCase(),
-      pwSalt: String(r[6] || '').trim().replace(/^'/, ''),
-      pwHash: String(r[7] || '').trim().replace(/^'/, ''),
-      role: String(r[8] || 'examiner').trim().replace(/^'/, ''),
-      status: String(r[9] || 'pending_review').trim().replace(/^'/, ''),
+      organization: unsanitizeSheetCellGas(r[4]),
+      email: unsanitizeSheetCellGas(r[5]).toLowerCase(),
+      pwSalt: unsanitizeSheetCellGas(r[6]),
+      pwHash: unsanitizeSheetCellGas(r[7]),
+      role: unsanitizeSheetCellGas(r[8]) || 'examiner',
+      status: unsanitizeSheetCellGas(r[9]) || 'pending_review',
       failCount: Number(r[10] || 0),
       lockedUntil: Number(r[11] || 0),
-      createdAt: String(r[12] || '').trim().replace(/^'/, ''),
-      approvedBy: String(r[13] || '').trim().replace(/^'/, ''),
-      lastLoginAt: String(r[14] || '').trim().replace(/^'/, ''),
+      createdAt: unsanitizeSheetCellGas(r[12]),
+      approvedBy: unsanitizeSheetCellGas(r[13]),
+      lastLoginAt: unsanitizeSheetCellGas(r[14]),
       pwChangedAt: Number(r[15] || 0)
     });
   });
