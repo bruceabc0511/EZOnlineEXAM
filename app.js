@@ -1100,9 +1100,9 @@ function saveExamDataToStorage(syncCloud = true) {
 function loadExamLibrary() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.EXAM_LIBRARY);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed;
       }
     }
@@ -3487,15 +3487,14 @@ function handleRenameExamPaper() {
 
 function handleDeleteExamPaper() {
   const currentExam = getCurrentSelectedExam();
-  if (!currentExam) return;
+  if (!currentExam) {
+    alert('⚠️ 您目前尚未擁有任何試卷可刪除！');
+    return;
+  }
   // 限制 1：一般考官不可刪除他人上傳的試卷
   if (!canCurrentUserModifyExam(currentExam)) {
     const ownerLabel = currentExam.ownerName || '其他考官';
     alert(`⛔ 權限限制：試卷「${currentExam.title}」是由考官【${ownerLabel}】所上傳，您無法刪除他人上傳的試卷！`);
-    return;
-  }
-  if (examLibrary.length <= 1) {
-    alert('⚠️ 試卷庫中至少需保留一份試卷！若要清空考題，請使用「清空全部題目」按鈕。');
     return;
   }
   if (examData.id === currentExam.id && examData.isExamOpen) {
@@ -3509,13 +3508,18 @@ function handleDeleteExamPaper() {
   }
 
   examLibrary = examLibrary.filter(e => e.id !== currentExam.id);
-  currentSelectedExamId = examLibrary[0].id;
+  const nextExam = getCurrentSelectedExam();
+  currentSelectedExamId = nextExam ? nextExam.id : '';
 
   if (examData.id === currentExam.id) {
-    examData = {
-      ...examLibrary[0],
-      isExamOpen: false
-    };
+    if (nextExam) {
+      examData = {
+        ...nextExam,
+        isExamOpen: false
+      };
+    } else {
+      examData = JSON.parse(JSON.stringify(DEFAULT_EXAM_DATA));
+    }
     saveExamDataToStorage(true);
   }
 
