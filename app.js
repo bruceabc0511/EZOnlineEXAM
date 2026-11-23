@@ -246,25 +246,22 @@ function updateCloudStatusUI() {
     urlInput.value = gasUrl;
   }
 
-  // 若已綁定 Google Apps Script 網址且尚未觸發 10 次暗鎖解鎖，鎖定輸入框與儲存按鈕避免誤刪
-  const shouldLockInput = Boolean(gasUrl) && !isGasUrlUnlockedBySecret;
+  // Google 雲端資料庫設定已列為管理員專屬，無須再透過點擊 10 次雲朵解鎖，管理員可直接編輯與儲存
   if (urlInput) {
-    urlInput.readOnly = shouldLockInput;
-    urlInput.disabled = shouldLockInput;
-    urlInput.classList.toggle('input-locked', shouldLockInput);
+    urlInput.readOnly = false;
+    urlInput.disabled = false;
+    urlInput.classList.remove('input-locked');
   }
   if (btnSaveGasUrl) {
-    btnSaveGasUrl.disabled = shouldLockInput;
+    btnSaveGasUrl.disabled = false;
   }
   if (lockBadge) {
     if (!gasUrl) {
       lockBadge.classList.add('hidden');
-    } else if (shouldLockInput) {
-      lockBadge.textContent = '🔒 已綁定鎖定';
-      lockBadge.className = 'badge badge-teal';
     } else {
-      lockBadge.textContent = '🔓 已解鎖編輯';
-      lockBadge.className = 'badge badge-amber';
+      lockBadge.textContent = '✅ 已綁定';
+      lockBadge.className = 'badge badge-teal';
+      lockBadge.classList.remove('hidden');
     }
   }
 
@@ -648,7 +645,7 @@ async function pushAllLocalDataToCloud() {
   }
 }
 
-// ==================== 隨機測驗連結 (180分鐘有效，覆蓋即失效) ====================
+// ==================== 隨機測驗連結 (作答時間+15分鐘有效，覆蓋即失效) ====================
 function generateRandomExamToken() {
   if (!window.crypto || !window.crypto.getRandomValues) {
     throw new Error('瀏覽器不支援密碼學安全亂數產生器 (Web Crypto API)，無法生成安全的測驗連結！');
@@ -729,7 +726,7 @@ async function handleGenerateExamToken() {
 
   const now = Date.now();
   const token = generateRandomExamToken();
-  // 將測驗連結有效時間改為「該試卷作答時間 + 15 分鐘」，避免測驗端被長期佔用
+  // 將測驗連結有效時間為「該試卷作答時間 + 15 分鐘」，避免測驗端被長期佔用
   const examDurationMins = Math.max(1, Number(examData.durationMinutes) || 60);
   const durationMinutes = examDurationMins + 15;
   const durationMs = durationMinutes * 60 * 1000;
@@ -745,7 +742,7 @@ async function handleGenerateExamToken() {
 
   saveExamDataToStorage(true);
   updateExamLinkTabUI();
-  showToast(`🎲 已成功生成隨機測驗連結（有效時間 ${durationMinutes} 分鐘：作答 ${examDurationMins} 分 + 15 分）！`);
+  showToast(`🎲 已成功生成隨機測驗連結（有效時間 ${durationMinutes} 分鐘！`);
 }
 
 async function handleRevokeExamToken() {
@@ -810,7 +807,7 @@ function updateExamLinkTabUI() {
   const examDurMins = Math.max(1, Number(examData.durationMinutes) || 60);
   const totalValidMins = examDurMins + 15;
   if (tokenRuleDescEl) {
-    tokenRuleDescEl.innerHTML = `每場測驗可生成一組獨立作答網址，<strong>有效時間為「該試卷作答時間 ${examDurMins} 分鐘 + 15 分鐘緩衝 = 共 ${totalValidMins} 分鐘」(自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！`;
+    tokenRuleDescEl.innerHTML = `本次測驗可生成一組獨立作答網址，<strong>有效時間為 ${totalValidMins} 分鐘」(自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！`;
   }
 
   const now = Date.now();
@@ -2409,8 +2406,8 @@ function switchExaminerAuthMode(mode) {
     if (titleEl) titleEl.textContent = '考官忘記密碼重設';
     if (subEl) subEl.textContent = '核對註冊帳號、西元出生年月日與 Email 信箱即可重設密碼';
   } else {
-    if (titleEl) titleEl.textContent = '測驗管理系統登入驗證';
-    if (subEl) subEl.textContent = '請輸入個人專屬考官帳號與密碼進入本系統';
+    if (titleEl) titleEl.textContent = 'EZ線上測驗管理系統';
+    if (subEl) subEl.textContent = '請輸入帳號與密碼進入本系統';
   }
 
   initOrResetExaminerTurnstile();
@@ -3124,22 +3121,28 @@ function renderAdminUsersTable() {
     }
 
     const roleBadgeHtml = u.role === 'admin'
-      ? '<span class="badge badge-amber" style="margin-left: 4px;">👑 管理員</span>'
-      : '<span class="badge badge-secondary" style="margin-left: 4px;">👤 考官</span>';
+      ? '<span class="badge badge-amber">👑管理員</span>'
+      : '<span class="badge badge-secondary">👤考官</span>';
 
-    const lockHtml = u.isLocked ? '<br><span class="badge badge-danger" style="margin-top:4px;">🔒 錯誤過多鎖定中</span>' : '';
+    const lockHtml = u.isLocked ? '<div><span class="badge badge-danger">🔒 錯誤過多鎖定中</span></div>' : '';
     const isMe = (currentExaminerProfile && currentExaminerProfile.userId === u.userId);
 
     tr.innerHTML = `
-      <td style="white-space: nowrap;">${statusBadgeHtml}${roleBadgeHtml}${lockHtml}</td>
-      <td style="white-space: nowrap;"><strong>${escapeHtml(u.username)}</strong>${isMe ? ' <span class="badge badge-teal">本人</span>' : ''}</td>
+      <td style="white-space: nowrap;">
+        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
+          <div>${statusBadgeHtml}</div>
+          <div>${roleBadgeHtml}</div>
+          ${lockHtml}
+        </div>
+      </td>
+      <td style="white-space: nowrap;"><strong>${escapeHtml(u.username)}</strong>${isMe ? '<br><span class="badge badge-teal" style="margin-top:4px;">本人</span>' : ''}</td>
       <td style="white-space: nowrap;">${escapeHtml(u.displayName)}</td>
-      <td>${escapeHtml(u.organization || '-')}</td>
+      <td style="min-width: 170px; word-break: break-word;">${escapeHtml(u.organization || '-')}</td>
       <td style="white-space: nowrap;">${escapeHtml(u.birthDate || '-')}</td>
-      <td class="cell-wrap-email" style="font-size: 0.85rem;">${escapeHtml(u.email || '-')}</td>
-      <td style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">
-        註冊：${escapeHtml(u.createdAt || '-')}<br>
-        登入：${escapeHtml(u.lastLoginAt || '尚未登入')}
+      <td class="cell-wrap-email" style="min-width: 210px; font-size: 0.88rem; word-break: break-all;">${escapeHtml(u.email || '-')}</td>
+      <td style="width: 145px; max-width: 155px; font-size: 0.76rem; line-height: 1.4; color: var(--text-muted);">
+        <div style="margin-bottom: 4px;"><strong style="color: var(--text-secondary);">註冊：</strong><br>${escapeHtml(u.createdAt || '-')}</div>
+        <div><strong style="color: var(--text-secondary);">最後登入：</strong><br>${escapeHtml(u.lastLoginAt || '尚未登入')}</div>
       </td>
       <td style="white-space: nowrap;">
         <div class="js-admin-actions" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
@@ -3285,7 +3288,6 @@ async function handleAdminDeleteUser(targetUserId, username, displayName) {
 
 function renderExaminerSettingsTab() {
   const isAdmin = isCurrentUserAdmin();
-  const userPill = document.getElementById('currentExaminerUserPill');
   const adminUsersCard = document.getElementById('adminUserManagementCard');
   const adminCloudCard = document.getElementById('adminCloudConfigCard');
   const settingsGrid = document.getElementById('settingsBottomGrid');
@@ -3293,13 +3295,6 @@ function renderExaminerSettingsTab() {
   const ownNameOrgEl = document.getElementById('ownProfileNameAndOrg');
   const bootstrapWrap = document.getElementById('bootstrapAdminFieldsWrap');
   const currPwGroup = document.getElementById('currentPasswordGroup');
-
-  if (userPill && currentExaminerProfile) {
-    const roleLabel = isAdmin ? '👑 管理員' : '👤 考官';
-    const orgLabel = currentExaminerProfile.organization ? ` (${currentExaminerProfile.organization})` : '';
-    userPill.textContent = `${roleLabel}：${currentExaminerProfile.displayName || currentExaminerProfile.username}${orgLabel}`;
-    userPill.className = isAdmin ? 'badge badge-amber' : 'badge badge-teal';
-  }
 
   // 管理員才可檢視與操作「註冊審核 & 成員管理」以及「Google 雲端資料庫 & 自動寄成績信設定」
   if (adminUsersCard) {

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261123_3">
+  <link rel="stylesheet" href="styles.css?v=20261123_5">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
@@ -38,7 +38,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.33)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.35)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -72,7 +72,7 @@
   <main class="main-container">
     <!-- ==================== 考生端 (Student Portal) ==================== -->
     <section id="studentSection" class="portal-section hidden">
-      <!-- 0-a. 測驗連結無效或已逾期畫面 (未帶Token、超過180分鐘或被考官重新生成失效) -->
+      <!-- 0-a. 測驗連結無效或已逾期畫面 (未帶Token、超過時效或被考官重新生成失效) -->
       <div id="studentTokenInvalidView" class="card closed-exam-card hidden">
         <div class="closed-exam-icon" style="background: rgba(220, 53, 69, 0.1); color: var(--danger, #dc3545);">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -315,8 +315,8 @@
           </div>
           <div class="form-group">
             <label for="examinerPinInput">🔑 密碼<span class="required">*</span></label>
-            <input type="password" id="examinerPinInput" placeholder="請輸入密碼 (含大小寫英文與數字)" required
-              autocomplete="current-password" maxlength="64">
+            <input type="password" id="examinerPinInput" placeholder="請輸入密碼" required autocomplete="current-password"
+              maxlength="64">
           </div>
           <div id="pinErrorMsg" class="alert alert-danger hidden">帳號或密碼錯誤，請重新確認！</div>
           <div id="pinLoadingBar" class="pin-loading-wrap hidden" role="progressbar" aria-label="登入驗證進度">
@@ -337,7 +337,7 @@
               <input type="text" id="regDisplayName" placeholder="請輸入真實姓名" required maxlength="30">
             </div>
             <div class="form-group">
-              <label for="regBirthDate">西元出生年月日 <span class="required">*</span></label>
+              <label for="regBirthDate">西元生日 <span class="required">*</span></label>
               <input type="date" id="regBirthDate" required min="1925-01-01" max="2026-12-31">
             </div>
           </div>
@@ -348,8 +348,8 @@
           <div class="form-row">
             <div class="form-group">
               <label for="regUsername">帳號 <span class="required">*</span></label>
-              <input type="text" id="regUsername" placeholder="4~24碼英數或底線_" required pattern="[a-zA-Z0-9_]{4,24}"
-                maxlength="24" autocomplete="username" title="請使用 4 至 24 碼半形英文字母、數字或底線 (_)">
+              <input type="text" id="regUsername" placeholder="限用英文及數字" required pattern="[a-zA-Z0-9_]{4,24}"
+                maxlength="24" autocomplete="username" title="請使用 4 至 24 碼半形英文字母、數字或符號僅接受底線 (_)">
             </div>
             <div class="form-group">
               <label for="regEmail">E-mail (忘記密碼重設用) <span class="required">*</span></label>
@@ -360,8 +360,8 @@
           <div class="form-row">
             <div class="form-group">
               <label for="regPassword">設定密碼 <span class="required">*</span></label>
-              <input type="password" id="regPassword" placeholder="8~64碼，需含大小寫英文及數字" required minlength="8"
-                maxlength="64" autocomplete="new-password">
+              <input type="password" id="regPassword" placeholder="請輸入密碼" required minlength="8" maxlength="64"
+                autocomplete="new-password">
             </div>
             <div class="form-group">
               <label for="regPasswordConfirm">確認密碼 <span class="required">*</span></label>
@@ -371,9 +371,8 @@
           </div>
           <div class="text-muted text-sm"
             style="margin-bottom: 10px; background: #fff8f8; border: 1px solid #fecdd3; padding: 8px 10px; border-radius: 6px;">
-            💡 <strong>密碼強度要求：</strong>長度 8~64 碼，必須同時包含<strong>大寫英文 (A-Z)</strong>、<strong>小寫英文 (a-z)</strong>
-            及<strong>數字 (0-9)</strong>。<br>
-            🔒 <strong>審核機制：</strong>送出註冊後，須由後端<strong>系統管理員審核通過</strong>才可登入。
+            <strong>密碼強度：</strong> 長度至少 8 碼且必須同時包含<strong>大、小寫英文</strong>及<strong>數字</strong>。<br>
+            <strong>審核機制：</strong>送出註冊後，須由<strong>系統管理員審核通過</strong>才可登入。
           </div>
           <label class="checkbox-row"
             style="margin-bottom: 12px; font-size: 0.88rem; display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
@@ -400,12 +399,12 @@
                 <input type="text" id="forgotUsername" placeholder="請輸入您的登入帳號" required maxlength="24">
               </div>
               <div class="form-group">
-                <label for="forgotBirthDate">西元出生年月日 <span class="required">*</span></label>
+                <label for="forgotBirthDate">西元生日 <span class="required">*</span></label>
                 <input type="date" id="forgotBirthDate" required>
               </div>
             </div>
             <div class="form-group">
-              <label for="forgotEmail">註冊電子郵件 (Email) <span class="required">*</span></label>
+              <label for="forgotEmail">電子郵件 (Email) <span class="required">*</span></label>
               <input type="email" id="forgotEmail" placeholder="請輸入註冊時填寫的 Email" required maxlength="100">
             </div>
             <button type="submit" id="btnSendResetCode" class="btn btn-primary btn-block">📧 核對身分並寄送重設驗證碼</button>
@@ -424,14 +423,18 @@
             <div class="form-row">
               <div class="form-group">
                 <label for="forgotNewPassword">設定新密碼 <span class="required">*</span></label>
-                <input type="password" id="forgotNewPassword" placeholder="8~64碼，含大小寫英文及數字" required minlength="8"
-                  maxlength="64" autocomplete="new-password">
+                <input type="password" id="forgotNewPassword" placeholder="請輸入新密碼" required minlength="8" maxlength="64"
+                  autocomplete="new-password">
               </div>
               <div class="form-group">
                 <label for="forgotNewPasswordConfirm">確認新密碼 <span class="required">*</span></label>
                 <input type="password" id="forgotNewPasswordConfirm" placeholder="請再次輸入新密碼" required minlength="8"
                   maxlength="64" autocomplete="new-password">
               </div>
+            </div>
+            <div class="text-muted text-sm"
+              style="margin-bottom: 10px; background: #fff8f8; border: 1px solid #fecdd3; padding: 8px 10px; border-radius: 6px;">
+              <strong>密碼強度：</strong> 長度至少 8 碼且必須同時包含<strong>大、小寫英文</strong>及<strong>數字</strong>。
             </div>
             <button type="submit" id="btnConfirmResetPw" class="btn btn-accent btn-block">✅ 確認重設密碼</button>
           </form>
@@ -497,8 +500,6 @@
             </button>
           </div>
           <div class="action-btn-group" style="align-items: center;">
-            <span id="currentExaminerUserPill" class="badge badge-teal"
-              style="font-size: 0.85rem; padding: 5px 10px;">👤 考官</span>
             <button class="btn btn-secondary btn-sm" onclick="syncStateFromCloud(false)">🔄 刷新資料庫</button>
             <button class="btn btn-outline btn-sm" onclick="logoutExaminer()">🔒 登出系統</button>
           </div>
@@ -675,7 +676,7 @@
                   <tr>
                     <th>編號</th>
                     <th style="min-width: 90px; white-space: nowrap;">姓名</th>
-                    <th>電子郵件 (Email)</th>
+                    <th>電子郵件</th>
                     <th>總分</th>
                     <th>答對/總題數</th>
                     <th>作答耗時</th>
@@ -854,7 +855,7 @@
                   <tr>
                     <th>編號</th>
                     <th style="min-width: 90px; white-space: nowrap;">姓名</th>
-                    <th>電子郵件 (Email)</th>
+                    <th>電子郵件</th>
                     <th>總分</th>
                     <th>答對 / 總題數</th>
                     <th>作答耗時</th>
@@ -893,6 +894,9 @@
                   </div>
                   <p class="text-muted text-sm" id="tokenDurationRuleDesc" style="margin: 0;">
                     每場測驗可生成一組獨立作答網址，<strong>有效時間為「該試卷作答時間 + 15 分鐘」(自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！
+                  </p>
+                  <p class="text-muted text-sm" id="tokenDurationRuleDesc" style="margin: 0;">
+                    本系統目前尚無法進行多場測驗同時開考，若有其他考官正在進行測驗，請您耐心等候其結束。
                   </p>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
@@ -970,14 +974,14 @@
               <table class="data-table" id="adminUsersTable">
                 <thead>
                   <tr>
-                    <th>狀態 / 角色</th>
-                    <th>帳號 (Username)</th>
-                    <th>姓名</th>
-                    <th>服務單位</th>
-                    <th>西元出生年月日</th>
-                    <th>Email</th>
-                    <th>註冊 / 最後登入時間</th>
-                    <th style="min-width: 240px;">管理操作</th>
+                    <th style="width: 105px;">狀態 / 角色</th>
+                    <th style="width: 120px;">帳號</th>
+                    <th style="width: 95px;">姓名</th>
+                    <th style="width: 20%; min-width: 170px;">服務單位</th>
+                    <th style="width: 115px;">生日</th>
+                    <th style="width: 24%; min-width: 210px;">Email</th>
+                    <th style="width: 145px; font-size: 0.82rem; line-height: 1.35;">註冊 /<br>最後登入時間</th>
+                    <th style="min-width: 230px;">管理操作</th>
                   </tr>
                 </thead>
                 <tbody id="adminUsersTableBody">
@@ -994,18 +998,16 @@
           <div class="grid-2col" id="settingsBottomGrid">
             <!-- 左側：Google 雲端資料庫 & 自動寄成績信設定 (僅管理員 admin 可見與操作) -->
             <div class="card" id="adminCloudConfigCard">
-              <h3><span id="gasSecretUnlockIcon" onclick="handleGasCloudIconClick()"
-                  style="cursor: default; user-select: none;">☁️</span> Google 雲端資料庫 &amp; 自動寄成績信設定 <span
-                  class="badge badge-amber" style="font-size: 0.75rem; margin-left: 6px;">管理員專屬</span></h3>
+              <h3>☁️ Google 雲端資料庫 &amp; 自動寄成績信設定 <span class="badge badge-amber"
+                  style="font-size: 0.75rem; margin-left: 6px;">管理員專屬</span></h3>
               <p class="text-muted text-sm" style="margin-bottom:16px;">
-                填入一次 Google Apps Script 網頁應用程式網址並儲存後，系統即會<strong>自動跨裝置綁定並鎖定保護</strong>，不同電腦或手機開啟網頁皆會自動連線，無須重複輸入。
+                填入一次 Google Apps Script 網頁應用程式網址並儲存後，系統即會<strong>自動跨裝置綁定連線</strong>，不同電腦或手機開啟網頁皆會自動連線，無須重複輸入。
               </p>
 
               <div class="form-group">
                 <label for="gasWebAppUrlInput">
                   Google Apps Script 網頁應用程式網址 (`.../exec`)
-                  <span id="gasLockStatusBadge" class="badge badge-teal hidden" style="margin-left: 6px;">🔒
-                    已綁定鎖定</span>
+                  <span id="gasLockStatusBadge" class="badge badge-teal hidden" style="margin-left: 6px;">✅ 已綁定</span>
                 </label>
                 <input type="text" id="gasWebAppUrlInput"
                   placeholder="https://script.google.com/macros/s/AKfycb.../exec">
@@ -1028,7 +1030,7 @@
             <div class="card">
               <h3>🔐 個人登入密碼 (PIN) 變更設定</h3>
               <p class="text-muted text-sm" id="ownPasswordCardDesc" style="margin-bottom:14px;">
-                您僅能變更自己帳號的專屬登入密碼 (PIN)。新密碼長度須為 8~64 碼，且必須同時包含<strong>大寫英文、小寫英文與數字</strong>。
+                您僅能變更自己帳號的登入密碼 (PIN)。新密碼長度須至少 8 碼，且必須同時包含<strong>大寫英文、小寫英文與數字</strong>。
               </p>
 
               <div id="ownAccountProfileBox"
@@ -1076,8 +1078,8 @@
 
                 <div class="form-row">
                   <div class="form-group">
-                    <label for="newExaminerPinInput">新密碼 (含大小寫英文與數字) <span class="required">*</span></label>
-                    <input type="password" id="newExaminerPinInput" placeholder="8~64碼，含大小寫英文與數字" required
+                    <label for="newExaminerPinInput">新密碼 (至少 8 碼含大小寫英文與數字) <span class="required">*</span></label>
+                    <input type="password" id="newExaminerPinInput" placeholder="請輸入新密碼" required
                       autocomplete="new-password" minlength="8" maxlength="64">
                   </div>
                   <div class="form-group">
