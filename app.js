@@ -3020,7 +3020,7 @@ async function handleUpdateExaminerPin(event) {
 
   if (isBootstrap) {
     reqPayload.newAdminUsername = (document.getElementById('bootstrapAdminUsername')?.value || 'admin').trim();
-    reqPayload.displayName = (document.getElementById('bootstrapAdminName')?.value || '系統管理員').trim();
+    reqPayload.displayName = (document.getElementById('bootstrapAdminName')?.value || '管理員').trim();
     reqPayload.birthDate = (document.getElementById('bootstrapAdminBirth')?.value || '1990-01-01').trim();
     reqPayload.email = (document.getElementById('bootstrapAdminEmail')?.value || 'admin@system.local').trim();
   }
@@ -3313,7 +3313,7 @@ function renderExaminerSettingsTab() {
   if (ownNameOrgEl) {
     const nameStr = (currentExaminerProfile && currentExaminerProfile.displayName) ? currentExaminerProfile.displayName : '-';
     const orgStr = (currentExaminerProfile && currentExaminerProfile.organization) ? ` / ${currentExaminerProfile.organization}` : '';
-    const roleStr = isAdmin ? ' 【系統管理員】' : ' 【一般考官】';
+    const roleStr = isAdmin ? ' 【管理員】' : ' 【一般考官】';
     ownNameOrgEl.textContent = `${nameStr}${orgStr}${roleStr}`;
   }
 
@@ -3625,7 +3625,7 @@ function renderExaminerQuestionTab() {
       opt.value = exam.id;
       const isActive = examData && examData.id === exam.id;
       const statusMark = isActive ? (examData.isExamOpen ? '　【🟢測驗進行中】' : '　【📍當前試卷】') : '';
-      const ownerMark = exam.ownerName ? ` [👤${exam.ownerName}]` : '';
+      const ownerMark = exam.ownerName ? ` (👤${exam.ownerName})` : '';
       opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${ownerMark}${statusMark}`;
       libSelect.appendChild(opt);
     });
