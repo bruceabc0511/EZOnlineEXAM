@@ -28,8 +28,8 @@ const SHEET_NAMES = {
   EXAM_LIBRARY: '試卷庫資料'
 };
 
-// 考題圖片專用 Google 雲端硬碟資料夾 ID (可於 Script Properties 設定 EXAM_IMAGE_FOLDER_ID 覆蓋)
-const DEFAULT_EXAM_IMAGE_FOLDER_ID = '11vY2bQE-3G_gwrcanjCeCJMYjPbnYYrl';
+// 考題圖片專用 Google 雲端硬碟資料夾 ID (請於 Script Properties 設定 EXAM_IMAGE_FOLDER_ID，不於程式碼公開預設資料夾 ID)
+const DEFAULT_EXAM_IMAGE_FOLDER_ID = '';
 
 function getExamImageFolderId() {
   try {
@@ -40,12 +40,56 @@ function getExamImageFolderId() {
 }
 
 /**
+ * 首次部署或需要更新後端 PIN 碼 / 管理員金鑰雜湊時，可在 Apps Script 編輯器修改下方參數並執行一次 `initCustomSecurityCredentials`
+ * 執行後系統會自動產生高熵隨機 Salt 並將雜湊安全寫入 Script Properties (請勿將真實密碼留存於程式碼中提交至 GitHub)
+ */
+function initCustomSecurityCredentials() {
+  const props = PropertiesService.getScriptProperties();
+  const all = props.getProperties();
+  const pinSalt = all.EXAMINER_PIN_SALT || ('PIN_SALT_' + Utilities.getUuid().replace(/-/g, ''));
+  const adminSalt = all.ADMIN_KEY_SALT || ('ADM_SALT_' + Utilities.getUuid().replace(/-/g, ''));
+  // 如需重設，請暫時將下方空字串改為您自訂的 PIN 碼與管理員金鑰並點選「執行」，執行完畢後請清空還原為 ''
+  const customPin = '';
+  const customAdminKey = '';
+  const updates = {
+    EXAMINER_PIN_SALT: pinSalt,
+    ADMIN_KEY_SALT: adminSalt
+  };
+  if (customPin) {
+    updates.EXAMINER_PIN_HASH = sha256Hex(`${pinSalt}:${customPin}`).toLowerCase();
+  }
+  if (customAdminKey) {
+    updates.ADMIN_KEY_HASH = sha256Hex(`${adminSalt}:${customAdminKey}`).toLowerCase();
+  }
+  props.setProperties(updates, false);
+  Logger.log('✅ 安全憑證雜湊已更新至 Script Properties！');
+}
+
+/**
  * 首次使用考題圖片上傳時，請在 Apps Script 編輯器上方函式選單中選擇此「testDriveAuthorization」
  * 並點選「執行」，Google 會彈出授權視窗，點擊「核對權限」->「進階」->「前往... (不安全)」->「允許」即可完成雲端硬碟授權！
  */
 function testDriveAuthorization() {
   const folder = DriveApp.getFolderById(getExamImageFolderId());
   Logger.log('✅ Google Drive 雲端硬碟權限授權成功！目標資料夾名稱：' + folder.getName());
+}
+
+/**
+ * 首次啟用 Cloudflare Turnstile 驗證時，因新增了對外連線權限 (UrlFetchApp)，
+ * 請在 Apps Script 編輯器上方函式選單中選擇此「testTurnstileAuthorization」並點選「執行」，
+ * 完成「連線至外部服務」權限授權後，再重新部署網頁應用程式即可！
+ */
+function testTurnstileAuthorization() {
+  const res = UrlFetchApp.fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({
+      secret: '1x0000000000000000000000000000000AA',
+      response: 'test-token'
+    }),
+    muteHttpExceptions: true
+  });
+  Logger.log('✅ Cloudflare Turnstile 外部連線授權與測試成功！HTTP ' + res.getResponseCode() + '：' + res.getContentText());
 }
 
 function sha256Hex(text) {
@@ -62,23 +106,21 @@ function getSecurityConfig(state) {
   let all = props.getProperties();
   const updates = {};
 
-  const pinSalt = all.EXAMINER_PIN_SALT || 'HD_EXAM_SECURE_SALT_2026';
+  // 自動產生每個部署專屬的隨機高熵 Salt，不再於程式碼中寫死公開 Salt 或預設弱密碼雜湊
+  const pinSalt = (all.EXAMINER_PIN_SALT || '').trim() || ('PIN_SALT_' + Utilities.getUuid().replace(/-/g, ''));
   if (!all.EXAMINER_PIN_SALT) updates.EXAMINER_PIN_SALT = pinSalt;
 
-  const adminSalt = all.ADMIN_KEY_SALT || 'HD_EXAM_ADMIN_SALT_2026';
+  const adminSalt = (all.ADMIN_KEY_SALT || '').trim() || ('ADM_SALT_' + Utilities.getUuid().replace(/-/g, ''));
   if (!all.ADMIN_KEY_SALT) updates.ADMIN_KEY_SALT = adminSalt;
 
-  // 若舊版試算表 state 中曾儲存自訂 examinerPinHash，優先無痛遷移至 Script Properties
-  const defaultPinHash = '391f59f4ca8480648b504098e96bffa16f970d261a5cacea40fe5e7789c3f961';
+  // 僅讀取 Script Properties (或舊版試算表遷移之自訂雜湊)，移除原始碼中寫死的公開預設雜湊
   const legacyStateHash = (state && state.examinerPinHash) ? String(state.examinerPinHash).trim().toLowerCase() : '';
-  const pinHash = (all.EXAMINER_PIN_HASH || legacyStateHash || defaultPinHash).trim().toLowerCase();
-  if (!all.EXAMINER_PIN_HASH) updates.EXAMINER_PIN_HASH = pinHash;
+  const pinHash = (all.EXAMINER_PIN_HASH || legacyStateHash || '').trim().toLowerCase();
+  if (!all.EXAMINER_PIN_HASH && pinHash) updates.EXAMINER_PIN_HASH = pinHash;
 
-  const defaultAdminHash = '4007531f25ed2a163a091d340f3fcb5d7bbabb98c22c65074d60152eec2c9b6a';
-  const adminHash = (all.ADMIN_KEY_HASH || defaultAdminHash).trim().toLowerCase();
-  if (!all.ADMIN_KEY_HASH) updates.ADMIN_KEY_HASH = adminHash;
+  const adminHash = (all.ADMIN_KEY_HASH || '').trim().toLowerCase();
 
-  // Cloudflare Turnstile Secret Key (可於 Script Properties 設定 TURNSTILE_SECRET_KEY)
+  // Cloudflare Turnstile Secret Key (必須於 Script Properties 設定 TURNSTILE_SECRET_KEY)
   const turnstileSecretKey = (all.TURNSTILE_SECRET_KEY || '').trim();
 
   if (Object.keys(updates).length > 0) {
@@ -91,18 +133,20 @@ function getSecurityConfig(state) {
 }
 
 /**
- * 向 Cloudflare Turnstile Siteverify API 驗證前端傳入之訪客 Token
- * - 若 Script Properties 已設定 TURNSTILE_SECRET_KEY，則強制使用該金鑰驗證。
- * - 若尚未設定 TURNSTILE_SECRET_KEY 但前端有傳入 turnstileToken (如使用 Cloudflare 官方測試 Site Key)，則使用官方測試 Secret Key 進行驗證。
+ * 向 Cloudflare Turnstile Siteverify API 驗證前端傳入之訪客 Token (Fail-Closed 強制驗證機制)
+ * - 必須於 Script Properties 設定 TURNSTILE_SECRET_KEY，且前端必須傳入有效之單次 turnstileToken。
+ * - 移除測試用 Secret Key (1x0000000000000000000000000000000AA) 與空 Token 跳過邏輯，徹底防範繞過攻擊。
  */
 function verifyCloudflareTurnstileToken(turnstileToken, state) {
   const cfg = getSecurityConfig(state);
   const configuredSecret = cfg.turnstileSecretKey;
   const cleanToken = String(turnstileToken || '').trim();
 
-  // 若後端未設定 TURNSTILE_SECRET_KEY 且前端亦未傳入 token，則跳過驗證以保持向下相容
-  if (!configuredSecret && !cleanToken) {
-    return { success: true };
+  if (!configuredSecret) {
+    return {
+      success: false,
+      message: '🛡️ 雲端後端尚未於 Script Properties 設定 TURNSTILE_SECRET_KEY，系統拒絕登入請求！'
+    };
   }
 
   if (!cleanToken) {
@@ -112,14 +156,14 @@ function verifyCloudflareTurnstileToken(turnstileToken, state) {
     };
   }
 
-  const secretToUse = configuredSecret || '1x0000000000000000000000000000000AA';
   try {
     const response = UrlFetchApp.fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
       method: 'post',
-      payload: {
-        secret: secretToUse,
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        secret: configuredSecret,
         response: cleanToken
-      },
+      }),
       muteHttpExceptions: true
     });
     const result = JSON.parse(response.getContentText() || '{}');
@@ -132,6 +176,13 @@ function verifyCloudflareTurnstileToken(turnstileToken, state) {
     };
   } catch (err) {
     console.error('Turnstile siteverify error:', err);
+    const errMsg = String((err && err.message) || err || '');
+    if (errMsg.indexOf('external_request') !== -1 || errMsg.indexOf('permissions') !== -1) {
+      return {
+        success: false,
+        message: '🛡️ Apps Script 尚未取得對外連線權限！請至 Apps Script 編輯器執行一次 testTurnstileAuthorization 並允許權限。'
+      };
+    }
     return {
       success: false,
       message: '🛡️ 雲端驗證 Cloudflare Turnstile 時發生連線異常，請稍後再試！'
@@ -140,27 +191,47 @@ function verifyCloudflareTurnstileToken(turnstileToken, state) {
 }
 
 /**
- * 統一失敗次數限流防護 (防範針對 PIN 或管理員金鑰之線上暴力破解)
+ * 失敗次數限流防護 (防範暴力破解，同時將單一客戶端鎖定與全域高門檻分離，避免惡意人士鎖死考官登入 DoS)
  */
-const AUTH_RATE_LIMIT_KEY = 'EXAMINER_AUTH_FAIL_COUNT';
-const AUTH_MAX_FAILS = 10;
-const AUTH_LOCK_SECONDS = 300; // 鎖定 5 分鐘
+const AUTH_GLOBAL_RATE_LIMIT_KEY = 'EXAMINER_AUTH_FAIL_GLOBAL';
+const AUTH_CLIENT_RATE_LIMIT_PREFIX = 'EXAMINER_AUTH_FAIL_CLIENT_';
+const AUTH_CLIENT_MAX_FAILS = 5;   // 單一裝置連續失敗 5 次鎖定
+const AUTH_GLOBAL_MAX_FAILS = 40;  // 全域高門檻保護 (須先通過 Turnstile 才會觸及 PIN 驗證)
+const AUTH_LOCK_SECONDS = 180;     // 鎖定 3 分鐘
 
-function isAuthRateLimited() {
-  const cache = CacheService.getScriptCache();
-  return Number(cache.get(AUTH_RATE_LIMIT_KEY) || 0) >= AUTH_MAX_FAILS;
+function sanitizeClientRateKey(clientId) {
+  const clean = String(clientId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 48);
+  return AUTH_CLIENT_RATE_LIMIT_PREFIX + (clean || 'anon');
 }
 
-function recordAuthFailure() {
+function isAuthRateLimited(clientId) {
   const cache = CacheService.getScriptCache();
-  const count = Number(cache.get(AUTH_RATE_LIMIT_KEY) || 0) + 1;
-  cache.put(AUTH_RATE_LIMIT_KEY, String(count), AUTH_LOCK_SECONDS);
-  return count;
+  if (clientId) {
+    const clientFails = Number(cache.get(sanitizeClientRateKey(clientId)) || 0);
+    if (clientFails >= AUTH_CLIENT_MAX_FAILS) return true;
+  }
+  return Number(cache.get(AUTH_GLOBAL_RATE_LIMIT_KEY) || 0) >= AUTH_GLOBAL_MAX_FAILS;
 }
 
-function clearAuthFailures() {
+function recordAuthFailure(clientId) {
+  const cache = CacheService.getScriptCache();
+  const globalCount = Number(cache.get(AUTH_GLOBAL_RATE_LIMIT_KEY) || 0) + 1;
+  cache.put(AUTH_GLOBAL_RATE_LIMIT_KEY, String(globalCount), AUTH_LOCK_SECONDS);
+  if (clientId) {
+    const cKey = sanitizeClientRateKey(clientId);
+    const clientCount = Number(cache.get(cKey) || 0) + 1;
+    cache.put(cKey, String(clientCount), AUTH_LOCK_SECONDS);
+    return clientCount;
+  }
+  return globalCount;
+}
+
+function clearAuthFailures(clientId) {
   try {
-    CacheService.getScriptCache().remove(AUTH_RATE_LIMIT_KEY);
+    const cache = CacheService.getScriptCache();
+    if (clientId) {
+      cache.remove(sanitizeClientRateKey(clientId));
+    }
   } catch (e) {}
 }
 
@@ -203,31 +274,21 @@ function revokeExaminerSession(sessionToken) {
 function verifyExaminerPinSecret(pinOrHash, state) {
   if (!pinOrHash || typeof pinOrHash !== 'string') return false;
   const cfg = getSecurityConfig(state);
+  if (!cfg.pinHash) return false;
   const clean = pinOrHash.trim();
-  if (/^[0-9a-fA-F]{64}$/.test(clean)) {
-    return clean.toLowerCase() === cfg.pinHash;
-  }
+  // 僅接受明文 PIN 由後端計算雜湊比對，不再接受直接傳遞 64 字元 SHA-256 雜湊 (徹底阻絕 Pass-the-Hash 攻擊)
+  if (!/^\d{4,12}$/.test(clean)) return false;
   const computed = sha256Hex(`${cfg.pinSalt}:${clean}`).toLowerCase();
   return computed === cfg.pinHash;
 }
 
 /**
- * 驗證考官操作授權 (優先驗證伺服器端 Session Token；若為舊版傳入 PIN 雜湊亦受統一限流保護)
+ * 驗證考官操作授權 (僅信任伺服器端簽發之隨機高熵 Session Token)
  */
 function isExaminerRequestAuthorized(payload, state) {
   if (!payload) return false;
   if (payload.sessionToken && isExaminerSessionValid(payload.sessionToken)) {
     return true;
-  }
-  // 相容備援：若帶有 authPin 或 authPinHash，必須先通過限流檢查
-  const secret = payload.authPin || payload.authPinHash;
-  if (secret) {
-    if (isAuthRateLimited()) return false;
-    if (verifyExaminerPinSecret(secret, state)) {
-      clearAuthFailures();
-      return true;
-    }
-    recordAuthFailure();
   }
   return false;
 }
@@ -238,6 +299,7 @@ function isExaminerRequestAuthorized(payload, state) {
 function isAdminKeyValid(adminKey, state) {
   if (!adminKey || typeof adminKey !== 'string') return false;
   const cfg = getSecurityConfig(state);
+  if (!cfg.adminHash) return false;
   const clean = adminKey.trim();
   return sha256Hex(`${cfg.adminSalt}:${clean}`).toLowerCase() === cfg.adminHash;
 }
@@ -464,10 +526,11 @@ function doPost(e) {
 
     const state = loadCloudState();
 
-    // 考官 PIN 驗證：先驗證 Cloudflare Turnstile Token，核對 PIN 成功後簽發伺服器端隨機高熵 Session Token (含統一失敗次數限流防暴力破解)
+    // 考官 PIN 驗證：先強制驗證 Cloudflare Turnstile Token，通過後才核對 PIN 並簽發伺服器端隨機高熵 Session Token
     if (action === 'verifyExaminer') {
-      if (isAuthRateLimited()) {
-        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+      const clientId = String(payload.clientId || '').trim();
+      if (isAuthRateLimited(clientId)) {
+        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，系統已暫時鎖定 3 分鐘' });
       }
       const turnstileCheck = verifyCloudflareTurnstileToken(payload.turnstileToken, state);
       if (!turnstileCheck.success) {
@@ -476,9 +539,9 @@ function doPost(e) {
           message: turnstileCheck.message
         });
       }
-      const secret = payload.pin || payload.authPin || payload.authPinHash || '';
+      const secret = payload.pin || '';
       if (verifyExaminerPinSecret(secret, state)) {
-        clearAuthFailures();
+        clearAuthFailures(clientId);
         const sessionToken = createExaminerSession();
         return jsonResponse({
           status: 'success',
@@ -486,9 +549,9 @@ function doPost(e) {
           expiresInSeconds: EXAMINER_SESSION_TTL_SEC
         });
       }
-      const fails = recordAuthFailure();
-      if (fails >= AUTH_MAX_FAILS) {
-        return jsonResponse({ status: 'locked', message: 'PIN 碼錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+      const fails = recordAuthFailure(clientId);
+      if (fails >= AUTH_CLIENT_MAX_FAILS) {
+        return jsonResponse({ status: 'locked', message: 'PIN 碼錯誤次數過多，已暫時鎖定 3 分鐘' });
       }
       return jsonResponse({ status: 'unauthorized', message: 'PIN 碼錯誤' });
     }
@@ -501,42 +564,35 @@ function doPost(e) {
       return jsonResponse({ status: 'success', message: '已安全登出並撤銷雲端工作階段' });
     }
 
-    // 變更 / 重設考官 PIN (統一於後端驗證管理員金鑰並寫入 Script Properties，含統一限流防暴力破解)
+    // 變更考官 PIN (統一於後端驗證管理員金鑰並寫入 Script Properties，禁用恢復公開預設弱密碼)
     if (action === 'updateExaminerPin') {
-      if (isAuthRateLimited()) {
-        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+      const clientId = String(payload.clientId || '').trim();
+      if (isAuthRateLimited(clientId)) {
+        return jsonResponse({ status: 'locked', message: '驗證錯誤次數過多，系統已暫時鎖定 3 分鐘' });
       }
 
       const byAdmin = isAdminKeyValid(payload.adminKey, state);
       if (!byAdmin) {
-        const fails = recordAuthFailure();
-        if (fails >= AUTH_MAX_FAILS) {
-          return jsonResponse({ status: 'locked', message: '管理員金鑰錯誤次數過多，雲端已暫時鎖定 5 分鐘' });
+        const fails = recordAuthFailure(clientId);
+        if (fails >= AUTH_CLIENT_MAX_FAILS) {
+          return jsonResponse({ status: 'locked', message: '管理員金鑰錯誤次數過多，已暫時鎖定 3 分鐘' });
         }
-        return jsonResponse({ status: 'unauthorized', message: '管理員金鑰驗證失敗！無法變更或重設考官 PIN 碼。' });
+        return jsonResponse({ status: 'unauthorized', message: '管理員金鑰驗證失敗！無法變更考官 PIN 碼。' });
       }
 
       const cfg = getSecurityConfig(state);
       let newHash = '';
-      if (payload.resetToDefault) {
-        newHash = sha256Hex(`${cfg.pinSalt}:9999`).toLowerCase();
-      } else if (payload.newPin) {
+      if (payload.newPin) {
         const cleanNewPin = String(payload.newPin).trim();
         if (!/^\d{4,12}$/.test(cleanNewPin)) {
           return jsonResponse({ status: 'error', message: '新 PIN 碼格式不符（須為 4 至 12 碼半形數字）' });
         }
         newHash = sha256Hex(`${cfg.pinSalt}:${cleanNewPin}`).toLowerCase();
-      } else if (payload.newPinHash) {
-        const candidateHash = String(payload.newPinHash).trim().toLowerCase();
-        if (!/^[0-9a-f]{64}$/.test(candidateHash)) {
-          return jsonResponse({ status: 'error', message: '新 PIN 雜湊格式不正確' });
-        }
-        newHash = candidateHash;
       } else {
-        return jsonResponse({ status: 'error', message: '缺少新 PIN 碼資料' });
+        return jsonResponse({ status: 'error', message: '請提供欲設定的新 PIN 碼（已停用預設弱密碼重設功能）' });
       }
 
-      clearAuthFailures();
+      clearAuthFailures(clientId);
       PropertiesService.getScriptProperties().setProperty('EXAMINER_PIN_HASH', newHash);
       // 清除舊版殘留於試算表儲存格的雜湊，集中由 Script Properties 保管
       if (state.examinerPinHash) {

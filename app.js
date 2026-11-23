@@ -21,12 +21,44 @@ const STORAGE_KEYS = {
   HISTORY_SESSIONS: 'online_exam_history_v1',
   GAS_URL: 'online_exam_gas_url_v1',
   EXAM_LIBRARY: 'online_exam_library_v1',
-  EXAMINER_PIN_HASH: 'online_exam_pin_hash_v1'
+  EXAMINER_PIN_HASH: 'online_exam_pin_hash_v1',
+  CLIENT_DEVICE_ID: 'online_exam_device_id_v1'
 };
 
-// 本機離線模式備援用 PIN 碼雜湊設定 (雲端模式下，PIN 雜湊與管理員金鑰均集中存放於後端 Script Properties 並簽發隨機 Session Token)
-const EXAMINER_PIN_SALT = 'HD_EXAM_SECURE_SALT_2026';
-const DEFAULT_EXAMINER_PIN_HASH = '391f59f4ca8480648b504098e96bffa16f970d261a5cacea40fe5e7789c3f961';
+// 安全加固：前端不再存放任何公開預設 PIN 碼雜湊或靜態 Salt，考官驗證一律由後端 Script Properties 權威核驗
+function getOrCreateClientDeviceId() {
+  try {
+    let cid = localStorage.getItem(STORAGE_KEYS.CLIENT_DEVICE_ID);
+    if (cid && /^cid_[a-z0-9]{16,40}$/.test(cid)) return cid;
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let rand = 'cid_';
+    if (window.crypto && window.crypto.getRandomValues) {
+      const bytes = new Uint8Array(24);
+      window.crypto.getRandomValues(bytes);
+      for (let i = 0; i < bytes.length; i++) rand += chars[bytes[i] % chars.length];
+    } else {
+      for (let i = 0; i < 24; i++) rand += chars[Math.floor(Math.random() * chars.length)];
+    }
+    localStorage.setItem(STORAGE_KEYS.CLIENT_DEVICE_ID, rand);
+    return rand;
+  } catch (e) {
+    return 'cid_fallback_client';
+  }
+}
+
+// 本地端產生 QR Code Data URL (不將含隨機測驗 Token 的網址傳送至任何外部第三方伺服器)
+function generateLocalQrDataUrl(text, cellSize = 6, margin = 3) {
+  if (!text || typeof window.qrcode !== 'function') return '';
+  try {
+    const qr = window.qrcode(0, 'M');
+    qr.addData(String(text));
+    qr.make();
+    return qr.createDataURL(cellSize, margin);
+  } catch (e) {
+    console.warn('Local QR generation failed:', e);
+    return '';
+  }
+}
 
 // 預設題庫 (支援空白題庫與預設關閉試卷狀態)
 const DEFAULT_EXAM_DATA = {
@@ -238,8 +270,11 @@ function updateCloudStatusUI() {
     const shareUrl = buildStudentShareUrl();
     if (shareInput) shareInput.value = shareUrl;
     if (qrImg && qrHint) {
-      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(shareUrl)}`;
-      qrImg.classList.remove('hidden');
+      const qrDataUrl = generateLocalQrDataUrl(shareUrl);
+      if (qrDataUrl) {
+        qrImg.src = qrDataUrl;
+        qrImg.classList.remove('hidden');
+      }
       qrHint.innerHTML = '<span style="color:var(--primary); font-weight:600; cursor:pointer;" onclick="openStandaloneQrPage()">🔍 點選 QR Code 可開啟獨立頁面單獨顯示</span>';
     }
   } else {
@@ -777,8 +812,11 @@ function updateExamLinkTabUI() {
   const shareUrl = buildStudentShareUrl();
   if (shareInput) shareInput.value = shareUrl;
   if (qrImg && qrHint) {
-    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(shareUrl)}`;
-    qrImg.classList.remove('hidden');
+    const qrDataUrl = generateLocalQrDataUrl(shareUrl);
+    if (qrDataUrl) {
+      qrImg.src = qrDataUrl;
+      qrImg.classList.remove('hidden');
+    }
     qrHint.innerHTML = '<span style="color:var(--primary); font-weight:600; cursor:pointer;" onclick="openStandaloneQrPage()">🔍 點選 QR Code 可開啟獨立全螢幕頁面投放大螢幕</span>';
   }
 }
@@ -2136,22 +2174,12 @@ async function hashWithSalt(salt, value) {
 }
 
 async function hashExaminerPin(pin) {
-  return hashWithSalt(EXAMINER_PIN_SALT, pin);
+  return hashWithSalt('LOCAL_CUSTOM_SALT', pin);
 }
 
 function getStoredExaminerPinHash() {
-  const customHash = localStorage.getItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
-  if (customHash && (
-    customHash === 'f019306584afed3d66239ede39a4ff22f3157215af1df5a891e79c725620ade4' ||
-    customHash === 'f77548413d6d3ced941815c06f4499b328e47f9893e15b6c2d4d3c8838efa166'
-  )) {
-    localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
-    return DEFAULT_EXAMINER_PIN_HASH;
-  }
-  if (customHash && customHash.trim()) {
-    return customHash.trim().toLowerCase();
-  }
-  return DEFAULT_EXAMINER_PIN_HASH;
+  localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
+  return '';
 }
 
 // ==================== Cloudflare Turnstile (Verify Visitors Without CAPTCHA) ====================
@@ -2265,14 +2293,14 @@ async function handlePinLogin(event) {
     return;
   }
 
-  // 檢查 Cloudflare Turnstile 訪客安全驗證狀態
+  // 檢查 Cloudflare Turnstile 訪客安全驗證狀態 (Fail-Closed：強制必須完成驗證取得 Token 始得送出)
   const siteKey = getActiveTurnstileSiteKey();
   const turnstileToken = getExaminerTurnstileToken();
-  const isTurnstileLoaded = typeof window.turnstile !== 'undefined' && turnstileWidgetId !== null;
-  if (siteKey && isTurnstileLoaded && !turnstileToken) {
-    errBox.textContent = '🛡️ 請稍候，正在完成 Cloudflare 訪客安全驗證（或請勾選驗證框）！';
+  if (siteKey && !turnstileToken) {
+    errBox.textContent = '🛡️ 請稍候，正在完成 Cloudflare 訪客安全驗證（或請勾選驗證框）後再登入！';
     errBox.className = 'alert alert-warning';
     errBox.classList.remove('hidden');
+    initOrResetExaminerTurnstile();
     return;
   }
 
@@ -2289,12 +2317,13 @@ async function handlePinLogin(event) {
     let cloudLockedMsg = '';
     let turnstileErrorMsg = '';
 
-    // 若已連線雲端，一律交由雲端後端驗證 Cloudflare Turnstile Token 與 PIN 碼並簽發隨機 Session Token（防範 Pass-the-Hash 與離線破解）
+    // 考官登入一律強制透過雲端 Google Apps Script 權威驗證 Cloudflare Turnstile Token 與 PIN 碼（移除無雲端之前端本地 PIN 驗證旁路）
     if (gasUrl) {
       const verifyRes = await postToCloud({
         action: 'verifyExaminer',
         pin: pinInput,
-        turnstileToken: turnstileToken
+        turnstileToken: turnstileToken,
+        clientId: getOrCreateClientDeviceId()
       });
       if (verifyRes && verifyRes.status === 'success') {
         isPinValid = true;
@@ -2306,7 +2335,7 @@ async function handlePinLogin(event) {
         turnstileErrorMsg = verifyRes.message || '🛡️ Cloudflare 訪客安全驗證未通過或已逾時，請重新驗證後再試！';
       } else if (verifyRes && verifyRes.status === 'locked') {
         isPinValid = false;
-        cloudLockedMsg = verifyRes.message || '❌ PIN 碼錯誤次數過多，雲端已暫時鎖定 5 分鐘！';
+        cloudLockedMsg = verifyRes.message || '❌ PIN 碼錯誤次數過多，已暫時鎖定！';
       } else if (verifyRes && verifyRes.status === 'unauthorized') {
         isPinValid = false;
       } else {
@@ -2314,11 +2343,8 @@ async function handlePinLogin(event) {
         cloudLockedMsg = '⚠️ 無法連線至雲端伺服器進行考官身分驗證，請檢查網路狀態！';
       }
     } else {
-      // 純單機離線模式備援（未綁定 GAS 網址時）
-      const inputHash = await hashExaminerPin(pinInput);
-      const targetHash = getStoredExaminerPinHash();
-      isPinValid = (inputHash === targetHash);
-      issuedSessionToken = 'local_offline_session';
+      isPinValid = false;
+      turnstileErrorMsg = '⚠️ 尚未設定 Google Apps Script 雲端後端網址（DEFAULT_GAS_URL），為確保資安，系統禁止於無後端驗證狀態下登入後台！';
     }
 
     if (isPinValid) {
@@ -2573,7 +2599,8 @@ async function handleUpdateExaminerPin(event) {
   const res = await postToCloud({
     action: 'updateExaminerPin',
     adminKey: adminKey,
-    newPin: newPin
+    newPin: newPin,
+    clientId: getOrCreateClientDeviceId()
   });
 
   if (!res || res.status !== 'success') {
@@ -2598,43 +2625,7 @@ async function handleUpdateExaminerPin(event) {
 }
 
 async function handleResetExaminerPin() {
-  const gasUrl = getActiveGasUrl();
-  if (!gasUrl) {
-    alert('⚠️ 為確保金鑰安全，重設考官 PIN 碼必須先綁定並連線至 Google Apps Script 雲端後端！');
-    return;
-  }
-
-  const adminKey = prompt('請輸入管理員金鑰以恢復預設 PIN 碼：');
-  if (adminKey === null) return;
-  const trimmedKey = adminKey.trim();
-  if (!trimmedKey) {
-    alert('⚠️ 必須輸入管理員金鑰！');
-    return;
-  }
-
-  const res = await postToCloud({
-    action: 'updateExaminerPin',
-    adminKey: trimmedKey,
-    resetToDefault: true
-  });
-
-  if (!res || res.status !== 'success') {
-    alert((res && res.message) ? `❌ ${res.message}` : '❌ 管理員金鑰驗證失敗或雲端連線異常！無法恢復預設 PIN 碼。');
-    return;
-  }
-
-  localStorage.removeItem(STORAGE_KEYS.EXAMINER_PIN_HASH);
-  if (res.sessionToken) {
-    currentExaminerAuthToken = res.sessionToken;
-  }
-
-  const alertBox = document.getElementById('updatePinAlertBox');
-  if (alertBox) {
-    alertBox.textContent = '🔄 考官 PIN 碼已成功恢復為系統初始預設值 (9999)！';
-    alertBox.className = 'alert alert-info';
-    alertBox.classList.remove('hidden');
-  }
-  showToast('🔄 已成功恢復預設考官 PIN 碼 (9999)！');
+  alert('⚠️ 為確保系統安全，已停用恢復公開預設弱密碼功能。請直接在上方輸入管理員金鑰與新 PIN 碼進行變更！');
 }
 
 function showExaminerDashboard() {

@@ -5,6 +5,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>測驗連線 QR Code</title>
+  <!-- 本地端 QR Code 生成器 (防範隨機測驗連結 Token 外洩至第三方 QR API 伺服器，並加入 SRI 完整性保護) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"
+    integrity="sha384-lQXOAyZwHXE55JFyrOMB7nY2Wv+m5ZWNtJcHrd1rceRQXAYNLak8ukN5TjBTcIwz"
+    crossorigin="anonymous"></script>
   <style>
     * {
       box-sizing: border-box;
@@ -53,7 +57,12 @@
       }
 
       const qrImg = document.getElementById('standaloneQrImg');
-      qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=16&data=' + encodeURIComponent(targetUrl);
+      if (typeof qrcode === 'function') {
+        const qr = qrcode(0, 'M');
+        qr.addData(targetUrl);
+        qr.make();
+        qrImg.src = qr.createDataURL(10, 4);
+      }
     })();
   </script>
 </body>

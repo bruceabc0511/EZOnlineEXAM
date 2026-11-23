@@ -13,6 +13,10 @@
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
     crossorigin="anonymous"></script>
+  <!-- 本地端 QR Code 生成器 (防範隨機測驗連結 Token 外洩至第三方 QR API 伺服器，並加入 SRI 完整性保護) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"
+    integrity="sha384-lQXOAyZwHXE55JFyrOMB7nY2Wv+m5ZWNtJcHrd1rceRQXAYNLak8ukN5TjBTcIwz"
+    crossorigin="anonymous"></script>
   <!-- Cloudflare Turnstile (Verify Visitors Without CAPTCHA) -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
@@ -870,9 +874,6 @@
                   <button type="submit" class="btn btn-primary">
                     ✅ 確認變更 PIN 碼
                   </button>
-                  <button type="button" class="btn btn-outline" onclick="handleResetExaminerPin()">
-                    🔄 恢復預設 PIN 碼
-                  </button>
                 </div>
 
                 <div id="updatePinAlertBox" class="alert hidden" style="margin-top: 14px;"></div>
@@ -1043,7 +1044,7 @@
   <!-- Toast 訊息通知容器 -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="app.js?v=20261115_4"></script>
+  <script src="app.js?v=20261123_1"></script>
   <p class="Powered" style="font-size: 9px; text-align: center;">Powered by Chin Wei Li 2026</p>
 </body>
 
