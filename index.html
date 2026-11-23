@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261123_5">
+  <link rel="stylesheet" href="styles.css?v=20261123_6">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
@@ -890,13 +890,14 @@
                 style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
                 <div>
                   <div style="font-weight: 600; font-size: 1rem; color: var(--text-primary); margin-bottom: 4px;">
-                    🎲 生成測驗連結
+                    生成測驗連結
                   </div>
                   <p class="text-muted text-sm" id="tokenDurationRuleDesc" style="margin: 0;">
-                    每場測驗可生成一組獨立作答網址，<strong>有效時間為「該試卷作答時間 + 15 分鐘」(自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！
+                    ⏱️ 每場測驗可生成一組獨立作答網址，<strong>有效時間為「該試卷作答時間 + 15
+                      分鐘」(自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！
                   </p>
                   <p class="text-muted text-sm" id="tokenDurationRuleDesc" style="margin: 0;">
-                    本系統目前尚無法進行多場測驗同時開考，若有其他考官正在進行測驗，請您耐心等候其結束。
+                    🙇 本系統目前尚無法進行多場測驗同時開考，若有其他考官正在進行測驗，請您耐心等候其結束 🙇
                   </p>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
@@ -975,12 +976,12 @@
                 <thead>
                   <tr>
                     <th style="width: 105px;">狀態 / 角色</th>
-                    <th style="width: 120px;">帳號</th>
-                    <th style="width: 95px;">姓名</th>
-                    <th style="width: 20%; min-width: 170px;">服務單位</th>
+                    <th style="width: 150px;">帳號</th>
+                    <th style="width: 80px;">姓名</th>
+                    <th style="width: 15%; min-width: 150px;">服務單位</th>
                     <th style="width: 115px;">生日</th>
-                    <th style="width: 24%; min-width: 210px;">Email</th>
-                    <th style="width: 145px; font-size: 0.82rem; line-height: 1.35;">註冊 /<br>最後登入時間</th>
+                    <th style="width: 20%; min-width: 200px;">Email</th>
+                    <th style="width: 170px; font-size: 0.82rem; line-height: 1.35;">註冊 /<br>最後登入時間</th>
                     <th style="min-width: 230px;">管理操作</th>
                   </tr>
                 </thead>

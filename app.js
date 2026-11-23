@@ -807,7 +807,7 @@ function updateExamLinkTabUI() {
   const examDurMins = Math.max(1, Number(examData.durationMinutes) || 60);
   const totalValidMins = examDurMins + 15;
   if (tokenRuleDescEl) {
-    tokenRuleDescEl.innerHTML = `本次測驗可生成一組獨立作答網址，<strong>有效時間為 ${totalValidMins} 分鐘」(自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！`;
+    tokenRuleDescEl.innerHTML = `本次測驗可生成一組獨立作答網址，<strong>有效時間為 ${totalValidMins} 分鐘 (自生成起算)</strong>。如再次生成，先前連結將<strong>立即失效作廢</strong>！`;
   }
 
   const now = Date.now();
@@ -3171,7 +3171,7 @@ function renderAdminUsersTable() {
           const btnSuspend = document.createElement('button');
           btnSuspend.type = 'button';
           btnSuspend.className = 'btn btn-outline btn-sm';
-          btnSuspend.textContent = '⏸️ 停用';
+          btnSuspend.textContent = '⛔ 停用';
           btnSuspend.disabled = isMe;
           btnSuspend.onclick = () => handleAdminUpdateUser(u.userId, u.displayName, { newStatus: 'suspended' });
           actWrap.appendChild(btnSuspend);
@@ -3179,7 +3179,7 @@ function renderAdminUsersTable() {
           const btnActivate = document.createElement('button');
           btnActivate.type = 'button';
           btnActivate.className = 'btn btn-primary btn-sm';
-          btnActivate.textContent = '▶️ 啟用';
+          btnActivate.textContent = '✅ 啟用';
           btnActivate.onclick = () => handleAdminUpdateUser(u.userId, u.displayName, { newStatus: 'active', unlockAccount: true });
           actWrap.appendChild(btnActivate);
         }
@@ -3189,7 +3189,7 @@ function renderAdminUsersTable() {
         const btnRole = document.createElement('button');
         btnRole.type = 'button';
         btnRole.className = 'btn btn-secondary btn-sm';
-        btnRole.textContent = u.role === 'admin' ? '設為一般考官' : '👑 設為管理員';
+        btnRole.textContent = u.role === 'admin' ? '設為一般考官' : '設為管理員';
         btnRole.disabled = isMe;
         btnRole.onclick = () => handleAdminUpdateUser(u.userId, u.displayName, { newRole: nextRole });
         actWrap.appendChild(btnRole);
@@ -3254,7 +3254,7 @@ async function handleAdminResetUserPassword(targetUserId, username, displayName)
   if (newPassword === null) return;
   const cleanPw = newPassword.trim();
   if (!isStrongPasswordClient(cleanPw)) {
-    alert('⚠️ 密碼格式不符！長度須為 8~64 碼，且必須同時包含「大寫英文」、「小寫英文」及「數字」！');
+    alert('⚠️ 密碼格式不符！長度須至少 8 碼，且必須同時包含「大寫英文」、「小寫英文」及「數字」！');
     return;
   }
   const res = await postToCloud({
