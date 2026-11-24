@@ -3650,7 +3650,7 @@ function handleApplyAsActiveExam() {
       `⚠️ 切換測驗試卷前提醒：\n目前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
     );
     if (shouldArchive) {
-      createAndSaveHistorySession(`${examData.title || '未命名測驗'} (${examData.examDate || '-'})`, true);
+      createAndSaveHistorySession(`${examData.title || '未命名測驗'}`, true);
     }
   }
 
@@ -4550,7 +4550,7 @@ function parseTemplateRows(rows, fileName) {
           `提醒：當前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
         );
         if (shouldArchive) {
-          createAndSaveHistorySession(`${examData.title || '未命名測驗'} (${examData.examDate || '-'})`, true);
+          createAndSaveHistorySession(`${examData.title || '未命名測驗'}`, true);
         }
       }
 
@@ -5150,7 +5150,7 @@ function openArchiveSessionModal() {
   }
 
   document.getElementById('archiveStudentCount').textContent = submissions.length;
-  const defaultTitle = `${examData.title || '線上筆試測驗'} (${examData.examDate || formatDateTime(new Date()).slice(0, 10)})`;
+  const defaultTitle = examData.title || '線上筆試測驗';
   document.getElementById('archiveSessionTitle').value = defaultTitle;
   document.getElementById('archiveAutoSendEmail').checked = true;
   document.getElementById('archiveClearCurrent').checked = true;
@@ -5244,6 +5244,18 @@ function canCurrentUserModifyHistory(hist) {
   return hist.ownerId === myId;
 }
 
+function formatHistoryTitleDisplay(hist) {
+  const raw = String((hist && (hist.sessionTitle || hist.examTitle)) || '未命名測驗').trim();
+  const examDate = String((hist && hist.examDate) || '').trim();
+  let cleaned = raw;
+  if (examDate) {
+    const escapedDate = examDate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    cleaned = cleaned.replace(new RegExp(`\\s*[\\(（]${escapedDate}[\\)）]\\s*$`), '');
+  }
+  cleaned = cleaned.replace(/\s*[\(（](?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|-)[\)）]\s*$/, '').trim();
+  return cleaned || raw;
+}
+
 function renderExaminerHistoryTab() {
   const visibleHistoryList = isCurrentUserAdmin()
     ? historySessions
@@ -5277,7 +5289,7 @@ function renderExaminerHistoryTab() {
         <strong>#${visibleHistoryList.length - idx}</strong>
         <div class="text-muted text-sm">${escapeHtml(hist.archivedAt)}</div>
       </td>
-      <td><strong>${escapeHtml(hist.sessionTitle || hist.examTitle)}</strong>${ownerTag}</td>
+      <td><strong>${escapeHtml(formatHistoryTitleDisplay(hist))}</strong>${ownerTag}</td>
       <td>${escapeHtml(hist.examDate || '-')}</td>
       <td>${qLen} 題</td>
       <td><strong>${subLen} 人</strong></td>
@@ -5287,10 +5299,10 @@ function renderExaminerHistoryTab() {
       <td><span class="badge ${st.passRate >= 60 ? 'badge-teal' : 'badge-danger'}">${st.passRate}%</span></td>
       <td>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          <button type="button" class="btn btn-primary btn-sm js-hist-view">🔍 檢視本場次明細</button>
+          <button type="button" class="btn btn-primary btn-sm js-hist-view">🔍 檢視明細</button>
           <button type="button" class="btn btn-secondary btn-sm js-hist-export">📥 匯出報表</button>
           <button type="button" class="btn btn-outline btn-sm js-hist-email">📩 寄送成績單</button>
-          <button type="button" class="btn btn-danger-outline btn-sm js-hist-del">刪除</button>
+          <button type="button" class="btn btn-danger-outline btn-sm js-hist-del">刪除紀錄</button>
         </div>
       </td>
     `;
@@ -5320,7 +5332,7 @@ function viewHistorySessionDetail(histId) {
   const questions = hist.questionsSnapshot || [];
   const st = calculateStatsForList(subs);
 
-  document.getElementById('histDetailTitle').textContent = hist.sessionTitle || hist.examTitle;
+  document.getElementById('histDetailTitle').textContent = formatHistoryTitleDisplay(hist);
   document.getElementById('histDetailMeta').textContent = `考試日期：${hist.examDate || '-'} ｜ 歸檔時間：${hist.archivedAt} ｜ 題數：${questions.length} 題`;
 
   document.getElementById('btnHistSendAllEmail').onclick = () => sendAllScoresEmail(hist.id);
