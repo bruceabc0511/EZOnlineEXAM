@@ -1066,6 +1066,69 @@ function doPost(e) {
       });
     }
 
+    // 0-E2. 考官修改自己的服務單位 (強制鎖定僅能修改 sessionToken 本人帳號之 organization，防範 IDOR 越權)
+    if (action === 'updateOwnOrganization') {
+      const clientId = String(payload.clientId || '').trim();
+      if (isAuthRateLimited(clientId)) {
+        return jsonResponse({ status: 'locked', message: '操作過於頻繁，系統已暫時鎖定 3 分鐘' });
+      }
+
+      const sessUser = getAuthorizedExaminerUser(payload, state);
+      if (!sessUser) {
+        return jsonResponse({ status: 'unauthorized', message: '登入工作階段已逾時，請重新登入後再修改服務單位！' });
+      }
+
+      const newOrg = String(payload.newOrganization || '').trim().substring(0, 60);
+      if (!newOrg || newOrg.length < 2) {
+        return jsonResponse({ status: 'error', message: '請填寫正確的服務單位名稱（至少 2 個字，上限 60 字）' });
+      }
+
+      const users = loadUsersFromSheet();
+      const me = users.find(u => u.userId === sessUser.userId);
+      if (!me) {
+        return jsonResponse({ status: 'error', message: '找不到您的帳號資料，請重新登入' });
+      }
+
+      const oldOrg = String(me.organization || '').trim();
+      if (oldOrg === newOrg) {
+        return jsonResponse({ status: 'error', message: '新輸入的服務單位與目前設定相同，無須變更' });
+      }
+
+      me.organization = newOrg;
+      saveUsersToSheet(users);
+
+      // 同步更新該考官名下已上傳試卷的擁有者單位標記
+      let libUpdated = false;
+      (state.examLibrary || []).forEach(ex => {
+        if (ex && ex.ownerId === me.userId) {
+          ex.ownerOrg = newOrg;
+          libUpdated = true;
+        }
+      });
+      if (libUpdated) {
+        const { stateSheet, librarySheet } = ensureSheetsInitialized();
+        syncExamLibrarySheet(librarySheet, state.examLibrary);
+        touchUpdatedAt(stateSheet);
+      }
+
+      // 同步更新伺服器快取中的 Session 資訊 (保留原 issuedAt 絕對存活上限起算點)
+      try {
+        const cleanToken = String(payload.sessionToken || '').trim();
+        if (cleanToken.startsWith('exs_')) {
+          sessUser.organization = newOrg;
+          CacheService.getScriptCache().put('EXAMINER_SESS_' + cleanToken, JSON.stringify(sessUser), EXAMINER_SESSION_TTL_SEC);
+        }
+      } catch (e) {}
+
+      appendAuditLogGas(me.userId, me.username, 'UPDATE_OWN_ORG', me.userId, `本人變更服務單位：${oldOrg || '-'} -> ${newOrg}`);
+
+      return jsonResponse({
+        status: 'success',
+        message: `✅ 服務單位已成功更新為「${newOrg}」！`,
+        userProfile: sanitizeUserForClientGas(me, false)
+      });
+    }
+
     // 0-F. 管理員專屬功能：查詢考官成員清單、審核註冊申請、停用/啟用/切換角色、協助重設密碼、刪除帳號
     const adminUserActions = ['adminListUsers', 'adminReviewUser', 'adminUpdateUser', 'adminResetUserPassword', 'adminDeleteUser'];
     if (adminUserActions.indexOf(action) !== -1) {

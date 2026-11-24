@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261124_3">
+  <link rel="stylesheet" href="styles.css?v=20261124_4">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
@@ -84,7 +84,7 @@
             <line x1="9" y1="9" x2="15" y2="15"></line>
           </svg>
         </div>
-        <h2 id="studentTokenInvalidTitle" style="color: var(--danger, #dc3545);">測驗連結已失效或已逾時</h2>
+        <h2 id="studentTokenInvalidTitle" style="color: var(--danger, #dc3545);">測驗連結已失效或逾時</h2>
         <p class="text-muted" id="studentTokenInvalidDesc">
           此測驗連結已超過有效期限，或考官已重新生成新連結。<br>
           請聯繫考官重新獲取最新測驗連結！
@@ -100,8 +100,8 @@
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
         </div>
-        <h2>目前非測驗時間</h2>
-        <p class="text-muted">試卷尚未開放或測驗已結束，請等候考官開啟測驗或嘗試重新整理網頁。</p>
+        <h2>目前尚無測驗</h2>
+        <p class="text-muted">試卷尚未載入 或 測驗尚未開始，請於本畫面耐心等候 或 嘗試重新整理網頁。</p>
       </div>
 
       <!-- 1. 考生登入與測驗資訊畫面 (僅在考官開始測驗開放試卷時顯示；關閉時完全隱藏) -->
@@ -124,11 +124,12 @@
 
         <div class="card-body">
           <div class="notice-box">
-            <h3>⚠️ 應試規則與防作弊聲明</h3>
+            <h3>⚠️ 應試規則與防作弊聲明 ⚠️</h3>
             <ul>
               <li>本測驗採<strong>單選／複選題、題目亂數排列</strong>，滿分為 100 分。</li>
               <li>每位考生（同一電子郵件 Email）於本場次<strong>限作答一次</strong>，交卷後不得重複應試。</li>
               <li>請填寫正確的<strong>電子郵件 (Email)</strong>，考試結束後系統將寄送個人成績單至您的信箱。</li>
+              <li>建議您使用<strong>內建網頁瀏覽器</strong>進行作答，使用<strong>LINE對話視窗瀏覽本頁</strong>面可能會造成<strong>作答失敗</strong>。</li>
               <li><strong>防作弊機制已啟用</strong>：一旦點擊「開始作答」，<strong>嚴禁切換分頁、縮小視窗、開啟其他程式或離開作答畫面</strong>。</li>
               <li>第 <strong>1、2</strong> 次離開畫面將跳出嚴重警告並記錄；第 <strong>3</strong> 次離開畫面系統將<strong>立即強制終止測驗並自動交卷</strong>！
               </li>
@@ -1001,35 +1002,75 @@
             </div>
           </div>
 
+          <!-- 管理員專屬區塊 2：Google 雲端資料庫 & 自動寄成績信設定 (僅管理員 admin 可見與操作) -->
+          <div class="card hidden" id="adminCloudConfigCard" style="margin-bottom: 20px;">
+            <h3>☁️ Google 雲端資料庫 &amp; 自動寄成績信設定 <span class="badge badge-amber"
+                style="font-size: 0.75rem; margin-left: 6px;">管理員專屬</span></h3>
+            <p class="text-muted text-sm" style="margin-bottom:16px;">
+              填入一次 Google Apps Script 網頁應用程式網址並儲存後，系統即會<strong>自動跨裝置綁定連線</strong>，不同電腦或手機開啟網頁皆會自動連線，無須重複輸入。
+            </p>
+
+            <div class="form-group">
+              <label for="gasWebAppUrlInput">
+                Google Apps Script 網頁應用程式網址 (`.../exec`)
+                <span id="gasLockStatusBadge" class="badge badge-teal hidden" style="margin-left: 6px;">✅ 已綁定</span>
+              </label>
+              <input type="text" id="gasWebAppUrlInput" placeholder="https://script.google.com/macros/s/AKfycb.../exec">
+            </div>
+
+            <div class="action-btn-group" style="flex-wrap: wrap;">
+              <button type="button" class="btn btn-primary" id="btnSaveGasUrl" onclick="saveGasUrlConfig()">
+                ✅ 儲存並綁定雲端資料庫
+              </button>
+              <button type="button" class="btn btn-secondary" onclick="testGasConnection()">
+                🔌 測試雲端資料庫連線
+              </button>
+              <button type="button" class="btn btn-outline" onclick="pushAllLocalDataToCloud()">
+                ⬆️ 將本地端資料上傳至雲端資料庫
+              </button>
+            </div>
+          </div>
+
           <div class="grid-2col" id="settingsBottomGrid">
-            <!-- 左側：Google 雲端資料庫 & 自動寄成績信設定 (僅管理員 admin 可見與操作) -->
-            <div class="card" id="adminCloudConfigCard">
-              <h3>☁️ Google 雲端資料庫 &amp; 自動寄成績信設定 <span class="badge badge-amber"
-                  style="font-size: 0.75rem; margin-left: 6px;">管理員專屬</span></h3>
-              <p class="text-muted text-sm" style="margin-bottom:16px;">
-                填入一次 Google Apps Script 網頁應用程式網址並儲存後，系統即會<strong>自動跨裝置綁定連線</strong>，不同電腦或手機開啟網頁皆會自動連線，無須重複輸入。
+            <!-- 左側：考官個人資訊與服務單位修改 -->
+            <div class="card">
+              <h3>🏢 考官服務單位修改</h3>
+              <p class="text-muted text-sm" style="margin-bottom:14px;">
+                若您的服務機關或所屬單位異動，可於此更新個人帳號綁定的服務單位資訊。
               </p>
 
-              <div class="form-group">
-                <label for="gasWebAppUrlInput">
-                  Google Apps Script 網頁應用程式網址 (`.../exec`)
-                  <span id="gasLockStatusBadge" class="badge badge-teal hidden" style="margin-left: 6px;">✅ 已綁定</span>
-                </label>
-                <input type="text" id="gasWebAppUrlInput"
-                  placeholder="https://script.google.com/macros/s/AKfycb.../exec">
+              <div id="ownAccountProfileBox"
+                style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.9rem;">
+                <div><strong>目前登入帳號：</strong><span id="ownProfileUsername">-</span></div>
+                <div style="margin-top: 4px;"><strong>姓名與身分：</strong><span id="ownProfileNameAndOrg">-</span></div>
+                <div style="margin-top: 4px;"><strong>目前服務單位：</strong><span id="ownProfileCurrentOrg"
+                    style="color: var(--primary); font-weight: 600;">-</span></div>
               </div>
 
-              <div class="action-btn-group" style="flex-wrap: wrap;">
-                <button type="button" class="btn btn-primary" id="btnSaveGasUrl" onclick="saveGasUrlConfig()">
-                  ✅ 儲存並綁定雲端資料庫
-                </button>
-                <button type="button" class="btn btn-secondary" onclick="testGasConnection()">
-                  🔌 測試雲端資料庫連線
-                </button>
-                <button type="button" class="btn btn-outline" onclick="pushAllLocalDataToCloud()">
-                  ⬆️ 將本地端資料上傳至雲端資料庫
-                </button>
-              </div>
+              <form id="updateOrgForm" onsubmit="handleUpdateOwnOrganization(event)">
+                <div class="form-group">
+                  <label for="newExaminerOrgInput">
+                    新服務單位名稱 <span class="required">*</span>
+                  </label>
+                  <input type="text" id="newExaminerOrgInput" placeholder="請輸入新的服務機關及單位名稱" required maxlength="50"
+                    autocomplete="organization">
+                </div>
+
+                <div id="updateOrgLoadingBar" class="pin-loading-wrap hidden"
+                  style="margin-top: 14px; margin-bottom: 0;" role="progressbar" aria-label="服務單位更新進度">
+                  <div class="pin-loading-track">
+                    <div class="pin-loading-fill"></div>
+                  </div>
+                </div>
+
+                <div class="action-btn-group" style="margin-top: 14px; flex-wrap: wrap;">
+                  <button type="submit" id="btnUpdateOrgSubmit" class="btn btn-primary">
+                    ✅ 確認修改服務單位
+                  </button>
+                </div>
+
+                <div id="updateOrgAlertBox" class="alert hidden" style="margin-top: 14px;"></div>
+              </form>
             </div>
 
             <!-- 右側：個人專屬登入密碼變更設定 (僅能變更自己帳號的密碼) -->
@@ -1038,12 +1079,6 @@
               <p class="text-muted text-sm" id="ownPasswordCardDesc" style="margin-bottom:14px;">
                 您僅能變更自己帳號的登入密碼。新密碼長度須至少 8 碼，且必須同時包含<strong>大寫英文、小寫英文與數字</strong>。
               </p>
-
-              <div id="ownAccountProfileBox"
-                style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.9rem;">
-                <div><strong>目前登入帳號：</strong><span id="ownProfileUsername">-</span></div>
-                <div style="margin-top: 4px;"><strong>姓名與單位：</strong><span id="ownProfileNameAndOrg">-</span></div>
-              </div>
 
               <form id="updatePinForm" onsubmit="handleUpdateExaminerPin(event)">
                 <div class="form-group" id="currentPasswordGroup">
@@ -1076,7 +1111,7 @@
 
                 <div class="action-btn-group" style="margin-top: 14px; flex-wrap: wrap;">
                   <button type="submit" id="btnUpdatePinSubmit" class="btn btn-primary">
-                    ✅ 確認變更個人密碼 (PIN)
+                    ✅ 確認變更個人密碼
                   </button>
                 </div>
 

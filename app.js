@@ -3066,6 +3066,101 @@ async function handleUpdateExaminerPin(event) {
   showToast('✅ 個人密碼已成功變更！');
 }
 
+async function handleUpdateOwnOrganization(event) {
+  if (event) event.preventDefault();
+  const orgInputEl = document.getElementById('newExaminerOrgInput');
+  const alertBox = document.getElementById('updateOrgAlertBox');
+  const loadingBar = document.getElementById('updateOrgLoadingBar');
+  const submitBtn = document.getElementById('btnUpdateOrgSubmit');
+
+  const newOrg = (orgInputEl ? orgInputEl.value : '').trim();
+
+  function showOrgAlert(msg, type) {
+    if (!alertBox) {
+      if (type === 'danger') alert(msg);
+      else showToast(msg);
+      return;
+    }
+    alertBox.textContent = msg;
+    alertBox.className = `alert alert-${type === 'danger' ? 'danger' : 'success'}`;
+    alertBox.classList.remove('hidden');
+  }
+
+  if (!newOrg || newOrg.length < 2) {
+    showOrgAlert('⚠️ 請填寫正確的服務單位名稱（至少 2 個字）！', 'danger');
+    if (orgInputEl) orgInputEl.focus();
+    return;
+  }
+
+  const currentOrg = (currentExaminerProfile && currentExaminerProfile.organization)
+    ? String(currentExaminerProfile.organization).trim()
+    : '';
+  if (currentOrg && currentOrg === newOrg) {
+    showOrgAlert('⚠️ 新輸入的服務單位與目前設定相同，無須變更！', 'danger');
+    if (orgInputEl) orgInputEl.select();
+    return;
+  }
+
+  const gasUrl = getActiveGasUrl();
+  if (!gasUrl) {
+    showOrgAlert('⚠️ 修改服務單位必須先綁定並連線至 Google Apps Script 雲端後端！', 'danger');
+    return;
+  }
+
+  if (alertBox) alertBox.classList.add('hidden');
+  if (loadingBar) loadingBar.classList.remove('hidden');
+  if (submitBtn) submitBtn.disabled = true;
+  if (orgInputEl) orgInputEl.disabled = true;
+
+  let res = null;
+  try {
+    res = await postToCloud({
+      action: 'updateOwnOrganization',
+      newOrganization: newOrg,
+      clientId: getOrCreateClientDeviceId()
+    });
+  } finally {
+    if (loadingBar) loadingBar.classList.add('hidden');
+    if (submitBtn) submitBtn.disabled = false;
+    if (orgInputEl) orgInputEl.disabled = false;
+  }
+
+  if (!res || res.status !== 'success') {
+    const errMsg = (res && res.message) ? res.message : '❌ 雲端連線異常，無法更新服務單位！';
+    showOrgAlert(errMsg, 'danger');
+    return;
+  }
+
+  if (res.userProfile) {
+    currentExaminerProfile = res.userProfile;
+  } else if (currentExaminerProfile) {
+    currentExaminerProfile.organization = newOrg;
+  }
+
+  // 同步更新本機試卷庫中本人名下試卷的單位標記
+  const myId = getCurrentExaminerUserId();
+  if (myId && Array.isArray(examLibrary)) {
+    let libChanged = false;
+    examLibrary.forEach(ex => {
+      if (ex && ex.ownerId === myId) {
+        ex.ownerOrg = newOrg;
+        libChanged = true;
+      }
+    });
+    if (libChanged) {
+      localStorage.setItem(STORAGE_KEYS.EXAM_LIBRARY, JSON.stringify(examLibrary));
+    }
+  }
+
+  if (orgInputEl) orgInputEl.value = '';
+  renderExaminerSettingsTab();
+  if (isCurrentUserAdmin()) {
+    fetchAdminUsersList(true);
+  }
+  showOrgAlert(res.message || `✅ 服務單位已成功更新為「${newOrg}」！`, 'success');
+  showToast('✅ 服務單位已成功更新！');
+}
+
 async function handleResetExaminerPin() {
   alert('💡 若忘記密碼，請登出後於登入畫面點擊「❓ 忘記密碼」，透過帳號、西元出生年月日與 Email 驗證重設密碼。');
 }
@@ -3304,9 +3399,9 @@ function renderExaminerSettingsTab() {
   const isAdmin = isCurrentUserAdmin();
   const adminUsersCard = document.getElementById('adminUserManagementCard');
   const adminCloudCard = document.getElementById('adminCloudConfigCard');
-  const settingsGrid = document.getElementById('settingsBottomGrid');
   const ownUsernameEl = document.getElementById('ownProfileUsername');
   const ownNameOrgEl = document.getElementById('ownProfileNameAndOrg');
+  const ownCurrentOrgEl = document.getElementById('ownProfileCurrentOrg');
   const currPwGroup = document.getElementById('currentPasswordGroup');
 
   // 管理員才可檢視與操作「註冊審核 & 成員管理」以及「Google 雲端資料庫 & 自動寄成績信設定」
@@ -3316,18 +3411,19 @@ function renderExaminerSettingsTab() {
   if (adminCloudCard) {
     adminCloudCard.classList.toggle('hidden', !isAdmin);
   }
-  if (settingsGrid) {
-    settingsGrid.style.gridTemplateColumns = isAdmin ? '' : '1fr';
-  }
 
   if (ownUsernameEl) {
     ownUsernameEl.textContent = (currentExaminerProfile && currentExaminerProfile.username) ? currentExaminerProfile.username : '-';
   }
   if (ownNameOrgEl) {
     const nameStr = (currentExaminerProfile && currentExaminerProfile.displayName) ? currentExaminerProfile.displayName : '-';
-    const orgStr = (currentExaminerProfile && currentExaminerProfile.organization) ? ` / ${currentExaminerProfile.organization}` : '';
     const roleStr = isAdmin ? ' 【管理員】' : ' 【一般考官】';
-    ownNameOrgEl.textContent = `${nameStr}${orgStr}${roleStr}`;
+    ownNameOrgEl.textContent = `${nameStr}${roleStr}`;
+  }
+  if (ownCurrentOrgEl) {
+    ownCurrentOrgEl.textContent = (currentExaminerProfile && currentExaminerProfile.organization)
+      ? currentExaminerProfile.organization
+      : '尚未填寫';
   }
 
   if (currPwGroup) {
@@ -4988,7 +5084,7 @@ async function dispatchScoreEmails(sessionId, recipients, sessionObj) {
       if (res.errors && res.errors.length > 0) {
         alert(`已寄出 ${res.sentCount} 封信，但有部分信箱發送失敗：\n${res.errors.join('\n')}`);
       } else {
-        showToast(`✅ 成功寄出 ${res.sentCount} 封 HTML 考生成績單 Email！`);
+        showToast(`✅ 成功寄出 ${res.sentCount} 封考生成績單 Email！`);
       }
       return;
     } else {
