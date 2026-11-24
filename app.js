@@ -6208,20 +6208,6 @@ function closeImageLightbox() {
   if (imgEl) imgEl.src = '';
 }
 
-// ==================== 一鍵複製 Google Apps Script 後端程式碼 (Code.gs) ====================
-async function copyGasBackendCode() {
-  try {
-    const res = await fetch('gas/Code.gs');
-    if (res.ok) {
-      const code = await res.text();
-      await navigator.clipboard.writeText(code);
-      showToast('✅ 已複製 Google Apps Script (Code.gs) 完整程式碼！請貼至 Google 試算表的 Apps Script 編輯器。');
-      return;
-    }
-  } catch (e) { }
-  alert('請開啟專案目錄下的 gas/Code.gs 檔案複製內容。');
-}
-
 // ==================== 工具函式 ====================
 function showToast(message) {
   const container = document.getElementById('toastContainer');
