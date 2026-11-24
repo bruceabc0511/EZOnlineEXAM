@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261124_1">
+  <link rel="stylesheet" href="styles.css?v=20261124_2">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
@@ -40,7 +40,7 @@
         </div>
         <div>
           <div class="brand-title-row">
-            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.36)</h1>
+            <h1 class="brand-title">線上筆試測驗系統 (測試版v0.38)</h1>
             <span class="cloud-pill" id="cloudStatusPill" onclick="handleCloudPillClick()" title="點擊查看雲端連線狀態">
               <span class="cloud-dot offline" id="cloudStatusDot"></span>
               <span id="cloudStatusText">本機模式</span>
@@ -296,15 +296,15 @@
           style="display: flex; gap: 8px; justify-content: center; margin: 14px 0 18px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
           <button type="button" id="authTabBtnLogin" class="btn btn-primary btn-sm"
             onclick="switchExaminerAuthMode('login')">
-            🔐 考官登入
+            考官登入
           </button>
           <button type="button" id="authTabBtnRegister" class="btn btn-outline btn-sm"
             onclick="switchExaminerAuthMode('register')">
-            📝 考官註冊
+            帳號註冊
           </button>
           <button type="button" id="authTabBtnForgot" class="btn btn-outline btn-sm"
             onclick="switchExaminerAuthMode('forgot')">
-            ❓ 忘記密碼
+            忘記密碼
           </button>
         </div>
 
@@ -349,12 +349,12 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label for="regUsername">帳號 <span class="required">*</span></label>
+              <label for="regUsername">登入帳號 <span class="required">*</span></label>
               <input type="text" id="regUsername" placeholder="限用英文及數字" required pattern="[a-zA-Z0-9_]{4,24}"
                 maxlength="24" autocomplete="username" title="請使用 4 至 24 碼半形英文字母、數字或符號僅接受底線 (_)">
             </div>
             <div class="form-group">
-              <label for="regEmail">E-mail (忘記密碼重設用) <span class="required">*</span></label>
+              <label for="regEmail">E-mail <span class="required">*</span></label>
               <input type="email" id="regEmail" placeholder="example@gmail.com" required maxlength="100"
                 autocomplete="email">
             </div>
@@ -374,8 +374,8 @@
           <div class="text-muted text-sm"
             style="margin-bottom: 10px; background: #fff8f8; border: 1px solid #fecdd3; padding: 8px 10px; border-radius: 6px;">
             <strong>密碼強度：</strong> 長度至少 8 碼且必須同時包含<strong>大、小寫英文</strong>及<strong>數字</strong>。<br>
-            <strong>審核機制：</strong>送出註冊後，須由<strong>系統管理員審核通過</strong>才可登入。<br>
-            <strong style="color: #be123c;">測試公告：測試階段註冊之帳號會於正式版上線後全數刪除，若日後您還有需要使用本系統，請於正式版上線後重新申請。</strong>
+            <strong>審核機制：</strong>送出註冊申請後，須由<strong>系統管理員審核通過</strong>才可使用本系統。<br>
+            <strong style="color: #be123c;">公告：系統測試階段註冊之帳號會於正式版上線後全數刪除，若日後您還有需要使用本系統，請於正式版上線後重新申請。</strong>
           </div>
           <label class="checkbox-row"
             style="margin-bottom: 12px; font-size: 0.88rem; display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
@@ -383,8 +383,7 @@
             <span>本人同意本系統於資安與個資保護規範下蒐集上述資料，專供考官身分審核、試卷所有權識別與忘記密碼重設驗證使用。</span>
           </label>
           <div id="regAlertBox" class="alert hidden" style="margin-bottom: 10px;"></div>
-          <button type="submit" id="btnSubmitRegister" class="btn btn-primary btn-lg btn-block">📤 送出註冊申請
-            (待管理員審核)</button>
+          <button type="submit" id="btnSubmitRegister" class="btn btn-primary btn-lg btn-block">📤 送出註冊申請</button>
         </form>
 
         <!-- (C) 忘記密碼重設表單 (雙階段：1. 核對帳號+Email+西元生日寄送驗證碼 -> 2. 輸入驗證碼與新密碼) -->
@@ -419,7 +418,7 @@
               <strong>步驟 2：輸入信箱驗證碼並設定新密碼</strong>（驗證碼 15 分鐘內有效）
             </div>
             <div class="form-group">
-              <label for="forgotResetCode">8 碼重設驗證碼 <span class="required">*</span></label>
+              <label for="forgotResetCode">重設驗證碼 <span class="required">*</span></label>
               <input type="text" id="forgotResetCode" placeholder="請輸入信件中的 8 碼英數驗證碼" required maxlength="12"
                 style="letter-spacing: 2px; font-weight: 700; text-transform: uppercase;">
             </div>
@@ -1068,8 +1067,8 @@
                   </div>
                 </div>
 
-                <div id="updatePinLoadingBar" class="pin-loading-wrap hidden" style="margin-top: 14px; margin-bottom: 0;"
-                  role="progressbar" aria-label="密碼變更進度">
+                <div id="updatePinLoadingBar" class="pin-loading-wrap hidden"
+                  style="margin-top: 14px; margin-bottom: 0;" role="progressbar" aria-label="密碼變更進度">
                   <div class="pin-loading-track">
                     <div class="pin-loading-fill"></div>
                   </div>

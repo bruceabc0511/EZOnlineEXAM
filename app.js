@@ -2404,8 +2404,8 @@ function switchExaminerAuthMode(mode) {
   if (btnForgot) btnForgot.className = currentExaminerAuthMode === 'forgot' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
 
   if (currentExaminerAuthMode === 'register') {
-    if (titleEl) titleEl.textContent = '考官個人帳號註冊申請';
-    if (subEl) subEl.textContent = '請填寫真實資料，送出後由系統管理員審核通過即可登入';
+    if (titleEl) titleEl.textContent = '考官帳號註冊申請';
+    if (subEl) subEl.textContent = '請填寫您的資料，送出後由系統管理員審核通過即可登入';
   } else if (currentExaminerAuthMode === 'forgot') {
     if (titleEl) titleEl.textContent = '考官忘記密碼重設';
     if (subEl) subEl.textContent = '核對註冊帳號、西元出生年月日與 Email 信箱即可重設密碼';
@@ -2449,7 +2449,7 @@ async function handleExaminerRegister(event) {
     return;
   }
   if (!organization || organization.length < 2) {
-    showRegAlert('⚠️ 請填寫服務單位（至少 2 個字）！');
+    showRegAlert('⚠️ 請填寫服務單位！');
     return;
   }
   if (!/^[a-zA-Z0-9_]{4,24}$/.test(username)) {
@@ -2482,7 +2482,7 @@ async function handleExaminerRegister(event) {
   const siteKey = getActiveTurnstileSiteKey();
   const turnstileToken = getExaminerTurnstileToken();
   if (siteKey && !turnstileToken) {
-    showRegAlert('🛡️ 請先完成下方 Cloudflare 訪客安全驗證後再送出註冊申請！', 'warning');
+    showRegAlert('🛡️ 請先完成下方訪客安全驗證後再送出註冊申請！', 'warning');
     initOrResetExaminerTurnstile();
     return;
   }
@@ -2553,7 +2553,7 @@ async function handleRequestPasswordReset(event) {
   const siteKey = getActiveTurnstileSiteKey();
   const turnstileToken = getExaminerTurnstileToken();
   if (siteKey && !turnstileToken) {
-    showForgotAlert('🛡️ 請先完成下方 Cloudflare 訪客安全驗證後再點擊寄送驗證碼！', 'warning');
+    showForgotAlert('🛡️ 請先完成下方訪客安全驗證後再點擊寄送驗證碼！', 'warning');
     initOrResetExaminerTurnstile();
     return;
   }
@@ -2575,7 +2575,7 @@ async function handleRequestPasswordReset(event) {
     initOrResetExaminerTurnstile();
 
     if (res && res.status === 'success') {
-      showForgotAlert(res.message || '📧 已寄出 8 碼重設驗證碼，請至信箱查收並於步驟 2 輸入。', 'success');
+      showForgotAlert(res.message || '📧 已寄出重設驗證碼，請至信箱查收並於步驟 2 輸入。', 'success');
       showToast('📧 重設驗證碼已寄至您的信箱！');
       document.getElementById('forgotResetCode')?.focus();
     } else {
@@ -2629,7 +2629,7 @@ async function handleConfirmPasswordReset(event) {
   const siteKey = getActiveTurnstileSiteKey();
   const turnstileToken = getExaminerTurnstileToken();
   if (siteKey && !turnstileToken) {
-    showForgotAlert('🛡️ 請先完成下方 Cloudflare 訪客安全驗證後再送出重設密碼！', 'warning');
+    showForgotAlert('🛡️ 請先完成下方訪客安全驗證後再送出重設密碼！', 'warning');
     initOrResetExaminerTurnstile();
     return;
   }
@@ -2710,7 +2710,7 @@ async function handlePinLogin(event) {
   const siteKey = getActiveTurnstileSiteKey();
   const turnstileToken = getExaminerTurnstileToken();
   if (siteKey && !turnstileToken) {
-    errBox.textContent = '🛡️ 請稍候，正在完成 Cloudflare 訪客安全驗證（或請勾選驗證框）後再登入！';
+    errBox.textContent = '🛡️ 請稍候，正在完成訪客安全驗證（或請勾選驗證框）後再登入！';
     errBox.className = 'alert alert-warning';
     errBox.classList.remove('hidden');
     initOrResetExaminerTurnstile();
@@ -2988,13 +2988,13 @@ async function handleUpdateExaminerPin(event) {
   }
 
   if (!currentPassword) {
-    showPinAlert('⚠️ 請輸入您目前的登入密碼 (PIN) 以驗證本人身分！', 'danger');
+    showPinAlert('⚠️ 請輸入您目前的登入密碼以驗證本人身分！', 'danger');
     if (currentPwEl) currentPwEl.focus();
     return;
   }
 
   if (!newPassword) {
-    showPinAlert('⚠️ 請輸入新密碼 (PIN)！', 'danger');
+    showPinAlert('⚠️ 請輸入新密碼！', 'danger');
     if (newPinEl) newPinEl.focus();
     return;
   }
@@ -3062,7 +3062,7 @@ async function handleUpdateExaminerPin(event) {
   if (confirmPinEl) confirmPinEl.value = '';
 
   renderExaminerSettingsTab();
-  showPinAlert(res.message || '✅ 您的個人登入密碼 (PIN) 已安全更新！下次登入請使用新密碼。', 'success');
+  showPinAlert(res.message || '✅ 您的個人登入密碼已安全更新！下次登入請使用新密碼。', 'success');
   showToast('✅ 個人密碼已成功變更！');
 }
 
@@ -3092,7 +3092,7 @@ function renderAdminUsersTable() {
   const pendingCount = (adminUsersCache || []).filter(u => u && u.status === 'pending_review').length;
   if (pendingBadge) {
     if (isCurrentUserAdmin() && pendingCount > 0) {
-      pendingBadge.textContent = `${pendingCount} 待審`;
+      pendingBadge.textContent = `${pendingCount} 待審核`;
       pendingBadge.classList.remove('hidden');
     } else {
       pendingBadge.classList.add('hidden');
