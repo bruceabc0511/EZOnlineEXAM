@@ -1931,7 +1931,7 @@ function doPost(e) {
       let examInfo = state.examData || {};
       if (sessionId === 'CURRENT') {
         const currOwner = examInfo.startedByUserId || examInfo.ownerId || '';
-        if (!isAdmin && currOwner && currOwner !== myId) {
+        if (!isAdmin && currOwner !== myId) {
           return jsonResponse({ status: 'forbidden', message: '⛔ 權限限制：您僅能寄送自己測驗場次的考生成績單！' });
         }
         authoritativeList = Array.isArray(state.submissions) ? state.submissions : [];
@@ -1940,7 +1940,7 @@ function doPost(e) {
         if (!targetHist) {
           return jsonResponse({ status: 'error', message: '找不到指定的歷史測驗場次紀錄' });
         }
-        if (!isAdmin && targetHist.ownerId && targetHist.ownerId !== myId) {
+        if (!isAdmin && targetHist.ownerId !== myId) {
           return jsonResponse({ status: 'forbidden', message: '⛔ 權限限制：您僅能寄送自己歷史場次的考生成績單！' });
         }
         authoritativeList = Array.isArray(targetHist.submissions) ? targetHist.submissions : [];

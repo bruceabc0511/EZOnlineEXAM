@@ -90,6 +90,7 @@ let lastCloudSyncExaminer = false;
 let currentActiveExaminerTab = 'tabQuestions';
 let cloudPollIntervalMs = 10000;
 let currentViewingHistoryId = null;
+let openedErrorReviewWindows = [];
 let cloudPollTimer = null;
 let examinerLiveTimerInterval = null;
 let lastExamDataSaveAt = 0;
@@ -448,20 +449,22 @@ async function syncStateFromCloud(silent = true, force = false) {
       const shouldSyncExamData = !silent || force || roleJustUpgraded || (!isExaminerAuthenticated && (Date.now() - lastExamDataSaveAt > 15000));
       if (shouldSyncExamData && json.examData && Array.isArray(json.examData.questions)) {
         const localAnswerMap = {};
-        if (examData && Array.isArray(examData.questions)) {
-          examData.questions.forEach(q => {
-            if (q && q.id && q.answer !== undefined) localAnswerMap[q.id] = q.answer;
-          });
-        }
-        const matchedLibExam = Array.isArray(examLibrary)
-          ? examLibrary.find(e => e && e.id === (json.examData.id || 'exam_default'))
-          : null;
-        if (matchedLibExam && Array.isArray(matchedLibExam.questions)) {
-          matchedLibExam.questions.forEach(q => {
-            if (q && q.id && q.answer !== undefined && localAnswerMap[q.id] === undefined) {
-              localAnswerMap[q.id] = q.answer;
-            }
-          });
+        if (json.isExaminer !== true) {
+          if (examData && Array.isArray(examData.questions)) {
+            examData.questions.forEach(q => {
+              if (q && q.id && q.answer !== undefined) localAnswerMap[q.id] = q.answer;
+            });
+          }
+          const matchedLibExam = Array.isArray(examLibrary)
+            ? examLibrary.find(e => e && e.id === (json.examData.id || 'exam_default'))
+            : null;
+          if (matchedLibExam && Array.isArray(matchedLibExam.questions)) {
+            matchedLibExam.questions.forEach(q => {
+              if (q && q.id && q.answer !== undefined && localAnswerMap[q.id] === undefined) {
+                localAnswerMap[q.id] = q.answer;
+              }
+            });
+          }
         }
 
         const mergedQuestions = json.examData.questions.map(q => {
@@ -482,7 +485,9 @@ async function syncStateFromCloud(silent = true, force = false) {
           ownerName: json.examData.ownerName || '',
           startedByUserId: json.examData.startedByUserId || '',
           startedByName: json.examData.startedByName || '',
-          activeExamToken: json.examData.activeExamToken || examData.activeExamToken || null,
+          activeExamToken: json.isExaminer === true
+            ? (json.examData.activeExamToken || null)
+            : (json.examData.activeExamToken || examData.activeExamToken || null),
           questions: mergedQuestions
         };
         // 若為考官授權同步，或題目含有完整答案，才寫入本機儲存，避免考生模式無答案資料覆蓋單機版題庫
@@ -671,31 +676,42 @@ function getCurrentExaminerUserId() {
 }
 
 function canCurrentUserModifyExam(exam) {
-  if (!exam) return false;
+  if (!exam || !isExaminerAuthenticated) return false;
   if (isCurrentUserAdmin()) return true;
   const myId = getCurrentExaminerUserId();
-  if (!myId) return true;
-  if (!exam.ownerId) return true;
+  if (!myId || !exam.ownerId) return false;
   return exam.ownerId === myId;
 }
 
-function canCurrentUserManageActiveSession() {
+function canCurrentUserViewCurrentSession() {
+  if (!isExaminerAuthenticated) return false;
   if (isCurrentUserAdmin()) return true;
   const myId = getCurrentExaminerUserId();
-  if (!myId) return true;
+  if (!myId) return false;
+  const currentExamOwnerId = (examData && examData.ownerId) ? String(examData.ownerId) : '';
+  const currentStartedById = (examData && examData.startedByUserId) ? String(examData.startedByUserId) : '';
+  return (currentExamOwnerId === myId) || (currentStartedById === myId);
+}
+
+function canCurrentUserManageActiveSession() {
+  if (!isExaminerAuthenticated) return false;
+  if (isCurrentUserAdmin()) return true;
+  const myId = getCurrentExaminerUserId();
+  if (!myId) return false;
   const activeOwner = (examData && (examData.startedByUserId || examData.ownerId)) || '';
-  if (!activeOwner) return true;
+  if (!activeOwner) return !Boolean(examData && examData.isExamOpen);
   return activeOwner === myId;
 }
 
 function canCurrentUserManageActiveToken() {
+  if (!isExaminerAuthenticated) return false;
   if (isCurrentUserAdmin()) return true;
   const myId = getCurrentExaminerUserId();
-  if (!myId) return true;
+  if (!myId) return false;
   const tok = examData && examData.activeExamToken;
   if (!tok || !tok.token || !isExamTokenActive(tok)) return true;
   const creator = tok.createdByUserId || (examData && examData.ownerId) || '';
-  if (!creator) return true;
+  if (!creator) return false;
   return creator === myId;
 }
 
@@ -2766,9 +2782,12 @@ async function handlePinLogin(event) {
     }
 
     if (isPinValid) {
+      const verifiedProfile = currentExaminerProfile;
+      resetExaminerClientState();
       pinFailedAttempts = 0;
       isExaminerAuthenticated = true;
       currentExaminerAuthToken = issuedSessionToken;
+      currentExaminerProfile = verifiedProfile;
       lastExaminerActivityTime = Date.now();
       lastExaminerActivityRecordAt = Date.now();
       errBox.classList.add('hidden');
@@ -2909,6 +2928,88 @@ function setupExaminerIdleDetector() {
   window.addEventListener('pageshow', checkExaminerIdleTimeout);
 }
 
+function resetExaminerClientState() {
+  // 1. 關閉並徹底清除「歷次測驗紀錄明細面板」狀態與 DOM 殘留，防止跨考官帳號檢視外洩
+  closeHistorySessionDetail(true);
+
+  // 2. 關閉考官端曾開啟之獨立試題檢討視窗，避免登出後殘留前一位考官試題畫面
+  if (Array.isArray(openedErrorReviewWindows) && openedErrorReviewWindows.length > 0) {
+    openedErrorReviewWindows.forEach(win => {
+      try {
+        if (win && !win.closed) win.close();
+      } catch (e) { }
+    });
+    openedErrorReviewWindows = [];
+  }
+
+  // 3. 關閉考官端可能開啟中的浮動視窗 (Modal) 並清空個人作答明細內容
+  const examinerModals = ['studentDetailModal', 'addQuestionModal', 'archiveSessionModal', 'imageLightboxModal'];
+  examinerModals.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  });
+  const detailModalTitle = document.getElementById('detailModalTitle');
+  if (detailModalTitle) detailModalTitle.textContent = '';
+  const detailModalBody = document.getElementById('detailModalBody');
+  if (detailModalBody) detailModalBody.innerHTML = '';
+
+  // 4. 清空前一位考官在記憶體與本機儲存中的敏感試卷庫、題庫、當場成績與歷史紀錄
+  historySessions = [];
+  submissions = [];
+  examLibrary = [];
+  examData = JSON.parse(JSON.stringify(DEFAULT_EXAM_DATA));
+  currentSelectedExamId = '';
+  currentViewingHistoryId = null;
+  editingQuestionId = null;
+  adminUsersCache = [];
+  lastCloudUpdatedAt = '';
+  lastCloudSyncExaminer = false;
+
+  try {
+    localStorage.removeItem(STORAGE_KEYS.HISTORY_SESSIONS);
+    localStorage.removeItem(STORAGE_KEYS.SUBMISSIONS);
+    localStorage.removeItem(STORAGE_KEYS.EXAM_LIBRARY);
+    localStorage.removeItem(STORAGE_KEYS.EXAM_DATA);
+  } catch (e) { }
+
+  // 5. 重設考官端預設活動分頁回「題庫與試卷管理」並清空各分頁舊 DOM 內容
+  currentActiveExaminerTab = 'tabQuestions';
+  document.querySelectorAll('.dashboard-tabs .tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === 'tabQuestions');
+  });
+  ['tabQuestions', 'tabScores', 'tabAnalytics', 'tabHistory', 'tabExamLink', 'tabSettings'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', id !== 'tabQuestions');
+  });
+
+  [
+    'historyTableBody',
+    'scoresTableBody',
+    'questionsTableBody',
+    'examLibrarySelect',
+    'errorRateRankingList',
+    'scoreDistributionChart',
+    'adminUsersTableBody'
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  });
+
+  const scoreBadge = document.getElementById('tabScoreCount');
+  if (scoreBadge) scoreBadge.textContent = '0';
+  const histBadge = document.getElementById('tabHistoryCount');
+  if (histBadge) histBadge.textContent = '0';
+  const pendingBadge = document.getElementById('adminPendingReviewBadge');
+  if (pendingBadge) pendingBadge.classList.add('hidden');
+  const shareInput = document.getElementById('studentShareUrlInput');
+  if (shareInput) shareInput.value = '';
+  const qrImg = document.getElementById('studentQrImage');
+  if (qrImg) {
+    qrImg.removeAttribute('src');
+    qrImg.classList.add('hidden');
+  }
+}
+
 function logoutExaminer(reason) {
   const isIdle = (reason === 'idle');
   const isSessionExpired = (reason === 'session_expired');
@@ -2916,10 +3017,10 @@ function logoutExaminer(reason) {
   isExaminerAuthenticated = false;
   currentExaminerAuthToken = '';
   currentExaminerProfile = null;
-  adminUsersCache = [];
   isGasUrlUnlockedBySecret = false;
   gasSecretClickCount = 0;
   stopExaminerLiveTimer();
+  resetExaminerClientState();
   updateCloudStatusUI();
 
   if (tokenToRevoke && tokenToRevoke.startsWith('exs_') && getActiveGasUrl()) {
@@ -2928,13 +3029,6 @@ function logoutExaminer(reason) {
       sessionToken: tokenToRevoke
     });
   }
-
-  // 關閉考官端可能開啟中的浮動視窗 (Modal)
-  const examinerModals = ['studentDetailModal', 'addQuestionModal', 'archiveSessionModal', 'imageLightboxModal'];
-  examinerModals.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
-  });
 
   const dashView = document.getElementById('examinerDashboardView');
   const pinView = document.getElementById('examinerPinView');
@@ -3460,11 +3554,15 @@ function refreshExaminerAllViews(forceAll = false) {
   renderExaminerSettingsTab();
   updateCloudStatusUI();
 
-  // 更新頁籤計數徽章
+  // 更新頁籤計數徽章（僅統計當前登入考官有權檢視之資料筆數）
+  const visibleSubsCount = canCurrentUserViewCurrentSession() ? submissions.length : 0;
+  const visibleHistCount = isCurrentUserAdmin()
+    ? historySessions.length
+    : historySessions.filter(h => canCurrentUserModifyHistory(h)).length;
   const scoreBadge = document.getElementById('tabScoreCount');
-  if (scoreBadge) scoreBadge.textContent = submissions.length;
+  if (scoreBadge) scoreBadge.textContent = visibleSubsCount;
   const histBadge = document.getElementById('tabHistoryCount');
-  if (histBadge) histBadge.textContent = historySessions.length;
+  if (histBadge) histBadge.textContent = visibleHistCount;
 
   // 效能優化：僅渲染目前活動的分頁，避免每次輪詢全量重建所有 DOM
   if (forceAll || currentActiveExaminerTab === 'tabQuestions') {
@@ -4576,12 +4674,18 @@ function parseTemplateRows(rows, fileName) {
       }
 
       const todayStr = normalizeDateForInput(new Date().toISOString().slice(0, 10));
+      const myId = getCurrentExaminerUserId() || 'SYSTEM_ADMIN';
+      const myName = (currentExaminerProfile && currentExaminerProfile.displayName) || '考官';
+      const myOrg = (currentExaminerProfile && currentExaminerProfile.organization) || '';
       const newExam = {
         id: 'exam_' + Date.now(),
         title: newTitle,
         examDate: todayStr,
         durationMinutes: 60,
         questions: parsedQuestions,
+        ownerId: myId,
+        ownerName: myName,
+        ownerOrg: myOrg,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -4596,12 +4700,18 @@ function parseTemplateRows(rows, fileName) {
 
   // 試卷庫中尚無同名試卷，直接新建一份
   const todayStr = normalizeDateForInput(new Date().toISOString().slice(0, 10));
+  const myId = getCurrentExaminerUserId() || 'SYSTEM_ADMIN';
+  const myName = (currentExaminerProfile && currentExaminerProfile.displayName) || '考官';
+  const myOrg = (currentExaminerProfile && currentExaminerProfile.organization) || '';
   const newExam = {
     id: 'exam_' + Date.now(),
     title: fileBaseTitle,
     examDate: todayStr,
     durationMinutes: 60,
     questions: parsedQuestions,
+    ownerId: myId,
+    ownerName: myName,
+    ownerOrg: myOrg,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -4674,16 +4784,17 @@ function downloadSampleExcel(event) {
 
 // ==================== 考官端頁籤 2：當前場次成績統計與寄送 Email ====================
 function renderExaminerScoresTab() {
-  document.getElementById('tabScoreCount').textContent = submissions.length;
+  const visibleSubs = canCurrentUserViewCurrentSession() ? submissions : [];
+  document.getElementById('tabScoreCount').textContent = visibleSubs.length;
   const tbody = document.getElementById('scoresTableBody');
   tbody.innerHTML = '';
 
-  if (submissions.length === 0) {
+  if (visibleSubs.length === 0) {
     tbody.innerHTML = `<tr><td colspan="11" style="text-align:center; color: var(--text-muted); padding: 28px;">目前場次尚無考生交卷紀錄。</td></tr>`;
     return;
   }
 
-  submissions.forEach(sub => {
+  visibleSubs.forEach(sub => {
     tbody.appendChild(buildSubmissionRowElement(sub, 'CURRENT'));
   });
 }
@@ -4733,6 +4844,7 @@ function buildSubmissionRowElement(sub, sessionId) {
 
 function getSessionDataById(sessionId) {
   if (sessionId === 'CURRENT') {
+    if (!canCurrentUserViewCurrentSession()) return null;
     return {
       title: examData.title,
       examDate: examData.examDate,
@@ -4741,7 +4853,7 @@ function getSessionDataById(sessionId) {
     };
   }
   const hist = historySessions.find(h => h.id === sessionId);
-  if (!hist) return null;
+  if (!hist || !canCurrentUserModifyHistory(hist)) return null;
   return {
     title: hist.examTitle || hist.sessionTitle,
     examDate: hist.examDate,
@@ -4811,6 +4923,18 @@ function closeStudentDetailModal() {
 }
 
 function deleteSingleSubmission(subId, sessionId = 'CURRENT') {
+  if (sessionId === 'CURRENT') {
+    if (!canCurrentUserViewCurrentSession()) {
+      alert('⛔ 權限限制：您無法刪除他人測驗場次的考生紀錄！');
+      return;
+    }
+  } else {
+    const targetHist = historySessions.find(h => h.id === sessionId);
+    if (!targetHist || !canCurrentUserModifyHistory(targetHist)) {
+      alert('⛔ 權限限制：您無法修改或刪除他人的歷史測驗紀錄！');
+      return;
+    }
+  }
   if (!confirm('確定要刪除此位考生的作答紀錄嗎？（刪除後該電子郵件即可重新應試）')) return;
   if (sessionId === 'CURRENT') {
     submissions = submissions.filter(s => s.id !== subId);
@@ -4831,6 +4955,10 @@ function deleteSingleSubmission(subId, sessionId = 'CURRENT') {
 }
 
 function clearAllSubmissions() {
+  if (!canCurrentUserViewCurrentSession()) {
+    alert('⛔ 權限限制：您無法清空他人測驗場次的成績紀錄！');
+    return;
+  }
   if (submissions.length === 0) return;
   if (!confirm('確定要清空「當前場次」所有考生的成績紀錄嗎？（若需保存紀錄，建議先點選「結束本場測驗並歸檔至歷史紀錄」）')) return;
   submissions = [];
@@ -5237,10 +5365,10 @@ function createAndSaveHistorySession(sessionTitle, clearCurrent = true, newExamD
 }
 
 function canCurrentUserModifyHistory(hist) {
-  if (!hist) return false;
+  if (!hist || !isExaminerAuthenticated) return false;
   if (isCurrentUserAdmin()) return true;
   const myId = getCurrentExaminerUserId();
-  if (!myId || !hist.ownerId) return true;
+  if (!myId || !hist.ownerId) return false;
   return hist.ownerId === myId;
 }
 
@@ -5260,6 +5388,16 @@ function renderExaminerHistoryTab() {
   const visibleHistoryList = isCurrentUserAdmin()
     ? historySessions
     : historySessions.filter(h => canCurrentUserModifyHistory(h));
+
+  // 若目前開啟中的歷史場次明細不屬於當前登入考官（或已不存在），立即關閉並清空明細面板，防止跨考官檢視外洩
+  if (currentViewingHistoryId && !visibleHistoryList.some(h => h.id === currentViewingHistoryId)) {
+    closeHistorySessionDetail(true);
+  } else if (!currentViewingHistoryId) {
+    const detailCard = document.getElementById('historySessionDetailCard');
+    if (detailCard && !detailCard.classList.contains('hidden')) {
+      closeHistorySessionDetail(true);
+    }
+  }
 
   const countEl = document.getElementById('tabHistoryCount');
   if (countEl) countEl.textContent = visibleHistoryList.length;
@@ -5320,7 +5458,13 @@ function renderExaminerHistoryTab() {
 
 function viewHistorySessionDetail(histId) {
   const hist = historySessions.find(h => h.id === histId);
-  if (!hist) return;
+  if (!hist || !canCurrentUserModifyHistory(hist)) {
+    closeHistorySessionDetail();
+    if (hist) {
+      alert('⛔ 權限限制：您僅能檢視自己所擁有的試卷與測驗結果明細！');
+    }
+    return;
+  }
 
   currentViewingHistoryId = histId;
   renderExaminerHistoryTab();
@@ -5365,10 +5509,46 @@ function viewHistorySessionDetail(histId) {
   detailCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function closeHistorySessionDetail() {
+function closeHistorySessionDetail(skipRender = false) {
   currentViewingHistoryId = null;
-  document.getElementById('historySessionDetailCard').classList.add('hidden');
-  renderExaminerHistoryTab();
+  const detailCard = document.getElementById('historySessionDetailCard');
+  if (detailCard) detailCard.classList.add('hidden');
+
+  const titleEl = document.getElementById('histDetailTitle');
+  if (titleEl) titleEl.textContent = '-';
+  const metaEl = document.getElementById('histDetailMeta');
+  if (metaEl) metaEl.textContent = '-';
+
+  const btnEmail = document.getElementById('btnHistSendAllEmail');
+  if (btnEmail) btnEmail.onclick = null;
+  const btnExport = document.getElementById('btnHistExportExcel');
+  if (btnExport) btnExport.onclick = null;
+
+  const statTotal = document.getElementById('histStatTotal');
+  if (statTotal) statTotal.textContent = '0 人';
+  const statForced = document.getElementById('histStatForced');
+  if (statForced) statForced.textContent = '強制終止：0 人';
+  const statMean = document.getElementById('histStatMean');
+  if (statMean) statMean.textContent = '0.0 分';
+  const statStdDev = document.getElementById('histStatStdDev');
+  if (statStdDev) statStdDev.textContent = '標準差：0.0';
+  const statMedian = document.getElementById('histStatMedian');
+  if (statMedian) statMedian.textContent = '0.0 分';
+  const statPassRate = document.getElementById('histStatPassRate');
+  if (statPassRate) statPassRate.textContent = '及格率：0%';
+  const statMaxMin = document.getElementById('histStatMaxMin');
+  if (statMaxMin) statMaxMin.textContent = '- / -';
+
+  const errList = document.getElementById('histErrorRankingList');
+  if (errList) errList.innerHTML = '';
+  const distChart = document.getElementById('histDistributionChart');
+  if (distChart) distChart.innerHTML = '';
+  const scoresTbody = document.getElementById('histScoresTableBody');
+  if (scoresTbody) scoresTbody.innerHTML = '';
+
+  if (!skipRender) {
+    renderExaminerHistoryTab();
+  }
 }
 
 function deleteHistorySession(histId) {
@@ -5680,33 +5860,39 @@ function renderDistributionIntoContainer(container, targetSubmissions) {
 }
 
 function renderExaminerAnalyticsTab() {
-  const stats = calculateStatsForList(submissions);
+  const visibleSubs = canCurrentUserViewCurrentSession() ? submissions : [];
+  const visibleQuestions = canCurrentUserViewCurrentSession() ? (examData.questions || []) : [];
+  const stats = calculateStatsForList(visibleSubs);
 
-  document.getElementById('statTotalStudents').innerHTML = `${submissions.length} <small>人</small>`;
+  document.getElementById('statTotalStudents').innerHTML = `${visibleSubs.length} <small>人</small>`;
   document.getElementById('statForcedCount').textContent = `防作弊強制終止：${stats.forcedCount} 人`;
   document.getElementById('statAverageScore').innerHTML = `${stats.mean} <small>分</small>`;
   document.getElementById('statStdDev').textContent = `標準差：${stats.stdDev}`;
   document.getElementById('statMedianScore').innerHTML = `${stats.median} <small>分</small>`;
   document.getElementById('statPassRate').textContent = `及格率 (≥60分)：${stats.passRate}%`;
   document.getElementById('statMaxMinScore').textContent =
-    submissions.length > 0 ? `${stats.max} / ${stats.min}` : '- / -';
+    visibleSubs.length > 0 ? `${stats.max} / ${stats.min}` : '- / -';
 
   renderErrorRankingIntoContainer(
     document.getElementById('errorRateRankingList'),
-    examData.questions,
-    submissions
+    visibleQuestions,
+    visibleSubs
   );
 
   renderDistributionIntoContainer(
     document.getElementById('scoreDistributionChart'),
-    submissions
+    visibleSubs
   );
 }
 
 function openErrorRankingWindow(sessionId = 'CURRENT') {
   const targetId = sessionId || 'CURRENT';
   const sessionObj = getSessionDataById(targetId);
-  if (!sessionObj || !sessionObj.questions || sessionObj.questions.length === 0) {
+  if (!sessionObj) {
+    alert('⛔ 權限限制或找不到指定的測驗場次資料！');
+    return;
+  }
+  if (!sessionObj.questions || sessionObj.questions.length === 0) {
     alert('目前題庫中尚無題目可供檢討！');
     return;
   }
@@ -5725,6 +5911,7 @@ function openErrorRankingWindow(sessionId = 'CURRENT') {
     alert('瀏覽器阻擋了彈出視窗，請允許本網站開啟新視窗！');
     return;
   }
+  openedErrorReviewWindows.push(win);
 
   const buildItemCardHtml = (item, rankNum) => {
     const badgeBg = item.errorRate >= 50 ? '#fee2e2' : item.errorRate >= 25 ? '#fef3c7' : '#dcfce7';
