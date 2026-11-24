@@ -7,7 +7,7 @@
  */
 
 // 若有固定部署的預設 Google Apps Script 網址（格式為 https://script.google.com/macros/s/.../exec），請設定於此處：
-const DEFAULT_GAS_URL = '';
+const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbwNwyDJqY7p5YDcJL_84KTS2rf2WSUWlR6NSJDjvTX1KVMG9rpvp5pDPmShQcUYp2heGQ/exec';
 
 // Cloudflare Turnstile (Verify Visitors Without CAPTCHA) 公開 Site Key
 const TURNSTILE_SITE_KEY = '0x4AAAAAAGOOrfOOEWchQ394';
