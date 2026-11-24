@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261124_2">
+  <link rel="stylesheet" href="styles.css?v=20261124_3">
   <!-- SheetJS for Excel Import & Export (升級至官方安全版本並加入 SRI 完整性保護) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
     integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"
@@ -149,7 +149,7 @@
             </div>
 
             <div class="form-group">
-              <label for="studentEmail">電子郵件 (Email) <span class="required">*</span> <small class="text-muted"
+              <label for="studentEmail">Email <span class="required">*</span> <small class="text-muted"
                   style="font-weight:400;">— 考試後寄送成績單用</small></label>
               <input type="email" id="studentEmail" required placeholder="請輸入常用 Email (例：example@gmail.com)"
                 autocomplete="email">
@@ -166,7 +166,7 @@
 
             <div class="form-actions">
               <button type="submit" class="btn btn-primary btn-lg btn-block" id="btnStartExam">
-                進入全螢幕並開始作答
+                開始作答
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="5" y1="12" x2="19" y2="12"></line>
                   <polyline points="12 5 19 12 12 19"></polyline>
@@ -1032,23 +1032,23 @@
               </div>
             </div>
 
-            <!-- 右側：個人專屬登入密碼 (PIN) 變更設定 (僅能變更自己帳號的密碼) -->
+            <!-- 右側：個人專屬登入密碼變更設定 (僅能變更自己帳號的密碼) -->
             <div class="card">
-              <h3>🔐 個人登入密碼 (PIN) 變更設定</h3>
+              <h3>🔐 個人登入密碼變更設定</h3>
               <p class="text-muted text-sm" id="ownPasswordCardDesc" style="margin-bottom:14px;">
-                您僅能變更自己帳號的登入密碼 (PIN)。新密碼長度須至少 8 碼，且必須同時包含<strong>大寫英文、小寫英文與數字</strong>。
+                您僅能變更自己帳號的登入密碼。新密碼長度須至少 8 碼，且必須同時包含<strong>大寫英文、小寫英文與數字</strong>。
               </p>
 
               <div id="ownAccountProfileBox"
                 style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.9rem;">
-                <div>👤 <strong>目前登入帳號：</strong><span id="ownProfileUsername">-</span></div>
-                <div style="margin-top: 4px;">🏢 <strong>姓名與單位：</strong><span id="ownProfileNameAndOrg">-</span></div>
+                <div><strong>目前登入帳號：</strong><span id="ownProfileUsername">-</span></div>
+                <div style="margin-top: 4px;"><strong>姓名與單位：</strong><span id="ownProfileNameAndOrg">-</span></div>
               </div>
 
               <form id="updatePinForm" onsubmit="handleUpdateExaminerPin(event)">
                 <div class="form-group" id="currentPasswordGroup">
                   <label for="currentExaminerPasswordInput">
-                    🔑 目前登入密碼 (PIN) <span class="required">*</span>
+                    🔑 目前登入密碼 <span class="required">*</span>
                   </label>
                   <input type="password" id="currentExaminerPasswordInput" placeholder="請輸入您目前的密碼以驗證本人身分"
                     autocomplete="current-password" maxlength="64">

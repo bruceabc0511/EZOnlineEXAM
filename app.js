@@ -3649,8 +3649,8 @@ function renderExaminerQuestionTab() {
         opt.value = exam.id;
         const isActive = examData && examData.id === exam.id;
         const statusMark = isActive ? (examData.isExamOpen ? '　【🟢測驗進行中】' : '　【📍當前試卷】') : '';
-        const ownerMark = exam.ownerName ? ` (👤${exam.ownerName})` : '';
-        opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${ownerMark}${statusMark}`;
+        const ownerMark = exam.ownerName ? ` (by ${exam.ownerName})` : '';
+        opt.textContent = `${exam.title || '未命名試卷'}  ${ownerMark} ${statusMark}`;
         libSelect.appendChild(opt);
       });
       libSelect.value = currentExam.id;
